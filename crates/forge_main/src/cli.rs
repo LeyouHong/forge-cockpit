@@ -155,6 +155,25 @@ pub enum TopLevelCommand {
 
     /// Interactive fuzzy item picker.
     Select(SelectCommandGroup),
+
+    /// Start a local web UI for driving the agent from a browser.
+    ///
+    /// The agent executes shell commands and edits files on this machine, so
+    /// the server binds to loopback (`127.0.0.1`) by default. Only change the
+    /// host if you understand the security implications.
+    Serve {
+        /// Port to bind the web server to.
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+
+        /// Host/interface to bind. Defaults to loopback only.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Do not open the web UI in a browser automatically.
+        #[arg(long, default_value_t = false)]
+        no_open: bool,
+    },
 }
 
 /// Command group for the `forge select` interactive picker.

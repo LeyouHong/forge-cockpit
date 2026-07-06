@@ -832,6 +832,22 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 crate::logs::run(args, log_dir).await?;
                 return Ok(());
             }
+            TopLevelCommand::Serve { port, host, no_open } => {
+                // Resolve provider/agent/model before serving so requests don't
+                // race first-use initialization.
+                self.init_state(false).await?;
+
+                let addr: std::net::SocketAddr = format!("{host}:{port}")
+                    .parse()
+                    .with_context(|| format!("Invalid host/port: {host}:{port}"))?;
+
+                self.writeln_title(TitleFormat::info(format!(
+                    "Starting Forge web UI on http://{addr}"
+                )))?;
+
+                forge_web::serve(self.api.clone(), addr, !no_open).await?;
+                return Ok(());
+            }
             TopLevelCommand::Select(cmd) => {
                 if !matches!(&cmd.command, SelectCommand::File { .. }) {
                     self.init_state(false).await?;

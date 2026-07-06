@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Forge</title>
+  <style>
+    /* Linear-inspired visual language (dark default, light aware). */
+    :root {
+      --bg: #08090a;
+      --sidebar: #0c0d0f;
+      --panel: #141518;
+      --panel-2: #1a1b1f;
+      --border: rgba(255,255,255,0.07);
+      --border-strong: rgba(255,255,255,0.11);
+      --text: #f7f8f8;
+      --prose: #c4c8d0;
+      --muted: #8a8f98;
+      --faint: #62666d;
+      --accent: #7c82e8;
+      --accent-solid: #5e6ad2;
+      --accent-weak: rgba(94,106,210,0.16);
+      --user: #5e6ad2;
+      --hover: rgba(255,255,255,0.045);
+      --code: #0c0d0f;
+      --danger: #eb5757;
+      --shadow: 0 1px 2px rgba(0,0,0,0.28), 0 4px 16px rgba(0,0,0,0.18);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --sidebar: #fbfbfc;
+        --panel: #ffffff;
+        --panel-2: #f6f7f9;
+        --border: rgba(0,0,0,0.08);
+        --border-strong: rgba(0,0,0,0.13);
+        --text: #17181c;
+        --prose: #3b3f47;
+        --muted: #6b6f76;
+        --faint: #9599a1;
+        --accent: #5e6ad2;
+        --accent-solid: #5e6ad2;
+        --accent-weak: rgba(94,106,210,0.10);
+        --user: #5e6ad2;
+        --hover: rgba(0,0,0,0.04);
+        --code: #f5f6f8;
+        --danger: #d93a3a;
+        --shadow: 0 1px 2px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05);
+      }
+    }
+    :root[data-theme="light"] {
+      --bg: #ffffff; --sidebar: #fbfbfc; --panel: #ffffff; --panel-2: #f6f7f9;
+      --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.13);
+      --text: #17181c; --prose: #3b3f47; --muted: #6b6f76; --faint: #9599a1;
+      --accent: #5e6ad2; --accent-solid: #5e6ad2; --accent-weak: rgba(94,106,210,0.10);
+      --user: #5e6ad2; --hover: rgba(0,0,0,0.04); --code: #f5f6f8; --danger: #d93a3a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05);
+    }
+    :root[data-theme="dark"] {
+      --bg: #08090a; --sidebar: #0c0d0f; --panel: #141518; --panel-2: #1a1b1f;
+      --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.11);
+      --text: #f7f8f8; --prose: #c4c8d0; --muted: #8a8f98; --faint: #62666d;
+      --accent: #7c82e8; --accent-solid: #5e6ad2; --accent-weak: rgba(94,106,210,0.16);
+      --user: #5e6ad2; --hover: rgba(255,255,255,0.045); --code: #0c0d0f; --danger: #eb5757;
+      --shadow: 0 1px 2px rgba(0,0,0,0.28), 0 4px 16px rgba(0,0,0,0.18);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 14px/1.55 "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+      background: var(--bg); color: var(--text); display: flex; height: 100vh;
+      letter-spacing: -0.006em;
+    }
+    ::selection { background: var(--accent-weak); }
+    /* thin scrollbars */
+    *::-webkit-scrollbar { width: 9px; height: 9px; }
+    *::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+    *::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+
+    /* ---------- sidebar ---------- */
+    aside {
+      width: 248px; flex: 0 0 248px; background: var(--sidebar);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 8px; padding: 14px 16px 12px;
+      font-weight: 600; font-size: 13.5px; letter-spacing: -0.01em;
+    }
+    .brand .logo {
+      width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px;
+      background: linear-gradient(140deg, var(--accent-solid), #8b93f0); color: #fff; font-size: 12px;
+    }
+    .new-btn {
+      margin: 4px 12px 10px; height: 32px; display: flex; align-items: center; gap: 8px;
+      padding: 0 10px; border: 1px solid var(--border); background: var(--panel);
+      color: var(--text); border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 500;
+      transition: background .13s ease, border-color .13s ease; box-shadow: var(--shadow);
+    }
+    .new-btn:hover { background: var(--panel-2); border-color: var(--border-strong); }
+    .new-btn .plus { color: var(--muted); font-size: 15px; line-height: 1; }
+    .section-label {
+      padding: 6px 18px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--faint);
+    }
+    .convos { overflow-y: auto; flex: 1; padding: 0 8px 10px; }
+    .convo {
+      position: relative; display: flex; align-items: center; gap: 8px;
+      height: 32px; padding: 0 8px; border-radius: 7px; cursor: pointer; color: var(--muted);
+      font-size: 13px; transition: background .12s ease, color .12s ease;
+    }
+    .convo:hover { background: var(--hover); color: var(--text); }
+    .convo.active { background: var(--accent-weak); color: var(--text); }
+    .convo .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
+    .convo.active .dot { background: var(--accent); }
+    .convo .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .convo .del {
+      opacity: 0; flex: 0 0 auto; width: 22px; height: 22px; display: grid; place-items: center;
+      border: none; background: transparent; color: var(--faint); border-radius: 5px; cursor: pointer;
+      font-size: 14px; transition: opacity .12s ease, background .12s ease, color .12s ease;
+    }
+    .convo:hover .del { opacity: 1; }
+    .convo .del:hover { background: var(--hover); color: var(--danger); }
+
+    /* ---------- main ---------- */
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .topbar {
+      display: flex; gap: 10px; align-items: center; height: 48px; flex: 0 0 48px;
+      padding: 0 20px; border-bottom: 1px solid var(--border);
+    }
+    .topbar .title { font-weight: 500; font-size: 13.5px; flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar .spacer { flex: 1; }
+    .field { display: flex; align-items: center; gap: 6px; }
+    .field label { color: var(--faint); font-size: 11.5px; font-weight: 500; }
+    select {
+      appearance: none; background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: 7px; padding: 5px 26px 5px 9px; font: inherit;
+      font-size: 12.5px; max-width: 190px; cursor: pointer; transition: border-color .12s ease, background .12s ease;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3.5L5 6.5L8 3.5' stroke='%238a8f98' stroke-width='1.4' fill='none' stroke-linecap='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 8px center;
+    }
+    select:hover { border-color: var(--border-strong); }
+    select:focus { outline: none; border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-weak); }
+    .icon-btn {
+      width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border);
+      background: var(--panel); color: var(--muted); border-radius: 7px; cursor: pointer; font-size: 14px;
+      transition: background .12s ease, color .12s ease, border-color .12s ease;
+    }
+    .icon-btn:hover { background: var(--panel-2); color: var(--text); border-color: var(--border-strong); }
+
+    #messages { flex: 1; overflow-y: auto; padding: 28px 24px 8px; }
+    .row { max-width: 760px; margin: 0 auto 20px; }
+    .msg { padding: 11px 15px; border-radius: 11px; word-wrap: break-word; overflow-wrap: anywhere; font-size: 14px; }
+    .msg.user { background: var(--user); color: #fff; margin-left: auto; max-width: 78%; width: fit-content; white-space: pre-wrap; box-shadow: var(--shadow); }
+    /* Prose hierarchy à la Claude: soft body text, brighter headings/bold. */
+    .msg.assistant { background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow); color: var(--prose); line-height: 1.68; }
+    .msg.assistant > *:first-child { margin-top: 0; }
+    .msg.assistant > *:last-child { margin-bottom: 0; }
+    .msg.assistant p { margin: 0 0 12px; }
+    .msg.assistant strong { color: var(--text); font-weight: 600; }
+    .msg.assistant em { color: var(--text); }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 { color: var(--text); margin: 18px 0 9px; line-height: 1.3; letter-spacing: -0.01em; font-weight: 600; }
+    .msg.assistant h1 { font-size: 1.32em; } .msg.assistant h2 { font-size: 1.17em; } .msg.assistant h3 { font-size: 1.04em; }
+    .msg.assistant ul, .msg.assistant ol { margin: 0 0 12px; padding-left: 22px; }
+    .msg.assistant li { margin: 3px 0; }
+    .msg.assistant li::marker { color: var(--faint); }
+    .msg.assistant a { color: var(--accent); text-decoration: none; }
+    .msg.assistant a:hover { text-decoration: underline; }
+    .msg.assistant blockquote { margin: 0 0 12px; padding: 2px 0 2px 14px; border-left: 2.5px solid var(--border-strong); color: var(--muted); }
+    /* tables */
+    .msg.assistant .table-wrap { overflow-x: auto; margin: 0 0 12px; }
+    .msg.assistant table { border-collapse: collapse; font-size: 13.5px; width: auto; }
+    .msg.assistant th, .msg.assistant td { border: 1px solid var(--border-strong); padding: 7px 13px; text-align: left; vertical-align: top; }
+    .msg.assistant th { background: var(--panel-2); color: var(--text); font-weight: 600; white-space: nowrap; }
+    .msg.assistant td { color: var(--prose); }
+    .msg.assistant tbody tr:nth-child(even) td, .msg.assistant tr:nth-child(even) td { background: rgba(127,127,127,0.035); }
+    code.inline { background: var(--code); padding: 1.5px 5px; border-radius: 5px; font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; border: 1px solid var(--border); }
+    pre.code { background: var(--code); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; overflow-x: auto; margin: 0 0 10px; }
+    pre.code code { font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; white-space: pre; line-height: 1.55; color: var(--prose); }
+    /* syntax highlight palette (One Dark / One Light) */
+    :root { --c-com:#7f848e; --c-str:#98c379; --c-num:#d19a66; --c-kw:#c678dd; --c-typ:#e5c07b; --c-fn:#61afef; }
+    @media (prefers-color-scheme: light) { :root { --c-com:#a0a1a7; --c-str:#50a14f; --c-num:#b76b01; --c-kw:#a626a4; --c-typ:#986801; --c-fn:#4078f2; } }
+    :root[data-theme="light"] { --c-com:#a0a1a7; --c-str:#50a14f; --c-num:#b76b01; --c-kw:#a626a4; --c-typ:#986801; --c-fn:#4078f2; }
+    :root[data-theme="dark"] { --c-com:#7f848e; --c-str:#98c379; --c-num:#d19a66; --c-kw:#c678dd; --c-typ:#e5c07b; --c-fn:#61afef; }
+    pre.code .c-com { color: var(--c-com); font-style: italic; }
+    pre.code .c-str { color: var(--c-str); }
+    pre.code .c-num { color: var(--c-num); }
+    pre.code .c-kw  { color: var(--c-kw); }
+    pre.code .c-typ { color: var(--c-typ); }
+    pre.code .c-fn  { color: var(--c-fn); }
+    .code-block { position: relative; }
+    .code-block .copy-btn {
+      position: absolute; top: 8px; right: 8px; opacity: 0;
+      height: 26px; padding: 0 10px; font: inherit; font-size: 11.5px; font-weight: 500;
+      color: var(--muted); background: var(--panel-2); border: 1px solid var(--border-strong);
+      border-radius: 6px; cursor: pointer; transition: opacity .12s ease, color .12s ease, background .12s ease;
+    }
+    .code-block:hover .copy-btn, .code-block .copy-btn:focus-visible { opacity: 1; }
+    .code-block .copy-btn:hover { color: var(--text); background: var(--panel); }
+    .code-block .copy-btn.copied { color: #3fb950; border-color: #3fb950; opacity: 1; }
+    .reasoning { color: var(--muted); font-size: 12.5px; border-left: 2px solid var(--border-strong); padding: 1px 0 1px 11px; margin: 2px 0 8px; white-space: pre-wrap; }
+    .tool { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); border-radius: 7px; padding: 4px 10px; font-size: 12px; margin: 3px 5px 3px 0; font-family: "SF Mono", ui-monospace, Menlo, monospace; cursor: pointer; transition: border-color .12s ease; }
+    .tool:hover { border-color: var(--border-strong); }
+    .tool .k { color: var(--accent); }
+    .tool-out { background: var(--code); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; margin: 3px 0 8px; overflow: auto; font-size: 12px; font-family: "SF Mono", ui-monospace, Menlo, monospace; white-space: pre; max-height: 320px; }
+    .err { color: var(--danger); }
+
+    footer { border-top: 1px solid var(--border); padding: 14px 24px 18px; }
+    .composer { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 8px 8px 8px 14px; box-shadow: var(--shadow); transition: border-color .12s ease; }
+    .composer:focus-within { border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-weak); }
+    textarea { flex: 1; resize: none; background: transparent; color: var(--text); border: none; padding: 6px 0; font: inherit; max-height: 200px; min-height: 26px; line-height: 1.5; }
+    textarea:focus { outline: none; }
+    textarea::placeholder { color: var(--faint); }
+    #send { flex: 0 0 auto; background: var(--accent-solid); color: #fff; border: none; border-radius: 9px; width: 34px; height: 34px; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: opacity .12s ease, transform .06s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+    #send:hover { opacity: .92; } #send:active { transform: scale(0.94); }
+    #send:disabled { opacity: .4; cursor: default; }
+    .empty { color: var(--faint); text-align: center; margin-top: 22vh; font-size: 14px; }
+    .empty .big { font-size: 22px; margin-bottom: 6px; opacity: .8; }
+
+    /* ---------- modal ---------- */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    }
+    .modal-overlay.open { display: flex; animation: fade .12s ease; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
+      width: 400px; max-width: calc(100vw - 40px); background: var(--panel);
+      border: 1px solid var(--border-strong); border-radius: 13px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.45); padding: 22px 22px 18px;
+      animation: pop .13s cubic-bezier(.2,.8,.3,1);
+    }
+    @keyframes pop { from { transform: scale(.96) translateY(4px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .modal-title { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; margin-bottom: 8px; }
+    .modal-body { color: var(--muted); font-size: 13.5px; line-height: 1.55; margin-bottom: 22px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn {
+      height: 33px; padding: 0 15px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: 1px solid transparent; transition: background .12s ease, border-color .12s ease, opacity .12s ease;
+    }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn-ghost { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+    .btn-ghost:hover { border-color: var(--border-strong); background: var(--hover); }
+    .btn-primary { background: var(--accent-solid); color: #fff; }
+    .btn-primary:hover { opacity: .92; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { opacity: .92; }
+    .btn-sm { height: 28px; padding: 0 11px; font-size: 12px; }
+    .modal-input {
+      width: 100%; margin: -8px 0 20px; background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font: inherit; font-size: 13.5px;
+    }
+    .modal-input:focus { outline: none; border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-weak); }
+
+    /* ---------- settings drawer ---------- */
+    .drawer-overlay {
+      position: fixed; inset: 0; z-index: 90; display: none; justify-content: flex-end;
+      background: rgba(0,0,0,0.42); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    }
+    .drawer-overlay.open { display: flex; animation: fade .12s ease; }
+    .drawer {
+      width: 400px; max-width: 100vw; flex: 0 0 400px; height: 100%; background: var(--panel);
+      border-left: 1px solid var(--border-strong); display: flex; flex-direction: column;
+      box-shadow: -8px 0 32px rgba(0,0,0,0.35); animation: slidein .16s cubic-bezier(.2,.8,.3,1);
+    }
+    @keyframes slidein { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+    .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+    /* `scrollbar-gutter: stable` reserves the scrollbar space always, so the
+       content width doesn't jump when a section expands and the scrollbar appears. */
+    .drawer-body { overflow-y: auto; scrollbar-gutter: stable; padding: 8px 14px 24px 18px; }
+    .drawer-body section { margin-top: 18px; }
+    .drawer-h { font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+    .drawer-hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); font-size: 11.5px; margin-left: 6px; }
+    .add-row { display: flex; gap: 6px; margin-bottom: 12px; }
+    .add-row input {
+      flex: 1; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 12.5px;
+    }
+    .add-row input:focus { outline: none; border-color: var(--accent-solid); }
+    .conn-list { display: flex; flex-direction: column; gap: 8px; }
+    .conn {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2);
+    }
+    .conn .info { flex: 1; min-width: 0; }
+    .conn .nm { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conn .sub { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conn .actions { display: flex; gap: 6px; flex: 0 0 auto; }
+    .badge { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 20px; letter-spacing: .02em; }
+    .badge.on { background: rgba(63,185,80,0.16); color: #3fb950; }
+    .badge.off { background: var(--hover); color: var(--muted); }
+    .conn-empty { color: var(--faint); font-size: 12.5px; padding: 6px 2px; }
+    .gh-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel-2); padding: 13px 14px; }
+    .gh-head { display: flex; align-items: center; gap: 9px; }
+    .gh-logo { width: 22px; height: 22px; flex: 0 0 auto; }
+    .gh-title { font-weight: 600; font-size: 13.5px; flex: 1; }
+    .gh-sub { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+    .gh-body { margin-top: 11px; }
+    .gh-connect { display: flex; gap: 6px; }
+    .gh-connect input { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; font: inherit; font-size: 12.5px; }
+    .gh-connect input:focus { outline: none; border-color: var(--accent-solid); }
+    .gh-form { display: flex; flex-direction: column; gap: 6px; }
+    .gh-form input, .gh-form select { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; font: inherit; font-size: 12.5px; }
+    .gh-form input:focus, .gh-form select:focus { outline: none; border-color: var(--accent-solid); }
+    .gh-form .gh-form-row { display: flex; gap: 6px; align-items: center; }
+    .gh-note { color: var(--faint); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+    .gh-note a { color: var(--accent); text-decoration: none; }
+    .gh-fail { color: var(--danger); font-size: 12px; margin-top: 8px; word-break: break-word; }
+    .custom-mcp { margin-top: 14px; }
+    .custom-mcp summary { cursor: pointer; color: var(--muted); font-size: 12.5px; user-select: none; }
+    .custom-mcp summary:hover { color: var(--text); }
+    #integrations { display: flex; flex-direction: column; gap: 8px; }
+    .prov-section summary { cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; }
+    .prov-section summary::-webkit-details-marker { display: none; }
+    .prov-section summary::before { content: '▸'; color: var(--faint); margin-right: 7px; font-size: 10px; transition: transform .12s ease; }
+    .prov-section[open] summary::before { content: '▾'; }
+    .prov-section summary:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="brand"><span class="logo">⚒</span> Forge</div>
+    <button class="new-btn" id="new"><span class="plus">+</span> New conversation</button>
+    <div class="section-label">Conversations</div>
+    <div class="convos" id="convos"></div>
+  </aside>
+  <main>
+    <div class="topbar">
+      <div class="title" id="conv-title">Forge</div>
+      <div class="field"><label for="model">Model</label><select id="model"></select></div>
+      <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
+      <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
+    </div>
+    <div id="messages"><div class="empty"><div class="big">⚒</div>Start a new conversation.</div></div>
+    <footer>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="Ask Forge to do something…"></textarea>
+        <button id="send" title="Send (Enter)">↑</button>
+      </div>
+    </footer>
+  </main>
+
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <input class="modal-input" id="modal-input" style="display:none" />
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+        <button class="btn btn-danger" id="modal-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings / connections drawer -->
+  <div class="drawer-overlay" id="drawer-overlay">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Connections">
+      <header class="drawer-head">
+        <span>Connections &amp; sign-in</span>
+        <button class="icon-btn" id="drawer-close" title="Close">✕</button>
+      </header>
+      <div class="drawer-body">
+        <section>
+          <h3 class="drawer-h">Integrations <span class="drawer-hint">give Forge external tools</span></h3>
+          <div id="integrations" class="conn-list"></div>
+          <div id="mcp-list" class="conn-list" style="margin-top:10px"></div>
+          <details class="custom-mcp">
+            <summary>Add a custom MCP server</summary>
+            <div class="add-row" style="margin-top:10px">
+              <input id="mcp-name" placeholder="name" />
+              <input id="mcp-url" placeholder="https://…/mcp/" />
+            </div>
+            <div class="add-row">
+              <input id="mcp-token" placeholder="token — optional (Bearer header)" />
+              <button class="btn btn-primary" id="mcp-add">Add</button>
+            </div>
+          </details>
+        </section>
+        <section>
+          <details class="prov-section">
+            <summary class="drawer-h" id="prov-summary">AI providers</summary>
+            <div id="prov-list" class="conn-list" style="margin-top:10px"></div>
+          </details>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const TOKEN = "__FORGE_TOKEN__";
+    const $ = (id) => document.getElementById(id);
+    const messagesEl = $('messages'), convosEl = $('convos'), inputEl = $('input');
+    let conversationId = null;
+    let streaming = false;
+
+    // Every API call carries the per-run bearer token. Using a custom header
+    // (rather than a cookie) also blocks cross-origin CSRF, since the browser
+    // won't let other pages set it without a CORS grant we never issue.
+    function api(url, opts = {}) {
+      opts.headers = Object.assign({ Authorization: 'Bearer ' + TOKEN }, opts.headers || {});
+      return fetch(url, opts);
+    }
+    function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+    /* ---------- theme toggle ---------- */
+    (function initTheme() {
+      const saved = localStorage.getItem('forge-theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    })();
+    $('theme').onclick = () => {
+      const cur = document.documentElement.getAttribute('data-theme');
+      const dark = cur ? cur === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      const next = dark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('forge-theme', next);
+    };
+
+    /* ---------- confirm modal (replaces native confirm/alert) ---------- */
+    function confirmModal({ title, body, confirmText = 'Delete', hideCancel = false, danger = true, input = null }) {
+      return new Promise((resolve) => {
+        const overlay = $('modal-overlay'), ok = $('modal-ok'), cancel = $('modal-cancel'), field = $('modal-input');
+        $('modal-title').textContent = title;
+        $('modal-body').textContent = body;
+        ok.textContent = confirmText;
+        // Destructive → danger button; input/acknowledgement → neutral primary.
+        ok.className = 'btn ' + ((danger && !input && !hideCancel) ? 'btn-danger' : 'btn-primary');
+        cancel.style.display = hideCancel ? 'none' : '';
+        if (input) {
+          field.style.display = ''; field.value = input.value || '';
+          field.placeholder = input.placeholder || ''; field.type = input.type || 'text';
+        } else { field.style.display = 'none'; }
+        overlay.classList.add('open');
+        setTimeout(() => (input ? field : ok).focus(), 0);
+
+        // Resolve value: boolean for confirms; the string (or null) for prompts.
+        const result = (okPressed) => input ? (okPressed ? field.value : null) : okPressed;
+        const done = (okPressed) => {
+          overlay.classList.remove('open');
+          ok.removeEventListener('click', onOk);
+          cancel.removeEventListener('click', onCancel);
+          document.removeEventListener('keydown', onKey);
+          overlay.removeEventListener('mousedown', onBackdrop);
+          resolve(result(okPressed));
+        };
+        const onOk = () => done(true);
+        const onCancel = () => done(false);
+        const onKey = (e) => {
+          if (e.key === 'Escape') done(false);
+          else if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && (!input || e.target === field)) done(true);
+        };
+        const onBackdrop = (e) => { if (e.target === overlay) done(false); };
+        ok.addEventListener('click', onOk);
+        cancel.addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
+        overlay.addEventListener('mousedown', onBackdrop);
+      });
+    }
+
+    /* ---------- tiny markdown renderer (XSS-safe: escapes before formatting) ---------- */
+    function escapeHtml(s) {
+      return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    // Compact, language-agnostic syntax highlighter. Tokenizes the raw code and
+    // escapes every gap/token, so it stays XSS-safe. Good enough for Rust, JS,
+    // Python, Go, C-likes, etc. — not a full parser.
+    const HL_KEYWORDS = new Set(('fn let mut pub struct enum impl trait const static type where as dyn move use mod crate self super match if else for while loop break continue return in of async await unsafe extern box ref ' +
+      'function var class extends typeof instanceof void export import default yield this new delete throw switch case do try catch finally ' +
+      'def pass lambda global nonlocal elif except finally raise with del not and or is print assert ' +
+      'func package interface defer go chan range select ' +
+      'public private protected final abstract implements throws extends ' +
+      'true false null nil undefined None True False').split(/\s+/));
+    const HASH_COMMENT_LANGS = new Set(['py', 'python', 'sh', 'bash', 'shell', 'zsh', 'rb', 'ruby', 'yaml', 'yml', 'toml', 'ini', 'r', 'perl', 'pl', 'makefile', 'dockerfile']);
+
+    function highlightCode(code, lang) {
+      const hash = HASH_COMMENT_LANGS.has((lang || '').toLowerCase());
+      const comment = hash ? '\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/|#[^\\n]*' : '\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/';
+      const RE = new RegExp(
+        '(' + comment + ')' +                                    // 1 comment
+        '|("(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`(?:\\\\.|[^`\\\\])*`)' + // 2 string
+        '|(\\b0x[0-9a-fA-F]+\\b|\\b\\d[\\d_]*\\.?\\d*(?:[eE][+-]?\\d+)?\\b)' +       // 3 number
+        '|([A-Za-z_$][A-Za-z0-9_$]*)' +                          // 4 word (keyword/type/plain)
+        '|([a-z_$][A-Za-z0-9_$]*)(?=\\s*\\()',                   // (unused; fn handled below)
+        'g');
+      let out = '', last = 0, m;
+      while ((m = RE.exec(code))) {
+        out += escapeHtml(code.slice(last, m.index));
+        const full = m[0];
+        let cls;
+        if (m[1]) cls = 'c-com';
+        else if (m[2]) cls = 'c-str';
+        else if (m[3]) cls = 'c-num';
+        else if (m[4]) {
+          if (HL_KEYWORDS.has(full)) cls = 'c-kw';
+          else if (/^[A-Z]/.test(full)) cls = 'c-typ';
+          else if (code.slice(m.index + full.length).match(/^\s*\(/)) cls = 'c-fn';
+          else cls = null;
+        }
+        out += cls ? '<span class="' + cls + '">' + escapeHtml(full) + '</span>' : escapeHtml(full);
+        last = m.index + full.length;
+        if (full.length === 0) RE.lastIndex++;
+      }
+      out += escapeHtml(code.slice(last));
+      return out;
+    }
+
+    function renderMarkdown(src) {
+      const blocks = [];
+      // Fenced code blocks first, swapped for collision-proof placeholders.
+      src = src.replace(/```([^\n]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+        blocks.push(
+          '<div class="code-block"><button class="copy-btn" type="button">Copy</button>' +
+          '<pre class="code"><code>' + highlightCode(code.replace(/\n$/, ''), lang.trim()) + '</code></pre></div>'
+        );
+        return '%%FBLK' + (blocks.length - 1) + '%%';
+      });
+      src = escapeHtml(src);
+      src = src.replace(/`([^`]+)`/g, (m, c) => '<code class="inline">' + c + '</code>');
+      src = src.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      src = src.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+      src = src.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+      const lines = src.split('\n');
+      let html = '', list = null;
+      const closeList = () => { if (list) { html += '</' + list + '>'; list = null; } };
+      const isRow = (l) => /\|/.test(l) && /\S/.test(l);
+      const isSep = (l) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(l) && /\|/.test(l);
+      const cells = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim());
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]; let m;
+        // GitHub-style table: header row + separator row + body rows.
+        if (isRow(line) && i + 1 < lines.length && isSep(lines[i + 1])) {
+          closeList();
+          const head = cells(line);
+          let j = i + 2; const rows = [];
+          while (j < lines.length && isRow(lines[j]) && !isSep(lines[j])) { rows.push(cells(lines[j])); j++; }
+          let t = '<div class="table-wrap"><table><thead><tr>';
+          for (const h of head) t += '<th>' + h + '</th>';
+          t += '</tr></thead><tbody>';
+          for (const r of rows) {
+            t += '<tr>';
+            for (let k = 0; k < head.length; k++) t += '<td>' + (r[k] || '') + '</td>';
+            t += '</tr>';
+          }
+          t += '</tbody></table></div>';
+          html += t; i = j - 1; continue;
+        }
+        if ((m = line.trim().match(/^%%FBLK(\d+)%%$/))) { closeList(); html += blocks[m[1]]; continue; }
+        if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); html += '<h' + m[1].length + '>' + m[2] + '</h' + m[1].length + '>'; continue; }
+        if ((m = line.match(/^\s*>\s?(.*)$/))) { closeList(); html += '<blockquote>' + m[1] + '</blockquote>'; continue; }
+        if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); list = 'ul'; html += '<ul>'; } html += '<li>' + m[1] + '</li>'; continue; }
+        if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>'; } html += '<li>' + m[1] + '</li>'; continue; }
+        if (line.trim() === '') { closeList(); continue; }
+        closeList();
+        html += '<p>' + line + '</p>';
+      }
+      closeList();
+      html = html.replace(/%%FBLK(\d+)%%/g, (m, i) => blocks[i]);
+      return html;
+    }
+
+    /* ---------- message elements ---------- */
+    function clearMessages() { messagesEl.innerHTML = ''; }
+    function addUser(text) {
+      const row = document.createElement('div'); row.className = 'row';
+      const b = document.createElement('div'); b.className = 'msg user'; b.textContent = text;
+      row.appendChild(b); messagesEl.appendChild(row); scrollDown();
+    }
+    function addAssistantBubble(markdown) {
+      const row = document.createElement('div'); row.className = 'row';
+      const b = document.createElement('div'); b.className = 'msg assistant';
+      b.innerHTML = renderMarkdown(markdown || '');
+      row.appendChild(b); messagesEl.appendChild(row);
+    }
+    function toolChip(label, name, output) {
+      const wrap = document.createElement('div');
+      const c = document.createElement('span'); c.className = 'tool';
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = label;
+      c.append(k, document.createTextNode(name));
+      wrap.appendChild(c);
+      if (output != null && output !== '') {
+        const pre = document.createElement('div'); pre.className = 'tool-out';
+        pre.textContent = output; pre.style.display = 'none';
+        c.onclick = () => { pre.style.display = pre.style.display === 'none' ? 'block' : 'none'; };
+        c.title = 'Toggle output';
+        wrap.appendChild(pre);
+      }
+      return wrap;
+    }
+    function addStreamingAssistant() {
+      const row = document.createElement('div'); row.className = 'row';
+      const reasoning = document.createElement('div'); reasoning.className = 'reasoning'; reasoning.style.display = 'none';
+      const tools = document.createElement('div');
+      const body = document.createElement('div'); body.className = 'msg assistant'; body.style.display = 'none';
+      row.append(reasoning, tools, body);
+      messagesEl.appendChild(row);
+      return { reasoning, tools, body, raw: '' };
+    }
+
+    /* ---------- conversations ---------- */
+    function makeConvoRow(id, label, active) {
+      const row = document.createElement('div');
+      row.className = 'convo' + (active ? ' active' : '');
+      const dot = document.createElement('span'); dot.className = 'dot';
+      const name = document.createElement('span'); name.className = 'name';
+      name.textContent = label; name.title = label;
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = 'Delete';
+      del.onclick = (e) => { e.stopPropagation(); deleteConversation(id, label); };
+      row.append(dot, name, del);
+      row.onclick = () => selectConversation(id, label);
+      return row;
+    }
+
+    async function loadConversations() {
+      const res = await api('/api/conversations');
+      const list = await res.json();
+      convosEl.innerHTML = '';
+      const ids = new Set(list.map((c) => c.id));
+      // Optimistic entry: a just-created conversation isn't returned by the
+      // backend until it has content, so surface it immediately as "New chat".
+      if (conversationId && !ids.has(conversationId)) {
+        convosEl.appendChild(makeConvoRow(conversationId, 'New chat', true));
+      }
+      for (const c of list) {
+        // Forge fills `title` automatically once a turn completes; until then a
+        // conversation shows "New chat" rather than a raw id.
+        convosEl.appendChild(makeConvoRow(c.id, c.title || 'New chat', c.id === conversationId));
+      }
+    }
+
+    async function deleteConversation(id, label) {
+      const ok = await confirmModal({
+        title: 'Delete conversation',
+        body: 'Delete “' + label + '”? This can’t be undone.',
+        confirmText: 'Delete',
+      });
+      if (!ok) return;
+      const res = await api('/api/conversations/' + id, { method: 'DELETE' });
+      if (!res.ok) { await confirmModal({ title: 'Delete failed', body: 'Could not delete this conversation.', confirmText: 'OK', hideCancel: true }); return; }
+      if (id === conversationId) {
+        conversationId = null;
+        $('conv-title').textContent = 'Forge';
+        messagesEl.innerHTML = '<div class="empty"><div class="big">⚒</div>Conversation deleted.</div>';
+      }
+      await loadConversations();
+    }
+
+    async function newConversation() {
+      const res = await api('/api/conversations', { method: 'POST' });
+      const c = await res.json();
+      conversationId = c.id;
+      $('conv-title').textContent = 'New chat';
+      messagesEl.innerHTML = '<div class="empty"><div class="big">⚒</div>Say something to get started.</div>';
+      await loadConversations();
+      inputEl.focus();
+    }
+
+    async function selectConversation(id, label) {
+      conversationId = id;
+      messagesEl.innerHTML = '<div class="empty">Loading…</div>';
+      const res = await api('/api/conversations/' + id + '/messages');
+      if (!res.ok) { messagesEl.innerHTML = '<div class="empty err">Failed to load.</div>'; return; }
+      const msgs = await res.json();
+      $('conv-title').textContent = label || 'Conversation';
+      clearMessages();
+      renderHistory(msgs);
+      await loadConversations();
+    }
+
+    function renderHistory(msgs) {
+      let rendered = 0;
+      for (const m of msgs) {
+        if (m.kind === 'text') {
+          if (m.role === 'system') continue;
+          if (m.role === 'user') addUser(m.content);
+          else {
+            if (m.content && m.content.trim()) addAssistantBubble(m.content);
+            for (const tc of (m.tool_calls || [])) {
+              const row = document.createElement('div'); row.className = 'row';
+              row.appendChild(toolChip('⚙ ', tc, null)); messagesEl.appendChild(row);
+            }
+          }
+          rendered++;
+        } else if (m.kind === 'tool') {
+          const row = document.createElement('div'); row.className = 'row';
+          row.appendChild(toolChip('▸ ', m.name, m.output)); messagesEl.appendChild(row);
+          rendered++;
+        } else if (m.kind === 'image') {
+          const row = document.createElement('div'); row.className = 'row';
+          row.appendChild(toolChip('🖼 ', 'image', null)); messagesEl.appendChild(row);
+          rendered++;
+        }
+      }
+      if (rendered === 0) messagesEl.innerHTML = '<div class="empty">No messages yet — continue below.</div>';
+      scrollDown();
+    }
+
+    /* ---------- agent / model pickers ---------- */
+    // The agent picker is intentionally hidden: this UI always uses the
+    // full-capability "forge" agent (code + shell + MCP/GitHub tools) so users
+    // don't have to understand the agent modes. Falls back to the first agent
+    // if "forge" isn't available.
+    async function ensureDefaultAgent() {
+      const res = await api('/api/agents'); const list = await res.json();
+      const pick = list.find((a) => a.id === 'forge') || list[0];
+      if (pick && !pick.active) {
+        await api('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pick.id }) });
+      }
+    }
+    async function loadModels() {
+      const res = await api('/api/models'); const list = await res.json();
+      const sel = $('model'); sel.innerHTML = '';
+      for (const m of list) {
+        const o = document.createElement('option');
+        o.value = m.id; o.textContent = m.name || m.id; o.selected = m.active; sel.appendChild(o);
+      }
+    }
+    $('model').onchange = async (e) => {
+      await api('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: e.target.value }) });
+    };
+
+    /* ---------- chat streaming ---------- */
+    async function send() {
+      const text = inputEl.value.trim();
+      if (!text || streaming) return;
+      if (!conversationId) await newConversation();
+      const first = messagesEl.querySelector('.empty');
+      if (first) first.remove();
+      addUser(text);
+      inputEl.value = ''; autoGrow();
+      const out = addStreamingAssistant();
+      streaming = true; $('send').disabled = true;
+      try {
+        const res = await api('/api/chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: conversationId, message: text }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split('\n\n');
+          buffer = frames.pop();
+          for (const frame of frames) {
+            const line = frame.split('\n').find((l) => l.startsWith('data:'));
+            if (!line) continue;
+            handleEvent(JSON.parse(line.slice(5).trim()), out);
+          }
+        }
+      } catch (e) {
+        out.body.style.display = ''; out.body.classList.add('err');
+        out.body.textContent = 'Error: ' + e.message;
+      } finally {
+        streaming = false; $('send').disabled = false;
+        loadConversations();
+      }
+    }
+
+    function handleEvent(ev, out) {
+      switch (ev.type) {
+        case 'text':
+          out.body.style.display = ''; out.raw += ev.text;
+          out.body.innerHTML = renderMarkdown(out.raw); break;
+        case 'reasoning':
+          out.reasoning.style.display = ''; out.reasoning.textContent += ev.text; break;
+        case 'tool_input':
+          out.tools.appendChild(toolChip('▸ ', ev.title, ev.subtitle)); break;
+        case 'tool_call_start':
+          out.tools.appendChild(toolChip('⚙ ', ev.name, null)); break;
+        case 'tool_output':
+          out.tools.appendChild(toolChip('▸ ', 'output', ev.text)); break;
+        case 'retry':
+          out.tools.appendChild(toolChip('↻ ', ev.cause, null)); break;
+        case 'interrupt':
+          out.body.style.display = ''; out.body.classList.add('err');
+          out.body.innerHTML += '<p class="err">[interrupted: ' + escapeHtml(ev.reason) + ']</p>'; break;
+        case 'error':
+          out.body.style.display = ''; out.body.classList.add('err');
+          out.body.innerHTML += '<p class="err">[error: ' + escapeHtml(ev.message) + ']</p>'; break;
+        case 'complete': break;
+      }
+      scrollDown();
+    }
+
+    /* ---------- composer ---------- */
+    function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; }
+    inputEl.addEventListener('input', autoGrow);
+    $('send').onclick = send;
+    $('new').onclick = newConversation;
+    inputEl.addEventListener('keydown', (e) => {
+      // Ignore Enter while an IME is composing (e.g. selecting a pinyin
+      // candidate) — `isComposing`/keyCode 229 mark an in-progress composition.
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    // Delegated copy handler: assistant bubbles rebuild their innerHTML while
+    // streaming, so a per-button listener wouldn't survive — listen on the
+    // persistent container instead.
+    messagesEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.copy-btn');
+      if (!btn) return;
+      const code = btn.parentElement.querySelector('pre code');
+      if (!code) return;
+      const text = code.textContent;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+        }
+        btn.textContent = 'Copied'; btn.classList.add('copied');
+      } catch (err) {
+        btn.textContent = 'Failed';
+      }
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1400);
+    });
+
+    /* ---------- connections drawer (providers + MCP) ---------- */
+    function openSettings() { $('drawer-overlay').classList.add('open'); loadMcp(); loadProviders(); }
+    function closeSettings() { $('drawer-overlay').classList.remove('open'); }
+    $('settings').onclick = openSettings;
+    $('drawer-close').onclick = closeSettings;
+    $('drawer-overlay').addEventListener('mousedown', (e) => { if (e.target === $('drawer-overlay')) closeSettings(); });
+
+    function connRow({ name, sub, badge, actions }) {
+      const row = document.createElement('div'); row.className = 'conn';
+      const info = document.createElement('div'); info.className = 'info';
+      const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = name;
+      info.appendChild(nm);
+      if (sub) { const s = document.createElement('div'); s.className = 'sub'; s.textContent = sub; s.title = sub; info.appendChild(s); }
+      row.appendChild(info);
+      if (badge) { const b = document.createElement('span'); b.className = 'badge ' + badge.cls; b.textContent = badge.text; row.appendChild(b); }
+      const act = document.createElement('div'); act.className = 'actions';
+      for (const a of actions) {
+        const btn = document.createElement('button'); btn.className = 'btn btn-sm ' + (a.cls || 'btn-ghost');
+        btn.textContent = a.label; btn.onclick = a.onClick; act.appendChild(btn);
+      }
+      row.appendChild(act);
+      return row;
+    }
+
+    /* ----- MCP integrations ----- */
+    const GH_LOGO = '<svg class="gh-logo" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
+    const JIRA_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><path fill="#2684FF" d="M16 1 30.5 15.5a1.3 1.3 0 0 1 0 1.9L16 31.9l-6.4-6.4L16 19.1l6.4-6.4z"/><path fill="#2684FF" opacity=".8" d="M16 12.7 9.6 6.3 3.2 12.7a1.3 1.3 0 0 0 0 1.9L9.6 21 16 14.6z"/></svg>';
+    const SENTRY_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#362D59"/><path fill="#fff" d="M16 8.5c-.5 0-1 .27-1.27.73l-1.8 3.1.98.57a8.9 8.9 0 0 1 4.32 6.94h-1.9a7 7 0 0 0-3.36-5.32l-1.8 3.12.86.5a3.5 3.5 0 0 1 1.64 2.5H9.1a.28.28 0 0 1-.24-.42l.98-1.7-.98-.57-1 1.7A1.15 1.15 0 0 0 8.86 21h4.7a5.2 5.2 0 0 0-2.28-4.32l.83-1.43a6.8 6.8 0 0 1 2.94 5.75h5.1a10.6 10.6 0 0 0-5.2-9.14l.83-1.43c.05-.09.18-.09.23 0l5.75 9.96a.28.28 0 0 1-.24.42h-1.55c.02.38.03.76.03 1.15h1.52c.88 0 1.43-.96 1-1.72l-5.76-9.96A1.46 1.46 0 0 0 16 8.5z"/></svg>';
+    const SLACK_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#E01E5A" d="M5 15.2a2 2 0 1 1-2-2h2v2zm1 0a2 2 0 0 1 4 0v5a2 2 0 1 1-4 0v-5z"/><path fill="#36C5F0" d="M8.8 5a2 2 0 1 1 2-2v2h-2zm0 1a2 2 0 0 1 0 4h-5a2 2 0 1 1 0-4h5z"/><path fill="#2EB67D" d="M19 8.8a2 2 0 1 1 2 2h-2v-2zm-1 0a2 2 0 0 1-4 0v-5a2 2 0 1 1 4 0v5z"/><path fill="#ECB22E" d="M15.2 19a2 2 0 1 1-2 2v-2h2zm0-1a2 2 0 0 1 0-4h5a2 2 0 1 1 0 4h-5z"/></svg>';
+    const TELEGRAM_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#29A9EB"/><path fill="#fff" d="M5.5 11.8 17 7.3c.5-.2 1 .1.85.86l-1.96 9.24c-.13.6-.5.74-1 .46l-2.77-2.04-1.34 1.29c-.15.15-.28.28-.56.28l.2-2.86 5.2-4.7c.23-.2-.05-.32-.35-.12l-6.42 4.04-2.77-.86c-.6-.2-.62-.6.13-.9z"/></svg>';
+    const WECOM_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#2F89FF"/><text x="16" y="22" font-size="15" font-weight="700" fill="#fff" text-anchor="middle" font-family="-apple-system,sans-serif">W</text></svg>';
+
+    // Built-in integrations. These MCP endpoints don't support OAuth dynamic
+    // client registration, so we connect with a token (Bearer header).
+    const PRESETS = [
+      {
+        key: 'github', name: 'GitHub', logo: GH_LOGO,
+        url: 'https://api.githubcopilot.com/mcp/', urlEditable: false,
+        tokenPh: 'Paste a GitHub Personal Access Token',
+        note: 'Create a token at <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">github.com/settings → Personal access tokens</a> with the repo permissions you want Forge to have.',
+      },
+      {
+        key: 'jira', name: 'Jira', logo: JIRA_LOGO, type: 'stdio',
+        fields: [
+          { id: 'site', placeholder: 'Site URL — https://your-site.atlassian.net', required: true },
+          { id: 'email', placeholder: 'Atlassian account email', required: true },
+          { id: 'token', placeholder: 'API token', password: true, required: true },
+        ],
+        build: (v) => ({ command: 'uvx', args: ['mcp-atlassian'], env: { JIRA_URL: v.site, JIRA_USERNAME: v.email, JIRA_API_TOKEN: v.token } }),
+        note: 'Runs a local <b>mcp-atlassian</b> bridge via <code>uvx</code>. Uses your site URL, email and <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">API token</a>.',
+      },
+      {
+        key: 'sentry', name: 'Sentry', logo: SENTRY_LOGO, type: 'stdio',
+        fields: [
+          { id: 'token', placeholder: 'Sentry user auth token', password: true, required: true },
+          { id: 'host', placeholder: 'Host — leave blank for sentry.io (self-hosted only)', required: false },
+        ],
+        build: (v) => ({ command: 'npx', args: ['-y', '@sentry/mcp-server@latest'].concat(v.host ? ['--host=' + v.host] : []), env: { SENTRY_ACCESS_TOKEN: v.token } }),
+        note: 'Runs the official <b>@sentry/mcp-server</b> via <code>npx</code> (needs Node). Create a <a href="https://sentry.io/settings/account/api/auth-tokens/" target="_blank" rel="noopener">user auth token</a> with org/project/event scopes.',
+      },
+      {
+        key: 'slack', name: 'Slack', logo: SLACK_LOGO, type: 'stdio',
+        fields: [
+          { id: 'webhook', placeholder: 'Incoming Webhook URL (https://hooks.slack.com/services/…)', required: true },
+        ],
+        build: (v) => ({ command: 'npx', args: ['-y', '@kevinwatt/mcp-webhook'], env: { WEBHOOK_URL: v.webhook } }),
+        note: 'Sends messages via a Slack <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener">Incoming Webhook</a> using <b>@kevinwatt/mcp-webhook</b> (needs Node). Send-only.',
+      },
+      {
+        key: 'telegram', name: 'Telegram', logo: TELEGRAM_LOGO, type: 'stdio',
+        fields: [
+          { id: 'token', placeholder: 'Bot token from @BotFather', password: true, required: true },
+        ],
+        build: (v) => ({ command: 'npx', args: ['-y', '@iqai/mcp-telegram'], env: { TELEGRAM_BOT_TOKEN: v.token } }),
+        note: 'Runs <b>@iqai/mcp-telegram</b> via <code>npx</code>. Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> and paste its token.',
+      },
+      {
+        key: 'wecom', name: 'WeCom (企业微信)', logo: WECOM_LOGO, type: 'stdio',
+        fields: [
+          { id: 'webhook', placeholder: 'Group bot Webhook URL (https://qyapi.weixin.qq.com/…)', required: true },
+        ],
+        build: (v) => ({ command: 'uvx', args: ['wecom-bot-mcp-server'], env: { WECOM_WEBHOOK_URL: v.webhook } }),
+        note: 'Runs <b>wecom-bot-mcp-server</b> via <code>uvx</code> (needs Python/uv). Uses a WeCom <b>group bot Webhook URL</b>. Sends messages only.',
+      },
+    ];
+    const PRESET_KEYS = new Set(PRESETS.map((p) => p.key));
+
+    async function loadMcp() {
+      const servers = await (await api('/api/mcp')).json();
+      const box = $('integrations'); box.innerHTML = '';
+      for (const p of PRESETS) box.appendChild(renderIntegrationCard(p, servers.find((s) => s.name === p.key)));
+
+      // Any non-preset custom servers, shown read-only with a Remove button.
+      const others = servers.filter((s) => !PRESET_KEYS.has(s.name));
+      const list = $('mcp-list'); list.innerHTML = '';
+      for (const s of others) {
+        list.appendChild(connRow({
+          name: s.name, sub: s.detail ? (s.url + ' · ' + s.detail) : (s.url || s.kind),
+          badge: mcpBadge(s.status),
+          actions: [{ label: 'Remove', onClick: () => mcpDelete(s.name) }],
+        }));
+      }
+    }
+
+    function mcpBadge(status) {
+      if (status === 'connected') return { text: 'connected', cls: 'on' };
+      if (status === 'failed') return { text: 'error', cls: 'off' };
+      return { text: 'not connected', cls: 'off' };
+    }
+
+    function renderIntegrationCard(preset, srv) {
+      const connected = srv && srv.status === 'connected';
+      const failed = srv && srv.status === 'failed';
+      const card = document.createElement('div'); card.className = 'gh-card';
+
+      const head = document.createElement('div'); head.className = 'gh-head';
+      head.innerHTML = preset.logo;
+      const t = document.createElement('div'); t.style.flex = '1';
+      const title = document.createElement('div'); title.className = 'gh-title'; title.textContent = preset.name;
+      const sub = document.createElement('div'); sub.className = 'gh-sub';
+      sub.textContent = connected ? (srv.detail || 'connected') : failed ? 'connection failed' : 'not connected';
+      t.append(title, sub); head.appendChild(t);
+      const badge = document.createElement('span'); const b = mcpBadge(srv ? srv.status : 'none');
+      badge.className = 'badge ' + b.cls; badge.textContent = b.text; head.appendChild(badge);
+      card.appendChild(head);
+
+      const body = document.createElement('div'); body.className = 'gh-body';
+      if (connected) {
+        const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-ghost'; btn.textContent = 'Disconnect';
+        btn.onclick = () => integrationDisconnect(preset);
+        body.appendChild(btn);
+      } else if (preset.type === 'stdio') {
+        renderStdioForm(preset, body);
+        if (failed) { const f = document.createElement('div'); f.className = 'gh-fail'; f.textContent = String(srv.detail || '').slice(0, 240); body.appendChild(f); }
+        const note = document.createElement('div'); note.className = 'gh-note'; note.innerHTML = preset.note;
+        body.appendChild(note);
+      } else {
+        const row = document.createElement('div'); row.className = 'gh-connect';
+        const input = document.createElement('input'); input.type = 'password'; input.placeholder = preset.tokenPh;
+        const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-primary'; btn.textContent = 'Connect';
+        const go = () => integrationConnectHttp(preset, preset.url, input.value.trim(), btn);
+        btn.onclick = go;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) go(); });
+        row.append(input, btn); body.appendChild(row);
+        if (failed) { const f = document.createElement('div'); f.className = 'gh-fail'; f.textContent = String(srv.detail || '').slice(0, 240); body.appendChild(f); }
+        const note = document.createElement('div'); note.className = 'gh-note'; note.innerHTML = preset.note;
+        body.appendChild(note);
+      }
+      card.appendChild(body);
+      return card;
+    }
+
+    // Local (stdio) bridges — Jira, Sentry, … — configured from preset.fields.
+    function renderStdioForm(preset, body) {
+      const form = document.createElement('div'); form.className = 'gh-form';
+      const inputs = {};
+      for (const f of preset.fields) {
+        const el = document.createElement('input');
+        if (f.password) el.type = 'password';
+        el.placeholder = f.placeholder || f.id;
+        inputs[f.id] = el; form.appendChild(el);
+      }
+      const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-primary'; btn.textContent = 'Connect'; btn.style.alignSelf = 'flex-start';
+      form.appendChild(btn); body.appendChild(form);
+      const go = () => {
+        const v = {}; for (const f of preset.fields) v[f.id] = inputs[f.id].value.trim();
+        connectStdio(preset, v, btn);
+      };
+      btn.onclick = go;
+      for (const f of preset.fields) inputs[f.id].addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) go(); });
+    }
+
+    async function connectStdio(preset, v, btn) {
+      const missing = preset.fields.some((f) => f.required && !v[f.id]);
+      if (missing) { await confirmModal({ title: 'Missing fields', body: 'Please fill in all required fields.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+      const cfg = preset.build(v);
+      const res = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name: preset.key }, cfg)) });
+      await finishConnect(preset, res, btn);
+    }
+
+    async function integrationConnectHttp(preset, url, token, btn) {
+      if (!token) { await confirmModal({ title: 'Token required', body: 'Paste a token to connect ' + preset.name + '.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+      const res = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: preset.key, url, token }) });
+      await finishConnect(preset, res, btn);
+    }
+
+    async function finishConnect(preset, res, btn) {
+      if (!res.ok) { await confirmModal({ title: 'Failed', body: 'Could not save the connection.', confirmText: 'OK', hideCancel: true, danger: false }); if (btn) { btn.disabled = false; btn.textContent = 'Connect'; } return; }
+      await loadMcp();
+      const check = await (await api('/api/mcp')).json();
+      const srv = check.find((s) => s.name === preset.key);
+      if (srv && srv.status === 'connected') await confirmModal({ title: preset.name + ' connected', body: 'Forge can now use ' + preset.name + ' tools (' + (srv.detail || 'ready') + ').', confirmText: 'Done', hideCancel: true, danger: false });
+      else await confirmModal({ title: 'Saved, but not connected', body: preset.name + ' did not connect: ' + String(srv && srv.detail || 'unknown error').slice(0, 260) + '\n\nCheck the values and that the runtime (uvx/docker) is installed.', confirmText: 'OK', hideCancel: true, danger: false });
+    }
+    async function integrationDisconnect(preset) {
+      const ok = await confirmModal({ title: 'Disconnect ' + preset.name, body: 'Remove the stored ' + preset.name + ' token and connection?', confirmText: 'Disconnect' });
+      if (!ok) return;
+      await api('/api/mcp/' + encodeURIComponent(preset.key), { method: 'DELETE' });
+      loadMcp();
+    }
+
+    $('mcp-add').onclick = async () => {
+      const name = $('mcp-name').value.trim(), url = $('mcp-url').value.trim(), token = $('mcp-token').value.trim();
+      if (!name || !url) { await confirmModal({ title: 'Missing fields', body: 'Both a name and a URL are required.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      const body = { name, url }; if (token) body.token = token;
+      const res = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) { await confirmModal({ title: 'Failed', body: 'Could not add server.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      $('mcp-name').value = ''; $('mcp-url').value = ''; $('mcp-token').value = ''; loadMcp();
+    };
+    async function mcpDelete(name) {
+      const ok = await confirmModal({ title: 'Remove MCP server', body: 'Remove “' + name + '” from the config?', confirmText: 'Remove' });
+      if (!ok) return;
+      await api('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' });
+      loadMcp();
+    }
+
+    /* ----- Providers ----- */
+    async function loadProviders() {
+      const list = $('prov-list'); list.innerHTML = '<div class="conn-empty">Loading…</div>';
+      const res = await api('/api/providers'); const provs = await res.json();
+      list.innerHTML = '';
+      // Configured first, then the rest alphabetically (backend already sorts).
+      provs.sort((a, b) => (b.configured - a.configured));
+      const signedIn = provs.filter((p) => p.configured).length;
+      $('prov-summary').textContent = 'AI providers' + (signedIn ? ' · ' + signedIn + ' signed in' : '');
+      for (const p of provs) {
+        const actions = [];
+        if (p.configured) {
+          actions.push({ label: 'Sign out', onClick: () => providerLogout(p.id) });
+        } else {
+          if (p.methods.includes('device')) actions.push({ label: 'Sign in', cls: 'btn-primary', onClick: () => providerDevice(p.id) });
+          if (p.methods.includes('api_key')) actions.push({ label: 'API key', cls: p.methods.includes('device') ? 'btn-ghost' : 'btn-primary', onClick: () => providerApiKey(p.id) });
+          if (!p.methods.some((m) => m === 'device' || m === 'api_key')) actions.push({ label: 'CLI only', cls: 'btn-ghost', onClick: () => confirmModal({ title: p.id, body: 'This provider uses “' + p.methods.join(', ') + '”. Sign in with: forge provider login', confirmText: 'OK', hideCancel: true, danger: false }) });
+        }
+        $('prov-list').appendChild(connRow({
+          name: p.id, sub: p.methods.join(' · '),
+          badge: { text: p.configured ? 'signed in' : 'not signed in', cls: p.configured ? 'on' : 'off' },
+          actions,
+        }));
+      }
+    }
+    async function providerApiKey(id) {
+      const key = await confirmModal({ title: 'Sign in to ' + id, body: 'Paste your API key.', confirmText: 'Save', input: { placeholder: 'sk-…', type: 'password' } });
+      if (!key) return;
+      const res = await api('/api/providers/apikey', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, api_key: key }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); await confirmModal({ title: 'Failed', body: e.error ? String(e.error).slice(0, 300) : 'Could not save key.', confirmText: 'OK', hideCancel: true, danger: false }); }
+      loadProviders(); loadModels();
+    }
+    async function providerDevice(id) {
+      const res = await api('/api/providers/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      if (!res.ok) { await confirmModal({ title: 'Failed', body: 'Could not start device sign-in.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      let dialog = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split('\n\n'); buf = frames.pop();
+        for (const f of frames) {
+          const line = f.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.type === 'code') {
+            if (ev.verification_uri_complete || ev.verification_uri) window.open(ev.verification_uri_complete || ev.verification_uri, '_blank');
+            dialog = confirmModal({ title: 'Enter this code', body: 'Open ' + ev.verification_uri + ' and enter code:  ' + ev.user_code + '\n\nWaiting for you to authorize…', confirmText: 'Working…', hideCancel: true, danger: false });
+          } else if (ev.type === 'done') {
+            $('modal-overlay').classList.remove('open');
+            await confirmModal({ title: 'Connected', body: 'Sign-in succeeded.', confirmText: 'OK', hideCancel: true, danger: false });
+          } else if (ev.type === 'error') {
+            $('modal-overlay').classList.remove('open');
+            await confirmModal({ title: 'Sign-in failed', body: String(ev.message || '').slice(0, 300), confirmText: 'OK', hideCancel: true, danger: false });
+          }
+        }
+      }
+      loadProviders(); loadModels();
+    }
+    async function providerLogout(id) {
+      const ok = await confirmModal({ title: 'Sign out of ' + id, body: 'Remove stored credentials for this provider?', confirmText: 'Sign out' });
+      if (!ok) return;
+      await api('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
+      loadProviders(); loadModels();
+    }
+
+    loadConversations();
+    // Lock in the full-capability agent, then load its models.
+    ensureDefaultAgent().then(loadModels);
+    inputEl.focus();
+  </script>
+</body>
+</html>
