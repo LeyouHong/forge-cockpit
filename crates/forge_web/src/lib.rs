@@ -27,10 +27,10 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use forge_api::API;
 use forge_domain::{
-    AgentId, AuthContextRequest, AuthContextResponse, AuthMethod, ChatRequest, ChatResponse,
-    ConfigOperation, Context, ContextMessage, Conversation, ConversationId, Event as DomainEvent,
-    McpHttpServer, McpOAuthSetting, McpServerConfig, McpStdioServer, ModelId, ProviderId, Role,
-    Scope, ServerName,
+    AgentId, Attachment, AttachmentContent, AuthContextRequest, AuthContextResponse, AuthMethod,
+    ChatRequest, ChatResponse, ConfigOperation, Context, ContextMessage, Conversation,
+    ConversationId, Event as DomainEvent, Image, McpHttpServer, McpOAuthSetting, McpServerConfig,
+    McpStdioServer, ModelId, ProviderId, Role, Scope, ServerName,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,7 @@ where
             "/api/conversations/{id}",
             get(get_conversation::<A>).delete(delete_conversation::<A>),
         )
+        .route("/api/conversations/{id}/rename", post(rename_conversation::<A>))
         .route("/api/conversations/{id}/messages", get(get_messages::<A>))
         .route("/api/agents", get(list_agents::<A>).post(set_agent::<A>))
         .route("/api/models", get(list_models::<A>).post(set_model::<A>))
@@ -101,6 +102,10 @@ where
     let url = format!("http://{local}/?token={}", state.token);
     tracing::info!("Forge web UI listening on {url}");
     println!("Forge web UI ready. Open:\n  {url}");
+    println!(
+        "  ⚠ Anyone with this URL/token can run commands and edit files as you. \
+         Keep it private; it is valid only for this session."
+    );
 
     // Open the default browser once the server is accepting connections. A short
     // delay avoids the browser racing ahead of `axum::serve`.
@@ -257,6 +262,23 @@ async fn get_conversation<A: API>(
         Some(conversation) => Ok(Json(conversation)),
         None => Err(AppError::not_found(format!("conversation '{id}' not found"))),
     }
+}
+
+/// Body for `POST /api/conversations/{id}/rename`.
+#[derive(Deserialize)]
+struct RenameBody {
+    title: String,
+}
+
+/// `POST /api/conversations/{id}/rename` — sets a conversation's title.
+async fn rename_conversation<A: API>(
+    State(state): State<AppState<A>>,
+    Path(id): Path<String>,
+    Json(body): Json<RenameBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let id = ConversationId::parse(&id)?;
+    state.api.rename_conversation(&id, body.title).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// `DELETE /api/conversations/{id}` — permanently removes a conversation.
@@ -652,11 +674,23 @@ async fn delete_mcp<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// An inline image attached to a chat message.
+#[derive(Deserialize)]
+struct ImageInput {
+    /// Base64 payload (without the `data:` prefix).
+    base64: String,
+    mime: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
 /// Request body for `POST /api/chat`.
 #[derive(Deserialize)]
 struct ChatBody {
     conversation_id: String,
     message: String,
+    #[serde(default)]
+    images: Vec<ImageInput>,
 }
 
 /// `POST /api/chat` — streams the agent's response as Server-Sent Events.
@@ -669,7 +703,19 @@ async fn chat<A: API>(State(state): State<AppState<A>>, Json(body): Json<ChatBod
         Err(err) => return AppError::from(err).into_response(),
     };
 
-    let request = ChatRequest::new(DomainEvent::new(body.message), conversation_id);
+    let mut event = DomainEvent::new(body.message);
+    if !body.images.is_empty() {
+        let attachments = body
+            .images
+            .into_iter()
+            .map(|img| Attachment {
+                content: AttachmentContent::Image(Image::new_base64(img.base64, img.mime)),
+                path: img.name.unwrap_or_else(|| "pasted-image".to_string()),
+            })
+            .collect::<Vec<_>>();
+        event = event.attachments(attachments);
+    }
+    let request = ChatRequest::new(event, conversation_id);
 
     let stream = match state.api.chat(request).await {
         Ok(stream) => stream,

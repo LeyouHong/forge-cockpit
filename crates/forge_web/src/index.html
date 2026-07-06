@@ -199,7 +199,13 @@
     .code-block:hover .copy-btn, .code-block .copy-btn:focus-visible { opacity: 1; }
     .code-block .copy-btn:hover { color: var(--text); background: var(--panel); }
     .code-block .copy-btn.copied { color: #3fb950; border-color: #3fb950; opacity: 1; }
-    .reasoning { color: var(--muted); font-size: 12.5px; border-left: 2px solid var(--border-strong); padding: 1px 0 1px 11px; margin: 2px 0 8px; white-space: pre-wrap; }
+    .reasoning-wrap { margin: 2px 0 8px; }
+    .reasoning-wrap > summary { color: var(--faint); font-size: 12px; cursor: pointer; user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+    .reasoning-wrap > summary::-webkit-details-marker { display: none; }
+    .reasoning-wrap > summary::before { content: '💭'; }
+    .reasoning-wrap[open] > summary::after { content: 'hide'; color: var(--faint); font-size: 11px; }
+    .reasoning-wrap:not([open]) > summary::after { content: 'show'; color: var(--faint); font-size: 11px; }
+    .reasoning { color: var(--muted); font-size: 12.5px; border-left: 2px solid var(--border-strong); padding: 4px 0 1px 11px; margin: 6px 0 0; white-space: pre-wrap; }
     .tool { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); border-radius: 7px; padding: 4px 10px; font-size: 12px; margin: 3px 5px 3px 0; font-family: "SF Mono", ui-monospace, Menlo, monospace; cursor: pointer; transition: border-color .12s ease; }
     .tool:hover { border-color: var(--border-strong); }
     .tool .k { color: var(--accent); }
@@ -218,6 +224,27 @@
     #send:disabled { opacity: .4; cursor: default; }
     .empty { color: var(--faint); text-align: center; margin-top: 22vh; font-size: 14px; }
     .empty .big { font-size: 22px; margin-bottom: 6px; opacity: .8; }
+    .retry-btn { margin-top: 6px; }
+    /* image attachments */
+    .composer-btn { flex: 0 0 auto; background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 17px; width: 30px; height: 34px; display: grid; place-items: center; border-radius: 8px; }
+    .composer-btn:hover { color: var(--text); background: var(--hover); }
+    .attach-preview { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .attach-preview:empty { display: none; }
+    .thumb { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb .rm { position: absolute; top: 1px; right: 1px; width: 16px; height: 16px; border-radius: 50%; border: none; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; cursor: pointer; display: grid; place-items: center; line-height: 1; }
+    .msg .msg-img { max-width: 240px; max-height: 220px; border-radius: 8px; margin-top: 6px; display: block; }
+    /* hamburger hidden on wide screens */
+    .hamburger { display: none; }
+    @media (max-width: 760px) {
+      aside { position: fixed; z-index: 80; left: 0; top: 0; bottom: 0; transform: translateX(-100%); transition: transform .18s ease; box-shadow: 6px 0 24px rgba(0,0,0,.3); }
+      body.sidebar-open aside { transform: none; }
+      body.sidebar-open::after { content: ''; position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.4); }
+      .hamburger { display: grid; }
+      .drawer { width: 100vw; flex-basis: 100vw; }
+      .topbar .field label { display: none; }
+      select { max-width: 130px; }
+    }
 
     /* ---------- modal ---------- */
     .modal-overlay {
@@ -329,6 +356,7 @@
   </aside>
   <main>
     <div class="topbar">
+      <button class="icon-btn hamburger" id="hamburger" title="Menu">☰</button>
       <div class="title" id="conv-title">Forge</div>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
       <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
@@ -336,10 +364,13 @@
     </div>
     <div id="messages"><div class="empty"><div class="big">⚒</div>Start a new conversation.</div></div>
     <footer>
+      <div id="attach-preview" class="attach-preview"></div>
       <div class="composer">
-        <textarea id="input" rows="1" placeholder="Ask Forge to do something…"></textarea>
+        <button id="attach" class="composer-btn" title="Attach image">📎</button>
+        <textarea id="input" rows="1" placeholder="Ask Forge to do something…  (paste or attach images)"></textarea>
         <button id="send" title="Send (Enter)">↑</button>
       </div>
+      <input id="file-input" type="file" accept="image/*" multiple style="display:none" />
     </footer>
   </main>
 
@@ -391,11 +422,15 @@
 
   <script>
     const TOKEN = "__FORGE_TOKEN__";
+    // Remove the token from the address bar so it doesn't linger in history /
+    // shoulder-surfing. It stays in memory (JS) for API calls.
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
     const $ = (id) => document.getElementById(id);
     const messagesEl = $('messages'), convosEl = $('convos'), inputEl = $('input');
     let conversationId = null;
     let streaming = false;
     let currentAbort = null;
+    let pendingImages = [];
 
     // Every API call carries the per-run bearer token. Using a custom header
     // (rather than a cookie) also blocks cross-origin CSRF, since the browser
@@ -565,9 +600,14 @@
 
     /* ---------- message elements ---------- */
     function clearMessages() { messagesEl.innerHTML = ''; }
-    function addUser(text) {
+    function addUser(text, images) {
       const row = document.createElement('div'); row.className = 'row';
-      const b = document.createElement('div'); b.className = 'msg user'; b.textContent = text;
+      const b = document.createElement('div'); b.className = 'msg user';
+      if (text) b.textContent = text;
+      for (const im of (images || [])) {
+        const img = document.createElement('img'); img.className = 'msg-img';
+        img.src = 'data:' + im.mime + ';base64,' + im.base64; b.appendChild(img);
+      }
       row.appendChild(b); messagesEl.appendChild(row); scrollDown();
     }
     function addAssistantBubble(markdown) {
@@ -593,12 +633,15 @@
     }
     function addStreamingAssistant() {
       const row = document.createElement('div'); row.className = 'row';
-      const reasoning = document.createElement('div'); reasoning.className = 'reasoning'; reasoning.style.display = 'none';
+      const reasoning = document.createElement('details'); reasoning.className = 'reasoning-wrap'; reasoning.open = true; reasoning.style.display = 'none';
+      const rsum = document.createElement('summary'); rsum.textContent = 'Reasoning';
+      const reasoningBody = document.createElement('div'); reasoningBody.className = 'reasoning';
+      reasoning.append(rsum, reasoningBody);
       const tools = document.createElement('div');
       const body = document.createElement('div'); body.className = 'msg assistant'; body.style.display = 'none';
       row.append(reasoning, tools, body);
       messagesEl.appendChild(row);
-      return { reasoning, tools, body, raw: '' };
+      return { reasoning, reasoningBody, tools, body, raw: '' };
     }
 
     /* ---------- conversations ---------- */
@@ -607,12 +650,21 @@
       row.className = 'convo' + (active ? ' active' : '');
       const dot = document.createElement('span'); dot.className = 'dot';
       const name = document.createElement('span'); name.className = 'name';
-      name.textContent = label; name.title = label;
+      name.textContent = label; name.title = label + '  (double-click to rename)';
+      name.ondblclick = (e) => { e.stopPropagation(); renameConversation(id, label); };
       const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = 'Delete';
       del.onclick = (e) => { e.stopPropagation(); deleteConversation(id, label); };
       row.append(dot, name, del);
-      row.onclick = () => selectConversation(id, label);
+      row.onclick = () => { selectConversation(id, label); document.body.classList.remove('sidebar-open'); };
       return row;
+    }
+
+    async function renameConversation(id, current) {
+      const title = await confirmModal({ title: 'Rename conversation', body: 'New title:', confirmText: 'Rename', danger: false, input: { value: current === 'New chat' ? '' : current, placeholder: 'Conversation title' } });
+      if (title == null || !title.trim()) return;
+      const res = await api('/api/conversations/' + id + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
+      if (res.ok && id === conversationId) $('conv-title').textContent = title.trim();
+      loadConversations();
     }
 
     async function loadConversations() {
@@ -726,12 +778,17 @@
     /* ---------- chat streaming ---------- */
     async function send() {
       const text = inputEl.value.trim();
-      if (!text || streaming) return;
+      const images = pendingImages.slice();
+      if ((!text && !images.length) || streaming) return;
+      inputEl.value = ''; autoGrow(); clearAttachments();
+      await runTurn(text, images);
+    }
+
+    async function runTurn(text, images) {
       if (!conversationId) await newConversation();
       const first = messagesEl.querySelector('.empty');
       if (first) first.remove();
-      addUser(text);
-      inputEl.value = ''; autoGrow();
+      addUser(text, images);
       const out = addStreamingAssistant();
       streaming = true; setStreamingUI(true);
       // Aborting the fetch closes the SSE stream; the backend's send then fails
@@ -740,7 +797,7 @@
       try {
         const res = await api('/api/chat', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: conversationId, message: text }),
+          body: JSON.stringify({ conversation_id: conversationId, message: text, images }),
           signal: currentAbort.signal,
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -765,6 +822,10 @@
           out.body.innerHTML += '<p class="err">[stopped]</p>';
         } else {
           out.body.classList.add('err'); out.body.textContent = 'Error: ' + e.message;
+          const retry = document.createElement('button');
+          retry.className = 'btn btn-sm btn-ghost retry-btn'; retry.textContent = 'Retry';
+          retry.onclick = () => { if (!streaming) runTurn(text, images); };
+          out.body.appendChild(retry);
         }
       } finally {
         streaming = false; setStreamingUI(false); currentAbort = null;
@@ -786,7 +847,7 @@
           out.body.style.display = ''; out.raw += ev.text;
           out.body.innerHTML = renderMarkdown(out.raw); break;
         case 'reasoning':
-          out.reasoning.style.display = ''; out.reasoning.textContent += ev.text; break;
+          out.reasoning.style.display = ''; out.reasoningBody.textContent += ev.text; break;
         case 'tool_input':
           out.tools.appendChild(toolChip('▸ ', ev.title, ev.subtitle)); break;
         case 'tool_call_start':
@@ -808,6 +869,35 @@
       }
       scrollDown();
     }
+
+    /* ---------- image attachments ---------- */
+    function renderAttachPreview() {
+      const box = $('attach-preview'); box.innerHTML = '';
+      pendingImages.forEach((im, i) => {
+        const t = document.createElement('div'); t.className = 'thumb';
+        const img = document.createElement('img'); img.src = 'data:' + im.mime + ';base64,' + im.base64;
+        const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '×';
+        rm.onclick = () => { pendingImages.splice(i, 1); renderAttachPreview(); };
+        t.append(img, rm); box.appendChild(t);
+      });
+    }
+    function clearAttachments() { pendingImages = []; renderAttachPreview(); }
+    function addImageFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = () => { pendingImages.push({ base64: reader.result.split(',')[1], mime: file.type, name: file.name || 'image' }); renderAttachPreview(); };
+      reader.readAsDataURL(file);
+    }
+    $('attach').onclick = () => $('file-input').click();
+    $('file-input').onchange = (e) => { for (const f of e.target.files) addImageFile(f); e.target.value = ''; };
+    inputEl.addEventListener('paste', (e) => {
+      for (const item of (e.clipboardData || {}).items || []) {
+        if (item.type.startsWith('image/')) { addImageFile(item.getAsFile()); e.preventDefault(); }
+      }
+    });
+
+    /* ---------- responsive sidebar ---------- */
+    $('hamburger').onclick = () => document.body.classList.toggle('sidebar-open');
 
     /* ---------- composer ---------- */
     function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; }
