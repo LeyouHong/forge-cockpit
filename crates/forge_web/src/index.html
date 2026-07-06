@@ -212,7 +212,8 @@
     textarea { flex: 1; resize: none; background: transparent; color: var(--text); border: none; padding: 6px 0; font: inherit; max-height: 200px; min-height: 26px; line-height: 1.5; }
     textarea:focus { outline: none; }
     textarea::placeholder { color: var(--faint); }
-    #send { flex: 0 0 auto; background: var(--accent-solid); color: #fff; border: none; border-radius: 9px; width: 34px; height: 34px; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: opacity .12s ease, transform .06s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+    #send { flex: 0 0 auto; background: var(--accent-solid); color: #fff; border: none; border-radius: 9px; width: 34px; height: 34px; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: opacity .12s ease, transform .06s ease, background .12s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+    #send.stop { background: var(--danger); font-size: 12px; }
     #send:hover { opacity: .92; } #send:active { transform: scale(0.94); }
     #send:disabled { opacity: .4; cursor: default; }
     .empty { color: var(--faint); text-align: center; margin-top: 22vh; font-size: 14px; }
@@ -394,6 +395,7 @@
     const messagesEl = $('messages'), convosEl = $('convos'), inputEl = $('input');
     let conversationId = null;
     let streaming = false;
+    let currentAbort = null;
 
     // Every API call carries the per-run bearer token. Using a custom header
     // (rather than a cookie) also blocks cross-origin CSRF, since the browser
@@ -731,11 +733,15 @@
       addUser(text);
       inputEl.value = ''; autoGrow();
       const out = addStreamingAssistant();
-      streaming = true; $('send').disabled = true;
+      streaming = true; setStreamingUI(true);
+      // Aborting the fetch closes the SSE stream; the backend's send then fails
+      // and the agent turn stops.
+      currentAbort = new AbortController();
       try {
         const res = await api('/api/chat', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ conversation_id: conversationId, message: text }),
+          signal: currentAbort.signal,
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const reader = res.body.getReader();
@@ -754,13 +760,25 @@
           }
         }
       } catch (e) {
-        out.body.style.display = ''; out.body.classList.add('err');
-        out.body.textContent = 'Error: ' + e.message;
+        out.body.style.display = '';
+        if (e.name === 'AbortError') {
+          out.body.innerHTML += '<p class="err">[stopped]</p>';
+        } else {
+          out.body.classList.add('err'); out.body.textContent = 'Error: ' + e.message;
+        }
       } finally {
-        streaming = false; $('send').disabled = false;
+        streaming = false; setStreamingUI(false); currentAbort = null;
         loadConversations();
       }
     }
+
+    function setStreamingUI(on) {
+      const btn = $('send');
+      btn.textContent = on ? '■' : '↑';
+      btn.title = on ? 'Stop' : 'Send (Enter)';
+      btn.classList.toggle('stop', on);
+    }
+    function stopStreaming() { if (currentAbort) currentAbort.abort(); }
 
     function handleEvent(ev, out) {
       switch (ev.type) {
@@ -772,9 +790,12 @@
         case 'tool_input':
           out.tools.appendChild(toolChip('▸ ', ev.title, ev.subtitle)); break;
         case 'tool_call_start':
-          out.tools.appendChild(toolChip('⚙ ', ev.name, null)); break;
+          // args expandable; skip the placeholder empty-object payload
+          out.tools.appendChild(toolChip('⚙ ', ev.name, ev.arguments && ev.arguments !== '{}' ? ev.arguments : null)); break;
+        case 'tool_call_end':
+          out.tools.appendChild(toolChip('✓ ', ev.name, ev.output || null)); break;
         case 'tool_output':
-          out.tools.appendChild(toolChip('▸ ', 'output', ev.text)); break;
+          break; // superseded by tool_call_end
         case 'retry':
           out.tools.appendChild(toolChip('↻ ', ev.cause, null)); break;
         case 'interrupt':
@@ -791,7 +812,7 @@
     /* ---------- composer ---------- */
     function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; }
     inputEl.addEventListener('input', autoGrow);
-    $('send').onclick = send;
+    $('send').onclick = () => (streaming ? stopStreaming() : send());
     $('new').onclick = newConversation;
     inputEl.addEventListener('keydown', (e) => {
       // Ignore Enter while an IME is composing (e.g. selecting a pinyin

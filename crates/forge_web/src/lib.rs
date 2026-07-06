@@ -43,12 +43,15 @@ struct AppState<A> {
     api: Arc<A>,
     /// Per-run bearer token that gates the UI and API.
     token: Arc<String>,
+    /// Serializes MCP config read-modify-write so concurrent add/delete can't
+    /// corrupt the config file.
+    config_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 // Manual `Clone` so we don't require `A: Clone` (only the `Arc`s are cloned).
 impl<A> Clone for AppState<A> {
     fn clone(&self) -> Self {
-        Self { api: self.api.clone(), token: self.token.clone() }
+        Self { api: self.api.clone(), token: self.token.clone(), config_lock: self.config_lock.clone() }
     }
 }
 
@@ -64,7 +67,7 @@ where
     // A fresh random token per run. UUID v4 gives us ample entropy without a
     // new dependency.
     let token = ConversationId::generate().into_string();
-    let state = AppState { api, token: Arc::new(token) };
+    let state = AppState { api, token: Arc::new(token), config_lock: Arc::new(tokio::sync::Mutex::new(())) };
 
     // `/api/*` routes require the bearer token.
     let api_routes = Router::new()
@@ -621,11 +624,14 @@ async fn add_mcp<A: API>(
     };
 
     let scope = Scope::User;
+    // Serialize the read-modify-write against other config mutations.
+    let _guard = state.config_lock.lock().await;
     let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
     config
         .mcp_servers
         .insert(ServerName::from(body.name.trim().to_string()), server);
     state.api.write_mcp_config(&scope, &config).await?;
+    drop(_guard);
     // Reconnect so the change takes effect and status reflects reality.
     let _ = state.api.reload_mcp().await;
     Ok(Json(json!({ "ok": true })))
@@ -637,9 +643,11 @@ async fn delete_mcp<A: API>(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let scope = Scope::User;
+    let _guard = state.config_lock.lock().await;
     let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
     config.mcp_servers.remove(&ServerName::from(name));
     state.api.write_mcp_config(&scope, &config).await?;
+    drop(_guard);
     let _ = state.api.reload_mcp().await;
     Ok(Json(json!({ "ok": true })))
 }

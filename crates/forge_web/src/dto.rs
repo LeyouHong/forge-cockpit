@@ -102,10 +102,10 @@ pub enum ChatEventDto {
     },
     /// Raw output produced by a tool.
     ToolOutput { text: String },
-    /// A tool call has started.
-    ToolCallStart { name: String },
-    /// A tool call has finished.
-    ToolCallEnd { name: String },
+    /// A tool call has started, with its (JSON) arguments.
+    ToolCallStart { name: String, arguments: String },
+    /// A tool call has finished, with its output.
+    ToolCallEnd { name: String, output: String },
     /// A retry is being attempted after a failure.
     Retry { cause: String },
     /// The turn was interrupted (e.g. limits reached).
@@ -135,11 +135,15 @@ impl From<&ChatResponse> for ChatEventDto {
                 ChatEventDto::Reasoning { text: content.clone() }
             }
             ChatResponse::TaskComplete => ChatEventDto::Complete,
-            ChatResponse::ToolCallStart { tool_call, .. } => {
-                ChatEventDto::ToolCallStart { name: tool_call.name.as_str().to_string() }
-            }
+            ChatResponse::ToolCallStart { tool_call, .. } => ChatEventDto::ToolCallStart {
+                name: tool_call.name.as_str().to_string(),
+                arguments: tool_call.arguments.clone().into_string(),
+            },
             ChatResponse::ToolCallEnd(result) => {
-                ChatEventDto::ToolCallEnd { name: result.name.as_str().to_string() }
+                ChatEventDto::ToolCallEnd {
+                    name: result.name.as_str().to_string(),
+                    output: result.output.as_str().unwrap_or_default().to_string(),
+                }
             }
             ChatResponse::RetryAttempt { cause, .. } => {
                 ChatEventDto::Retry { cause: cause.as_str().to_string() }
