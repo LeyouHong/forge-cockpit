@@ -132,6 +132,7 @@ where
         .route("/api/squad/{run}/{task}/pr", post(squad::squad_pr::<A>))
         .route("/api/squad/{run}/{task}/discard", post(squad::squad_discard::<A>))
         .route("/api/squad/{run}/{task}/stop", post(squad::squad_stop::<A>))
+        .route("/api/squad/{run}/{task}/followup", post(squad::squad_followup::<A>))
         .route("/api/squad/{run}/{task}/apply", post(squad::squad_apply::<A>))
         .route("/api/worktrees", get(squad::list_worktrees_h::<A>))
         .route("/api/worktrees/diff", post(squad::worktree_diff::<A>))

@@ -17,7 +17,7 @@ use axum::extract::{Path as AxPath, State};
 use axum::response::sse::{Event as SseEvent, Sse};
 use axum::response::{IntoResponse, Response};
 use forge_api::API;
-use forge_domain::{ChatRequest, ChatResponse, Conversation, Event as DomainEvent};
+use forge_domain::{ChatRequest, ChatResponse, Conversation, Event as DomainEvent, McpServerConfig};
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -34,6 +34,9 @@ pub(crate) struct SquadTask {
     pub name: String,
     pub branch: String,
     pub worktree: PathBuf,
+    /// The task's conversation — kept so follow-up turns continue the same
+    /// context in the same worktree.
+    pub conv_id: String,
     /// "running" | "done" | "failed" | "stopped".
     pub status: Mutex<String>,
     /// Handle to abort the running chat (for the per-task Stop button).
@@ -202,6 +205,7 @@ pub(crate) async fn start_squad<A: API + 'static>(
                 name: t.name.clone(),
                 branch,
                 worktree,
+                conv_id: forge_domain::ConversationId::generate().into_string(),
                 status: Mutex::new("running".to_string()),
                 abort: std::sync::Mutex::new(None),
             }));
@@ -225,45 +229,12 @@ pub(crate) async fn start_squad<A: API + 'static>(
         let run2 = run.clone();
         let sem2 = sem.clone();
         let prompt = input.prompt;
-        let task_ref = task.clone();
+        let task2 = task.clone();
         let handle = tokio::spawn(async move {
             let _permit = sem2.acquire_owned().await;
-            let conversation = Conversation::generate();
-            let conv_id = conversation.id;
-            if let Err(e) = api.upsert_conversation(conversation).await {
-                set_status(&run2, &task, "failed", json!({ "message": format!("init failed: {e:?}") })).await;
-                return;
-            }
-            let request = ChatRequest::new(DomainEvent::new(prompt), conv_id);
-            match api.chat(request).await {
-                Ok(mut stream) => {
-                    while let Some(item) = stream.next().await {
-                        match item {
-                            Ok(resp) => {
-                                // Signal the orchestrator so tool-using turns don't deadlock.
-                                if let ChatResponse::ToolCallStart { notifier, .. } = &resp {
-                                    notifier.notify_one();
-                                }
-                                let v = serde_json::to_value(ChatEventDto::from(&resp))
-                                    .unwrap_or_else(|_| json!({ "type": "error", "message": "serialize failed" }));
-                                emit(&run2, &task.id, v).await;
-                            }
-                            Err(e) => {
-                                emit(&run2, &task.id, json!({ "type": "error", "message": format!("{e:?}") })).await;
-                            }
-                        }
-                    }
-                    if let Some(usage) = crate::live::conversation_usage(api.as_ref(), &conv_id).await {
-                        emit(&run2, &task.id, usage).await;
-                    }
-                    set_status(&run2, &task, "done", json!({})).await;
-                }
-                Err(e) => {
-                    set_status(&run2, &task, "failed", json!({ "message": format!("{e:?}") })).await;
-                }
-            }
+            run_task_turn(run2, task2, api, prompt).await;
         });
-        *task_ref.abort.lock().unwrap() = Some(handle.abort_handle());
+        *task.abort.lock().unwrap() = Some(handle.abort_handle());
     }
 
     Ok(Json(json!({
@@ -271,6 +242,95 @@ pub(crate) async fn start_squad<A: API + 'static>(
         "concurrency": concurrency,
         "tasks": tasks.iter().map(|t| json!({ "id": t.id, "name": t.name, "branch": t.branch })).collect::<Vec<_>>(),
     })))
+}
+
+/// Runs one agent turn for a task in its worktree, streaming events into the
+/// run's log/broadcast. Shared by the initial run and follow-up turns; the
+/// conversation is reused so follow-ups keep the full context.
+async fn run_task_turn<A: API + 'static>(
+    run: Arc<SquadRun>,
+    task: Arc<SquadTask>,
+    api: Arc<A>,
+    prompt: String,
+) {
+    let conv_id = match forge_domain::ConversationId::parse(&task.conv_id) {
+        Ok(id) => id,
+        Err(e) => {
+            set_status(&run, &task, "failed", json!({ "message": format!("bad conversation id: {e:?}") })).await;
+            return;
+        }
+    };
+    if api.conversation(&conv_id).await.ok().flatten().is_none() {
+        if let Err(e) = api.upsert_conversation(Conversation::new(conv_id)).await {
+            set_status(&run, &task, "failed", json!({ "message": format!("init failed: {e:?}") })).await;
+            return;
+        }
+    }
+    let request = ChatRequest::new(DomainEvent::new(prompt), conv_id);
+    match api.chat(request).await {
+        Ok(mut stream) => {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(resp) => {
+                        // Signal the orchestrator so tool-using turns don't deadlock.
+                        if let ChatResponse::ToolCallStart { notifier, .. } = &resp {
+                            notifier.notify_one();
+                        }
+                        let v = serde_json::to_value(ChatEventDto::from(&resp))
+                            .unwrap_or_else(|_| json!({ "type": "error", "message": "serialize failed" }));
+                        emit(&run, &task.id, v).await;
+                    }
+                    Err(e) => {
+                        emit(&run, &task.id, json!({ "type": "error", "message": format!("{e:?}") })).await;
+                    }
+                }
+            }
+            if let Some(usage) = crate::live::conversation_usage(api.as_ref(), &conv_id).await {
+                emit(&run, &task.id, usage).await;
+            }
+            set_status(&run, &task, "done", json!({})).await;
+        }
+        Err(e) => {
+            set_status(&run, &task, "failed", json!({ "message": format!("{e:?}") })).await;
+        }
+    }
+}
+
+/// Body for `POST /api/squad/{run}/{task}/followup`.
+#[derive(Deserialize)]
+pub(crate) struct FollowupBody {
+    message: String,
+}
+
+/// `POST /api/squad/{run}/{task}/followup` — sends another instruction to a
+/// finished task's agent, continuing the same conversation in the same
+/// worktree (iterate on the result instead of discarding and re-running).
+pub(crate) async fn squad_followup<A: API + 'static>(
+    State(state): State<AppState<A>>,
+    AxPath((run_id, task_id)): AxPath<(String, String)>,
+    Json(body): Json<FollowupBody>,
+) -> Result<Json<Value>, AppError> {
+    let run = get_run(&state, &run_id).await?;
+    let task = get_task(&run, &task_id)?;
+    if body.message.trim().is_empty() {
+        return Err(AppError::bad_request("message required"));
+    }
+    if task.status.lock().await.as_str() == "running" {
+        return Err(AppError::bad_request("task is still running"));
+    }
+
+    emit(&run, &task.id, json!({ "type": "followup", "text": body.message })).await;
+    set_status(&run, &task, "running", json!({})).await;
+
+    let api = (state.worktree_factory)(task.worktree.clone());
+    let run2 = run.clone();
+    let task2 = task.clone();
+    let prompt = body.message;
+    let handle = tokio::spawn(async move {
+        run_task_turn(run2, task2, api, prompt).await;
+    });
+    *task.abort.lock().unwrap() = Some(handle.abort_handle());
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -355,18 +415,88 @@ pub(crate) async fn squad_diff<A: API>(
 }
 
 /// `POST /api/squad/{run}/{task}/pr` — commit, push, and open a PR (best-effort).
+/// Optional PR details (title/body) from the frontend dialog.
+#[derive(Deserialize, Default)]
+pub(crate) struct PrBody {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+/// The connected GitHub PAT, if the `github` MCP integration is configured.
+async fn github_pat<A: API>(state: &AppState<A>) -> Option<String> {
+    let cfg = state.api.read_mcp_config(None).await.ok()?;
+    for (name, server) in cfg.mcp_servers.iter() {
+        if name.to_string() == "github" {
+            if let McpServerConfig::Http(http) = server {
+                return http
+                    .headers
+                    .get("Authorization")
+                    .and_then(|v| v.strip_prefix("Bearer "))
+                    .map(str::to_string);
+            }
+        }
+    }
+    None
+}
+
+/// Parses `owner/repo` out of the `origin` remote URL (https or ssh form).
+fn origin_slug(git_root: &Path) -> Option<(String, String)> {
+    let url = git(&["remote", "get-url", "origin"], git_root).ok()?;
+    let rest = url.split("github.com").nth(1)?;
+    let rest = rest.trim_start_matches([':', '/']).trim_end_matches(".git");
+    let mut it = rest.splitn(2, '/');
+    Some((it.next()?.to_string(), it.next()?.trim_end_matches('/').to_string()))
+}
+
+/// Creates a PR via the GitHub REST API using the connected PAT.
+async fn create_pr_api(
+    pat: &str,
+    owner: &str,
+    repo: &str,
+    title: &str,
+    head: &str,
+    base: &str,
+    body_text: &str,
+) -> anyhow::Result<String> {
+    let payload = json!({ "title": title, "head": head, "base": base, "body": body_text });
+    let resp = reqwest::Client::new()
+        .post(format!("https://api.github.com/repos/{owner}/{repo}/pulls"))
+        .header("Authorization", format!("Bearer {pat}"))
+        .header("User-Agent", "forge-web")
+        .header("Accept", "application/vnd.github+json")
+        .json(&payload)
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("GitHub API {status}: {}", text.chars().take(200).collect::<String>());
+    }
+    let v: Value = serde_json::from_str(&text)?;
+    v["html_url"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("no html_url in response"))
+}
+
 pub(crate) async fn squad_pr<A: API>(
     State(state): State<AppState<A>>,
     AxPath((run_id, task_id)): AxPath<(String, String)>,
+    pr: Option<Json<PrBody>>,
 ) -> Result<Json<Value>, AppError> {
     let run = get_run(&state, &run_id).await?;
     let task = get_task(&run, &task_id)?;
     let wt = task.worktree.to_str().unwrap_or_default().to_string();
+    let pr = pr.map(|Json(p)| p).unwrap_or_default();
+    let title = pr.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| format!("squad: {}", task.name));
+    let body_text = pr.body.unwrap_or_default();
 
     let _guard = state.config_lock.lock().await;
     let _ = git(&["-C", &wt, "add", "-A"], &run.git_root);
     // Commit; if there's nothing to commit, report that instead of failing hard.
-    if git(&["-C", &wt, "commit", "-m", &format!("squad: {}", task.name)], &run.git_root).is_err() {
+    if git(&["-C", &wt, "commit", "-m", &title], &run.git_root).is_err() {
         let changed = !git(&["-C", &wt, "status", "--porcelain"], &run.git_root)
             .unwrap_or_default()
             .is_empty();
@@ -379,19 +509,30 @@ pub(crate) async fn squad_pr<A: API>(
     let pushed = git(&["-C", &wt, "push", "-u", "origin", &task.branch], &run.git_root);
     match pushed {
         Ok(_) => {
-            // Try the gh CLI to open the PR; otherwise report the pushed branch.
-            let pr = Command::new("gh")
-                .args(["pr", "create", "--fill", "--head", &task.branch])
+            // Preferred: the GitHub REST API with the connected PAT.
+            if let Some(pat) = github_pat(&state).await {
+                if let Some((owner, repo)) = origin_slug(&run.git_root) {
+                    match create_pr_api(&pat, &owner, &repo, &title, &task.branch, &run.base_ref, &body_text).await {
+                        Ok(url) => {
+                            return Ok(Json(json!({ "ok": true, "branch": task.branch, "url": url })));
+                        }
+                        Err(e) => tracing::warn!("PR via GitHub API failed, trying gh CLI: {e}"),
+                    }
+                }
+            }
+            // Fallback: the gh CLI; otherwise report the pushed branch.
+            let pr_out = Command::new("gh")
+                .args(["pr", "create", "--title", &title, "--body", &body_text, "--head", &task.branch])
                 .current_dir(&run.git_root)
                 .output();
-            match pr {
+            match pr_out {
                 Ok(o) if o.status.success() => Ok(Json(json!({
                     "ok": true, "branch": task.branch,
                     "url": String::from_utf8_lossy(&o.stdout).trim(),
                 }))),
                 _ => Ok(Json(json!({
                     "ok": true, "branch": task.branch, "pushed": true,
-                    "message": format!("Pushed {}. Open the PR on GitHub (gh CLI unavailable).", task.branch),
+                    "message": format!("Pushed {}. Open the PR on GitHub manually.", task.branch),
                 }))),
             }
         }

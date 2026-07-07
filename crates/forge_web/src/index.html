@@ -100,6 +100,8 @@
     }
     .new-btn:hover { background: var(--panel-2); border-color: var(--border-strong); }
     .new-btn .plus { color: var(--muted); font-size: 15px; line-height: 1; }
+    .convo-search { margin: 0 12px 8px; padding: 7px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12.5px; }
+    .convo-search:focus { outline: none; border-color: var(--accent-solid); }
     .section-label {
       padding: 6px 18px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em;
       text-transform: uppercase; color: var(--faint);
@@ -360,8 +362,12 @@
     .squad-col-head .nm { font-weight: 600; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .squad-col-body { flex: 1; overflow-y: auto; padding: 12px 13px; font-size: 13.5px; color: var(--prose); }
     .squad-col-body .msg.assistant { border: none; box-shadow: none; background: transparent; padding: 0; }
-    .squad-col-actions { display: flex; gap: 6px; padding: 9px 13px; border-top: 1px solid var(--border); }
+    .squad-col-actions { display: flex; gap: 6px; padding: 9px 13px; border-top: 1px solid var(--border); flex-wrap: wrap; }
     .squad-col-actions:empty { display: none; }
+    .squad-follow { display: flex; gap: 6px; padding: 0 13px 11px; }
+    .squad-follow input { flex: 1; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 12px; }
+    .squad-follow input:focus { outline: none; border-color: var(--accent-solid); }
+    .squad-follow-msg { color: var(--accent); font-size: 12.5px; margin: 10px 0 2px; }
     .badge.running { background: var(--accent-weak); color: var(--accent); }
     .badge.done { background: rgba(63,185,80,0.16); color: #3fb950; }
     .badge.failed { background: rgba(235,87,87,0.16); color: var(--danger); }
@@ -375,6 +381,15 @@
     .leftover .pth { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .diff-pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; max-height: 60vh; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre; }
     .diff-pre .add { color: #3fb950; } .diff-pre .del { color: var(--danger); } .diff-pre .hd { color: var(--accent); }
+    .diff-stat { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: pre; overflow-x: auto; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .diff-file { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .diff-file > summary { cursor: pointer; padding: 8px 12px; background: var(--panel-2); font-size: 12.5px; display: flex; gap: 10px; align-items: center; user-select: none; list-style: none; }
+    .diff-file > summary::-webkit-details-marker { display: none; }
+    .diff-file > summary::before { content: '▾'; color: var(--faint); }
+    .diff-file:not([open]) > summary::before { content: '▸'; }
+    .diff-file > summary .dfp { flex: 1; font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .diff-file > summary .add { color: #3fb950; } .diff-file > summary .del { color: var(--danger); }
+    .diff-file .diff-pre { border: none; border-radius: 0; max-height: 50vh; margin: 0; }
     .gh-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel-2); padding: 13px 14px; }
     .gh-head { display: flex; align-items: center; gap: 9px; }
     .gh-logo { width: 22px; height: 22px; flex: 0 0 auto; }
@@ -406,6 +421,7 @@
   <aside>
     <div class="brand"><span class="logo">⚒</span> Forge</div>
     <button class="new-btn" id="new"><span class="plus">+</span> New conversation</button>
+    <input class="convo-search" id="convo-search" placeholder="Search conversations…" />
     <div class="section-label">Conversations</div>
     <div class="convos" id="convos"></div>
   </aside>
@@ -766,22 +782,29 @@
       loadConversations();
     }
 
+    let convoCache = [];
     async function loadConversations() {
       const res = await api('/api/conversations');
-      const list = await res.json();
+      convoCache = await res.json();
+      renderConversations();
+    }
+    function renderConversations() {
+      const q = ($('convo-search').value || '').trim().toLowerCase();
       convosEl.innerHTML = '';
-      const ids = new Set(list.map((c) => c.id));
-      // Optimistic entry: a just-created conversation isn't returned by the
-      // backend until it has content, so surface it immediately as "New chat".
-      if (conversationId && !ids.has(conversationId)) {
+      const ids = new Set(convoCache.map((c) => c.id));
+      if (conversationId && !ids.has(conversationId) && !q) {
         convosEl.appendChild(makeConvoRow(conversationId, 'New chat', true));
       }
-      for (const c of list) {
-        // Forge fills `title` automatically once a turn completes; until then a
-        // conversation shows "New chat" rather than a raw id.
-        convosEl.appendChild(makeConvoRow(c.id, c.title || 'New chat', c.id === conversationId));
+      let shown = 0;
+      for (const c of convoCache) {
+        const label = c.title || 'New chat';
+        if (q && !label.toLowerCase().includes(q)) continue;
+        convosEl.appendChild(makeConvoRow(c.id, label, c.id === conversationId));
+        shown++;
       }
+      if (q && !shown) convosEl.innerHTML = '<div class="conn-empty" style="padding:8px 12px">No matches.</div>';
     }
+    $('convo-search').addEventListener('input', renderConversations);
 
     async function deleteConversation(id, label) {
       const ok = await confirmModal({
@@ -886,6 +909,7 @@
       const text = inputEl.value.trim();
       const images = pendingImages.slice();
       if ((!text && !images.length) || streaming) return;
+      ensureNotifyPermission();
       inputEl.value = ''; autoGrow(); clearAttachments();
       await runTurn(text, images);
     }
@@ -922,6 +946,7 @@
       let out = null; // created lazily so the user bubble lands first
       const seen = new Set();
       let skipUser = !!(opts && opts.skipUser);
+      let sawComplete = false;
       try {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -943,6 +968,7 @@
               addUser(ev.text || ''); continue;
             }
             if (ev.type === 'usage') { renderUsage(ev); continue; }
+            if (ev.type === 'complete') sawComplete = true;
             if (!out) out = addStreamingAssistant();
             handleEvent(ev, out);
           }
@@ -951,6 +977,7 @@
         if (out) { out.body.style.display = ''; out.body.classList.add('err'); out.body.textContent = 'Error: ' + e.message; }
       } finally {
         if (conversationId === convId) { streaming = false; setStreamingUI(false); }
+        if (sawComplete) notifyDone('Reply ready');
         loadConversations();
       }
       return true;
@@ -965,6 +992,18 @@
     // Stop is an explicit endpoint now (disconnecting no longer kills the turn).
     function stopStreaming() {
       if (conversationId) api('/api/chat/' + conversationId + '/stop', { method: 'POST' });
+    }
+
+    /* ---------- completion notifications ---------- */
+    let unseenDone = 0;
+    function updateTitleFlash() { document.title = unseenDone > 0 ? '(' + unseenDone + ') Forge' : 'Forge'; }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { unseenDone = 0; updateTitleFlash(); } });
+    function ensureNotifyPermission() { if (window.Notification && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} } }
+    // Only nudges when the tab is in the background (foreground already shows it).
+    function notifyDone(body) {
+      if (!document.hidden) return;
+      unseenDone++; updateTitleFlash();
+      try { if (window.Notification && Notification.permission === 'granted') new Notification('Forge', { body, tag: 'forge-done' }); } catch (e) {}
     }
 
     /* ---------- usage display ---------- */
@@ -985,8 +1024,10 @@
     function handleEvent(ev, out) {
       switch (ev.type) {
         case 'text':
+          // Coalesce re-renders to one per frame (avoids O(n²) on long replies).
           out.body.style.display = ''; out.raw += ev.text;
-          out.body.innerHTML = renderMarkdown(out.raw); break;
+          if (!out._pending) { out._pending = true; requestAnimationFrame(() => { out._pending = false; out.body.innerHTML = renderMarkdown(out.raw); (out.scroll || scrollDown)(); }); }
+          break;
         case 'reasoning':
           out.reasoning.style.display = ''; out.reasoningBody.textContent += ev.text; break;
         case 'tool_input':
@@ -1006,7 +1047,10 @@
         case 'error':
           out.body.style.display = ''; out.body.classList.add('err');
           out.body.innerHTML += '<p class="err">[error: ' + escapeHtml(ev.message) + ']</p>'; break;
-        case 'complete': break;
+        case 'complete':
+          // Ensure the final markdown is flushed even if a frame was pending.
+          if (out.raw) out.body.innerHTML = renderMarkdown(out.raw);
+          break;
       }
       (out.scroll || scrollDown)();
     }
@@ -1473,7 +1517,7 @@
         row.append(info,
           mk('View diff', async () => {
             const d = await (await api('/api/worktrees/diff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: w.path }) })).json();
-            await showHtmlModal(w.branch + ' — diff', (d.stat ? '<div class="conn-empty">' + escapeHtml(d.stat) + '</div>' : '') + (d.diff ? '<div class="diff-pre">' + renderDiff(d.diff) + '</div>' : '<div class="conn-empty">No changes.</div>'));
+            await showHtmlModal(w.branch + ' — diff', (d.stat ? '<div class="diff-stat">' + escapeHtml(d.stat) + '</div>' : '') + renderDiff(d.diff));
           }),
           mk('Apply', async () => {
             const ok = await confirmModal({ title: 'Apply to current branch', body: 'Squash ' + w.branch + ' onto your current branch (staged, not committed)?', confirmText: 'Apply', danger: false });
@@ -1527,6 +1571,7 @@
         }
       }
       if (!tasks.length) { await confirmModal({ title: 'No tasks', body: squadMode === 'best' ? 'Enter the task to attempt.' : 'Add at least one task with a prompt.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      ensureNotifyPermission();
       const concurrency = Math.max(1, Math.min(5, parseInt($('squad-conc').value) || 3));
       const base_ref = $('squad-base').value.trim() || undefined;
       const res = await api('/api/squad', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tasks, concurrency, base_ref }) });
@@ -1549,13 +1594,14 @@
         const body = document.createElement('div'); body.className = 'squad-col-body';
         const actions = document.createElement('div'); actions.className = 'squad-col-actions';
         col.append(head, body, actions); board.appendChild(col);
-        cols[t.id] = { id: t.id, name: t.name, branch: t.branch, ctx: makeStreamCtx(body, body), badge, stopBtn, actions, built: false };
+        cols[t.id] = { id: t.id, name: t.name, branch: t.branch, bodyEl: body, ctx: makeStreamCtx(body, body), badge, stopBtn, actions, built: false };
       }
       streamSquad(run.run_id, cols);
     }
 
     async function streamSquad(runId, cols) {
       const seen = new Set();
+      const doneTasks = new Set();
       const res = await api('/api/squad/' + runId + '/events');
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       while (true) {
@@ -1567,12 +1613,24 @@
           let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (ev.seq != null) { if (seen.has(ev.seq)) continue; seen.add(ev.seq); }
           const col = cols[ev.task_id]; if (!col) continue;
-          if (ev.type === 'task_status') { squadStatus(runId, col, ev.status, ev.message); continue; }
+          if (ev.type === 'task_status') {
+            squadStatus(runId, col, ev.status, ev.message);
+            if (['done', 'failed', 'stopped'].includes(ev.status)) {
+              doneTasks.add(ev.task_id);
+              if (doneTasks.size >= Object.keys(cols).length) notifyDone('Parallel run finished');
+            } else { doneTasks.delete(ev.task_id); }
+            continue;
+          }
           if (ev.type === 'usage') {
             if (ev.total_tokens) { const u = document.createElement('span'); u.className = 'usage-info'; u.textContent = fmtTokens(ev.total_tokens) + ' tok'; col.badge.after(u); }
             continue;
           }
           if (ev.type === 'user') continue; // squad columns show only agent output
+          if (ev.type === 'followup') {
+            // Follow-up instruction (from replay): render it + start a fresh block.
+            col.ctx.body.style.display = ''; col.ctx.body.innerHTML += '<p class="squad-follow-msg">↳ ' + escapeHtml(ev.text || '') + '</p>';
+            col.ctx = makeStreamCtx(col.bodyEl, col.bodyEl); continue;
+          }
           handleEvent(ev, col.ctx);
         }
       }
@@ -1582,37 +1640,78 @@
       col.badge.className = 'badge ' + status; col.badge.textContent = status;
       if (status === 'failed' && message) { col.ctx.body.style.display = ''; col.ctx.body.innerHTML += '<p class="err">' + escapeHtml(String(message).slice(0, 300)) + '</p>'; }
       const terminal = status === 'done' || status === 'failed' || status === 'stopped';
+      if (status === 'running') {
+        // A follow-up turn restarted this column: re-add the Stop button, hide actions/followup.
+        col.actions.innerHTML = ''; col.built = false; if (col.followRow) col.followRow.style.display = 'none';
+        if (!col.stopBtn) { const s = document.createElement('button'); s.className = 'btn btn-sm btn-ghost'; s.textContent = 'Stop'; s.onclick = () => squadStop(runId, col.id); col.badge.after(s); col.stopBtn = s; }
+        return;
+      }
       if (terminal && col.stopBtn) { col.stopBtn.remove(); col.stopBtn = null; }
       if (terminal && !col.built) {
         col.built = true;
         const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn btn-sm ' + cls; b.textContent = label; b.onclick = fn; return b; };
+        col.actions.innerHTML = '';
         col.actions.append(
           mk('View diff', 'btn-ghost', () => squadDiff(runId, col.id, col.name)),
           mk('Apply', 'btn-primary', () => squadApply(runId, col.id)),
-          mk('Open PR', 'btn-ghost', () => squadPr(runId, col.id)),
+          mk('Open PR', 'btn-ghost', () => squadPr(runId, col.id, col.name)),
           mk('Discard', 'btn-ghost', () => squadDiscard(runId, col.id, col)),
         );
+        if (col.followRow) col.followRow.style.display = '';
+        else buildFollowup(runId, col);
       }
+    }
+    // A follow-up composer per column: send another instruction to that agent,
+    // continuing the same conversation in the same worktree.
+    function buildFollowup(runId, col) {
+      const row = document.createElement('div'); row.className = 'squad-follow';
+      const input = document.createElement('input'); input.placeholder = 'Follow up (iterate on this result)…';
+      const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-primary'; btn.textContent = 'Send';
+      const go = async () => {
+        const msg = input.value.trim(); if (!msg) return;
+        input.value = '';
+        // The 'followup' + subsequent events arrive over SSE and drive the UI.
+        await api('/api/squad/' + runId + '/' + col.id + '/followup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) });
+      };
+      btn.onclick = go;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) go(); });
+      row.append(input, btn);
+      col.followRow = row; col.actions.after(row);
     }
     async function squadStop(runId, taskId) {
       // The 'stopped' status arrives back over SSE and updates the column.
       await api('/api/squad/' + runId + '/' + taskId + '/stop', { method: 'POST' });
     }
 
+    // Groups a unified diff into a collapsible section per file, with +/- counts.
     function renderDiff(diff) {
-      return diff.split('\n').map((l) => {
-        const e = escapeHtml(l);
-        if (l.startsWith('+') && !l.startsWith('+++')) return '<span class="add">' + e + '</span>';
-        if (l.startsWith('-') && !l.startsWith('---')) return '<span class="del">' + e + '</span>';
-        if (l.startsWith('@@') || l.startsWith('diff ') || l.startsWith('index ') || l.startsWith('+++') || l.startsWith('---')) return '<span class="hd">' + e + '</span>';
-        return e;
-      }).join('\n');
+      if (!diff || !diff.trim()) return '<div class="conn-empty">No changes.</div>';
+      const files = []; let cur = null;
+      for (const line of diff.split('\n')) {
+        if (line.startsWith('diff --git')) { if (cur) files.push(cur); cur = { header: line, lines: [] }; }
+        else { if (!cur) cur = { header: '', lines: [] }; cur.lines.push(line); }
+      }
+      if (cur) files.push(cur);
+      return files.map((f) => {
+        const m = f.header.match(/ b\/(.+)$/);
+        const path = m ? m[1] : 'diff';
+        let add = 0, del = 0;
+        const body = f.lines.map((l) => {
+          const e = escapeHtml(l);
+          if (l.startsWith('+') && !l.startsWith('+++')) { add++; return '<span class="add">' + e + '</span>'; }
+          if (l.startsWith('-') && !l.startsWith('---')) { del++; return '<span class="del">' + e + '</span>'; }
+          if (l.startsWith('@@') || l.startsWith('index ') || l.startsWith('+++') || l.startsWith('---')) return '<span class="hd">' + e + '</span>';
+          return e;
+        }).join('\n');
+        return '<details class="diff-file" open><summary><span class="dfp">' + escapeHtml(path) +
+          '</span> <span class="add">+' + add + '</span> <span class="del">−' + del + '</span></summary>' +
+          '<div class="diff-pre">' + body + '</div></details>';
+      }).join('');
     }
     async function squadDiff(runId, taskId, name) {
       const res = await api('/api/squad/' + runId + '/' + taskId + '/diff');
       const d = await res.json();
-      const html = (d.stat ? '<div class="conn-empty">' + escapeHtml(d.stat) + '</div>' : '') +
-        (d.diff ? '<div class="diff-pre">' + renderDiff(d.diff) + '</div>' : '<div class="conn-empty">No changes.</div>');
+      const html = (d.stat ? '<div class="diff-stat">' + escapeHtml(d.stat) + '</div>' : '') + renderDiff(d.diff);
       await showHtmlModal(name + ' — diff', html);
     }
     async function squadApply(runId, taskId) {
@@ -1622,8 +1721,21 @@
       const d = await res.json().catch(() => ({}));
       await confirmModal({ title: res.ok ? 'Applied' : 'Apply failed', body: d.message || d.error || (res.ok ? 'Done.' : 'Failed.'), confirmText: 'OK', hideCancel: true, danger: false });
     }
-    async function squadPr(runId, taskId) {
-      const res = await api('/api/squad/' + runId + '/' + taskId + '/pr', { method: 'POST' });
+    // Modal to edit PR title/body before creating. Resolves { title, body } or null.
+    function prDialog(defaultTitle, col) {
+      return new Promise((resolve) => {
+        const html =
+          '<input id="pr-title" class="modal-input" style="display:block;margin:0 0 8px" placeholder="PR title">' +
+          '<textarea id="pr-body" class="modal-input" style="display:block;min-height:100px;resize:vertical" placeholder="Description (optional)"></textarea>';
+        showHtmlModalForm('Open pull request', html, () => ({ title: $('pr-title').value.trim(), body: $('pr-body').value }))
+          .then(resolve);
+        const t = $('pr-title'); if (t) { t.value = defaultTitle; setTimeout(() => t.focus(), 0); }
+      });
+    }
+    async function squadPr(runId, taskId, name) {
+      const pr = await prDialog('squad: ' + (name || 'changes'));
+      if (!pr) return;
+      const res = await api('/api/squad/' + runId + '/' + taskId + '/pr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pr) });
       const d = await res.json().catch(() => ({}));
       const msg = d.url ? ('PR opened:\n' + d.url) : (d.message || (d.ok ? 'Done.' : 'Failed.'));
       await confirmModal({ title: 'Open PR', body: msg, confirmText: 'OK', hideCancel: true, danger: false });
@@ -1648,6 +1760,24 @@
         const done = () => { overlay.classList.remove('open'); modal.style.width = ''; body.textContent = ''; ok.removeEventListener('click', done); document.removeEventListener('keydown', onKey); resolve(); };
         const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') done(); };
         ok.addEventListener('click', done); document.addEventListener('keydown', onKey);
+      });
+    }
+
+    // A wider HTML modal with Cancel/Create; resolves collect() or null.
+    function showHtmlModalForm(title, html, collect) {
+      return new Promise((resolve) => {
+        const overlay = $('modal-overlay'), ok = $('modal-ok'), cancel = $('modal-cancel'), body = $('modal-body'), input = $('modal-input');
+        const modal = overlay.querySelector('.modal');
+        $('modal-title').textContent = title;
+        body.innerHTML = html; input.style.display = 'none'; cancel.style.display = '';
+        ok.textContent = 'Create'; ok.className = 'btn btn-primary';
+        modal.style.width = 'min(560px, 92vw)';
+        overlay.classList.add('open');
+        const finish = (val) => { overlay.classList.remove('open'); modal.style.width = ''; body.textContent = ''; ok.removeEventListener('click', onOk); cancel.removeEventListener('click', onCancel); document.removeEventListener('keydown', onKey); resolve(val); };
+        const onOk = () => finish(collect());
+        const onCancel = () => finish(null);
+        const onKey = (e) => { if (e.key === 'Escape') finish(null); };
+        ok.addEventListener('click', onOk); cancel.addEventListener('click', onCancel); document.addEventListener('keydown', onKey);
       });
     }
 
