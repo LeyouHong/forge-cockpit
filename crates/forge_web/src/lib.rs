@@ -170,15 +170,26 @@ struct IndexQuery {
     token: Option<String>,
 }
 
-/// Serves the single-page frontend, gated by the token query parameter.
+/// Serves the single-page frontend, gated by the token.
 ///
-/// The token is injected into the page so the frontend can authorize its API
-/// calls without the user copy-pasting it.
+/// The token arrives as a query parameter on first load; we then set it as an
+/// HttpOnly cookie so a plain refresh (after the query string is stripped from
+/// the address bar) still authorizes the shell. The token is also injected into
+/// the page for the frontend's API calls, which authorize via a bearer header —
+/// the cookie only re-serves this HTML and can't call the API on its own.
 async fn index<A>(
     State(state): State<AppState<A>>,
     Query(query): Query<IndexQuery>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
-    if query.token.as_deref() != Some(state.token.as_str()) {
+    let query_ok = query.token.as_deref() == Some(state.token.as_str());
+    let want = format!("forge_token={}", state.token);
+    let cookie_ok = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|c| c.split(';').any(|kv| kv.trim() == want))
+        .unwrap_or(false);
+    if !query_ok && !cookie_ok {
         return (
             StatusCode::UNAUTHORIZED,
             Html("<h1>Unauthorized</h1><p>Open the URL printed by <code>forge serve</code>, which includes the access token.</p>"),
@@ -186,7 +197,13 @@ async fn index<A>(
             .into_response();
     }
     let page = include_str!("index.html").replace("__FORGE_TOKEN__", &state.token);
-    Html(page).into_response()
+    let mut resp = Html(page).into_response();
+    if query_ok {
+        if let Ok(cookie) = format!("{want}; Path=/; SameSite=Strict; HttpOnly").parse() {
+            resp.headers_mut().insert(axum::http::header::SET_COOKIE, cookie);
+        }
+    }
+    resp
 }
 
 /// A lightweight conversation summary for the sidebar.
