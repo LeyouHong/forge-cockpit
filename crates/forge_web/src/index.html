@@ -1166,6 +1166,7 @@
     const JIRA_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><path fill="#2684FF" d="M16 1 30.5 15.5a1.3 1.3 0 0 1 0 1.9L16 31.9l-6.4-6.4L16 19.1l6.4-6.4z"/><path fill="#2684FF" opacity=".8" d="M16 12.7 9.6 6.3 3.2 12.7a1.3 1.3 0 0 0 0 1.9L9.6 21 16 14.6z"/></svg>';
     const SENTRY_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#362D59"/><path fill="#fff" d="M16 8.5c-.5 0-1 .27-1.27.73l-1.8 3.1.98.57a8.9 8.9 0 0 1 4.32 6.94h-1.9a7 7 0 0 0-3.36-5.32l-1.8 3.12.86.5a3.5 3.5 0 0 1 1.64 2.5H9.1a.28.28 0 0 1-.24-.42l.98-1.7-.98-.57-1 1.7A1.15 1.15 0 0 0 8.86 21h4.7a5.2 5.2 0 0 0-2.28-4.32l.83-1.43a6.8 6.8 0 0 1 2.94 5.75h5.1a10.6 10.6 0 0 0-5.2-9.14l.83-1.43c.05-.09.18-.09.23 0l5.75 9.96a.28.28 0 0 1-.24.42h-1.55c.02.38.03.76.03 1.15h1.52c.88 0 1.43-.96 1-1.72l-5.76-9.96A1.46 1.46 0 0 0 16 8.5z"/></svg>';
     const GCAL_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="6" width="20" height="20" rx="3" fill="#fff" stroke="#4285F4" stroke-width="2"/><rect x="6" y="6" width="20" height="6" rx="3" fill="#4285F4"/><text x="16" y="24" font-size="10" font-weight="700" fill="#4285F4" text-anchor="middle" font-family="-apple-system,Arial,sans-serif">31</text></svg>';
+    const GHA_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#2088FF"/><path fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5l3 3 7-7"/></svg>';
 
     // Built-in integrations. These MCP endpoints don't support OAuth dynamic
     // client registration, so we connect with a token (Bearer header).
@@ -1449,6 +1450,7 @@
     /* ---------- boards (kanban) ---------- */
     const KB_PLATFORMS = [
       { key: 'github', name: 'GitHub', logo: GH_LOGO },
+      { key: 'gha', name: 'GitHub Actions', logo: GHA_LOGO },
       { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
       { key: 'sentry', name: 'Sentry', logo: SENTRY_LOGO },
       { key: 'gcal', name: 'Google Calendar', logo: GCAL_LOGO },

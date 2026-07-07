@@ -110,6 +110,7 @@ where
         .route("/api/conversations/{id}/usage", get(live::get_usage::<A>))
         .route("/api/board/platforms", get(board::platforms::<A>))
         .route("/api/board/github", get(board::github_board::<A>))
+        .route("/api/board/gha", get(board::gha_board::<A>))
         .route("/api/board/jira", get(board::jira_board::<A>))
         .route("/api/board/sentry", get(board::sentry_board::<A>))
         .route("/api/board/gcal", get(board::gcal_board::<A>))

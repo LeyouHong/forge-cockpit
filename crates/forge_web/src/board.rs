@@ -148,7 +148,8 @@ pub(crate) async fn platforms<A: API>(State(state): State<AppState<A>>) -> Json<
     let jira = server(&state, "jira").await.as_ref().and_then(|s| stdio_env(s, "JIRA_URL")).is_some();
     let sentry = server(&state, "sentry").await.as_ref().and_then(|s| stdio_env(s, "SENTRY_ACCESS_TOKEN")).is_some();
     let gcal = read_settings().get("gcal_ics").and_then(|v| v.as_str()).is_some();
-    Json(json!({ "github": gh, "jira": jira, "sentry": sentry, "gcal": gcal }))
+    // GitHub Actions reuses the GitHub connection.
+    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal }))
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,98 @@ pub(crate) async fn github_board<A: API>(
             { "label": "Open PRs", "value": prs, "url": format!("{base}/pulls") },
             { "label": "Assigned to me", "value": assigned, "url": format!("{base}/issues?q=is%3Aopen+assignee%3A%40me") },
             { "label": "Review requests", "value": reviews, "url": format!("{base}/pulls?q=is%3Aopen+review-requested%3A%40me") },
+        ]
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// GitHub Actions — CI health on the default branch (reuses the GitHub PAT)
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn gha_board<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let pat = server(&state, "github")
+        .await
+        .as_ref()
+        .and_then(github_pat)
+        .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
+    let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
+    let (owner, repo) = origin_slug(&root).ok_or_else(|| AppError::bad_request("no github origin remote"))?;
+    let cl = client();
+    let auth = format!("Bearer {pat}");
+
+    // Default branch (fall back to "main").
+    let branch = cl
+        .get(format!("https://api.github.com/repos/{owner}/{repo}"))
+        .header("Authorization", &auth)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .ok();
+    let branch = match branch {
+        Some(r) => r.json::<Value>().await.ok().and_then(|v| v["default_branch"].as_str().map(str::to_string)).unwrap_or_else(|| "main".into()),
+        None => "main".into(),
+    };
+
+    let runs: Value = cl
+        .get(format!("https://api.github.com/repos/{owner}/{repo}/actions/runs"))
+        .query(&[("branch", branch.as_str()), ("per_page", "50")])
+        .header("Authorization", &auth)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("actions: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("actions: {e}")))?;
+
+    // Keep only the most recent run per workflow (the list is newest-first),
+    // so the counts reflect each workflow's current state.
+    let mut seen = std::collections::HashSet::new();
+    let (mut passing, mut failing, mut running) = (0, 0, 0);
+    let mut latest: Option<(String, String)> = None; // (conclusion/status, workflow name)
+    if let Some(list) = runs["workflow_runs"].as_array() {
+        for r in list {
+            let key = r["workflow_id"].as_i64().map(|i| i.to_string()).unwrap_or_else(|| r["name"].as_str().unwrap_or("").to_string());
+            if !seen.insert(key) {
+                continue;
+            }
+            let status = r["status"].as_str().unwrap_or("");
+            let concl = r["conclusion"].as_str().unwrap_or("");
+            if latest.is_none() {
+                let s = if status != "completed" { status } else { concl };
+                latest = Some((s.to_string(), r["name"].as_str().unwrap_or("").to_string()));
+            }
+            if status != "completed" {
+                running += 1;
+            } else {
+                match concl {
+                    "success" => passing += 1,
+                    "failure" | "startup_failure" | "timed_out" => failing += 1,
+                    _ => {} // cancelled / skipped / neutral — ignore
+                }
+            }
+        }
+    }
+
+    let subtitle = if failing > 0 {
+        format!("{branch} · {failing} failing")
+    } else if running > 0 {
+        format!("{branch} · building")
+    } else if passing > 0 {
+        format!("{branch} · all green")
+    } else {
+        format!("{branch} · no runs")
+    };
+
+    Ok(Json(json!({
+        "url": format!("https://github.com/{owner}/{repo}/actions?query=branch%3A{branch}"),
+        "subtitle": subtitle,
+        "stats": [
+            { "label": "Passing", "value": passing },
+            { "label": "Failing", "value": failing },
+            { "label": "Running", "value": running },
         ]
     })))
 }
