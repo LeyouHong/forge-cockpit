@@ -34,8 +34,10 @@ pub(crate) struct SquadTask {
     pub name: String,
     pub branch: String,
     pub worktree: PathBuf,
-    /// "running" | "done" | "failed".
+    /// "running" | "done" | "failed" | "stopped".
     pub status: Mutex<String>,
+    /// Handle to abort the running chat (for the per-task Stop button).
+    pub abort: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 /// A parallel run of several tasks.
@@ -188,6 +190,7 @@ pub(crate) async fn start_squad<A: API + 'static>(
                 branch,
                 worktree,
                 status: Mutex::new("running".to_string()),
+                abort: std::sync::Mutex::new(None),
             }));
         }
     }
@@ -209,7 +212,8 @@ pub(crate) async fn start_squad<A: API + 'static>(
         let run2 = run.clone();
         let sem2 = sem.clone();
         let prompt = input.prompt;
-        tokio::spawn(async move {
+        let task_ref = task.clone();
+        let handle = tokio::spawn(async move {
             let _permit = sem2.acquire_owned().await;
             let conversation = Conversation::generate();
             let conv_id = conversation.id;
@@ -243,6 +247,7 @@ pub(crate) async fn start_squad<A: API + 'static>(
                 }
             }
         });
+        *task_ref.abort.lock().unwrap() = Some(handle.abort_handle());
     }
 
     Ok(Json(json!({
@@ -382,6 +387,103 @@ pub(crate) async fn squad_discard<A: API>(
 
     let _guard = state.config_lock.lock().await;
     let _ = git(&["worktree", "remove", "--force", &wt], &run.git_root);
+    let _ = git(&["worktree", "prune"], &run.git_root);
     let _ = git(&["branch", "-D", &task.branch], &run.git_root);
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// `POST /api/squad/{run}/{task}/stop` — abort a running task's chat.
+pub(crate) async fn squad_stop<A: API>(
+    State(state): State<AppState<A>>,
+    AxPath((run_id, task_id)): AxPath<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let run = get_run(&state, &run_id).await?;
+    let task = get_task(&run, &task_id)?;
+    // Aborting the tokio task drops the chat stream; the orchestrator's send
+    // then fails and the agent turn stops.
+    if let Some(h) = task.abort.lock().unwrap().take() {
+        h.abort();
+    }
+    set_status(&run, &task, "stopped", json!({})).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// worktree management (registry-independent — survives server restarts)
+// ---------------------------------------------------------------------------
+
+fn repo_root<A: API>(state: &AppState<A>) -> anyhow::Result<PathBuf> {
+    let cwd = state.api.environment().cwd;
+    Ok(PathBuf::from(git(&["rev-parse", "--show-toplevel"], &cwd)?))
+}
+
+/// All `squad/*` worktrees currently on disk (parsed from `git worktree list`).
+fn scan_worktrees(git_root: &Path) -> Vec<Value> {
+    let out = git(&["worktree", "list", "--porcelain"], git_root).unwrap_or_default();
+    let mut res = Vec::new();
+    let mut path: Option<String> = None;
+    for line in out.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            path = Some(p.to_string());
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            let branch = b.trim_start_matches("refs/heads/").to_string();
+            if branch.starts_with("squad/") {
+                if let Some(p) = &path {
+                    res.push(json!({ "path": p, "branch": branch }));
+                }
+            }
+        }
+    }
+    res
+}
+
+/// `GET /api/worktrees` — leftover squad worktrees for cleanup.
+pub(crate) async fn list_worktrees_h<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let root = repo_root(&state)?;
+    Ok(Json(json!({ "worktrees": scan_worktrees(&root) })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PathBody {
+    path: String,
+}
+
+/// Validates `path` is a real squad worktree, returning its branch.
+fn validated_worktree(git_root: &Path, path: &str) -> Result<String, AppError> {
+    scan_worktrees(git_root)
+        .into_iter()
+        .find(|w| w["path"].as_str() == Some(path))
+        .and_then(|w| w["branch"].as_str().map(str::to_string))
+        .ok_or_else(|| AppError::bad_request("not a known squad worktree"))
+}
+
+/// `POST /api/worktrees/diff` — diff a worktree vs its fork point.
+pub(crate) async fn worktree_diff<A: API>(
+    State(state): State<AppState<A>>,
+    Json(body): Json<PathBody>,
+) -> Result<Json<Value>, AppError> {
+    let root = repo_root(&state)?;
+    let branch = validated_worktree(&root, &body.path)?;
+    let base = git(&["merge-base", "HEAD", &branch], &root).unwrap_or_else(|_| "HEAD".to_string());
+    let _guard = state.config_lock.lock().await;
+    let _ = git(&["-C", &body.path, "add", "-A"], &root);
+    let diff = git(&["-C", &body.path, "diff", "--cached", &base], &root).unwrap_or_default();
+    let stat = git(&["-C", &body.path, "diff", "--cached", "--stat", &base], &root).unwrap_or_default();
+    Ok(Json(json!({ "diff": diff, "stat": stat, "branch": branch })))
+}
+
+/// `POST /api/worktrees/remove` — remove a squad worktree + branch (validated).
+pub(crate) async fn worktree_remove<A: API>(
+    State(state): State<AppState<A>>,
+    Json(body): Json<PathBody>,
+) -> Result<Json<Value>, AppError> {
+    let root = repo_root(&state)?;
+    let branch = validated_worktree(&root, &body.path)?;
+    let _guard = state.config_lock.lock().await;
+    let _ = git(&["worktree", "remove", "--force", &body.path], &root);
+    let _ = git(&["worktree", "prune"], &root);
+    let _ = git(&["branch", "-D", &branch], &root);
     Ok(Json(json!({ "ok": true })))
 }

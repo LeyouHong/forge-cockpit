@@ -351,6 +351,14 @@
     .badge.running { background: var(--accent-weak); color: var(--accent); }
     .badge.done { background: rgba(63,185,80,0.16); color: #3fb950; }
     .badge.failed { background: rgba(235,87,87,0.16); color: var(--danger); }
+    .badge.stopped, .badge.discarded { background: var(--hover); color: var(--muted); }
+    #squad-leftovers { margin-top: 20px; }
+    #squad-leftovers:empty { display: none; }
+    .leftover-h { font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+    .leftover { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); margin-bottom: 6px; }
+    .leftover .info { flex: 1; min-width: 0; }
+    .leftover .br { font-size: 12.5px; font-weight: 500; }
+    .leftover .pth { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .diff-pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; max-height: 60vh; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre; }
     .diff-pre .add { color: #3fb950; } .diff-pre .del { color: var(--danger); } .diff-pre .hd { color: var(--accent); }
     .gh-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel-2); padding: 13px 14px; }
@@ -438,6 +446,7 @@
           <label class="field"><span>Base</span><input id="squad-base" placeholder="current branch" /></label>
           <button class="btn btn-primary" id="squad-run">Run ▶</button>
         </div>
+        <div id="squad-leftovers"></div>
       </div>
       <div id="squad-board" class="squad-board"></div>
     </div>
@@ -1294,12 +1303,45 @@
 
     function openSquad() {
       $('squad-overlay').classList.add('open');
-      if (!$('squad-board').classList.contains('live') && !$('squad-tasks').children.length) resetSquadLauncher();
+      if (!$('squad-board').classList.contains('live')) {
+        if (!$('squad-tasks').children.length) resetSquadLauncher();
+        else loadLeftoverWorktrees();
+      }
     }
     function resetSquadLauncher() {
       $('squad-launcher').style.display = '';
       $('squad-tasks').innerHTML = '';
       addSquadTaskCard(); addSquadTaskCard();
+      loadLeftoverWorktrees();
+    }
+    async function loadLeftoverWorktrees() {
+      const box = $('squad-leftovers'); box.innerHTML = '';
+      let list = [];
+      try { list = (await (await api('/api/worktrees')).json()).worktrees || []; } catch (e) { return; }
+      if (!list.length) return;
+      const h = document.createElement('div'); h.className = 'leftover-h'; h.textContent = 'Leftover worktrees (' + list.length + ')';
+      box.appendChild(h);
+      const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'btn btn-sm btn-ghost'; b.textContent = label; b.onclick = fn; return b; };
+      for (const w of list) {
+        const row = document.createElement('div'); row.className = 'leftover';
+        const info = document.createElement('div'); info.className = 'info';
+        const br = document.createElement('div'); br.className = 'br'; br.textContent = w.branch;
+        const pth = document.createElement('div'); pth.className = 'pth'; pth.textContent = w.path; pth.title = w.path;
+        info.append(br, pth);
+        row.append(info,
+          mk('View diff', async () => {
+            const d = await (await api('/api/worktrees/diff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: w.path }) })).json();
+            await showHtmlModal(w.branch + ' — diff', (d.stat ? '<div class="conn-empty">' + escapeHtml(d.stat) + '</div>' : '') + (d.diff ? '<div class="diff-pre">' + renderDiff(d.diff) + '</div>' : '<div class="conn-empty">No changes.</div>'));
+          }),
+          mk('Remove', async () => {
+            const ok = await confirmModal({ title: 'Remove worktree', body: 'Remove ' + w.branch + ' and its worktree?', confirmText: 'Remove' });
+            if (!ok) return;
+            await api('/api/worktrees/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: w.path }) });
+            loadLeftoverWorktrees();
+          }),
+        );
+        box.appendChild(row);
+      }
     }
     function addSquadTaskCard(name, prompt) {
       const row = document.createElement('div'); row.className = 'squad-task';
@@ -1335,11 +1377,13 @@
         const head = document.createElement('div'); head.className = 'squad-col-head';
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.name; nm.title = t.branch;
         const badge = document.createElement('span'); badge.className = 'badge running'; badge.textContent = 'running';
-        head.append(nm, badge);
+        const stopBtn = document.createElement('button'); stopBtn.className = 'btn btn-sm btn-ghost'; stopBtn.textContent = 'Stop';
+        stopBtn.onclick = () => squadStop(run.run_id, t.id);
+        head.append(nm, badge, stopBtn);
         const body = document.createElement('div'); body.className = 'squad-col-body';
         const actions = document.createElement('div'); actions.className = 'squad-col-actions';
         col.append(head, body, actions); board.appendChild(col);
-        cols[t.id] = { id: t.id, name: t.name, branch: t.branch, ctx: makeStreamCtx(body, body), badge, actions, built: false };
+        cols[t.id] = { id: t.id, name: t.name, branch: t.branch, ctx: makeStreamCtx(body, body), badge, stopBtn, actions, built: false };
       }
       streamSquad(run.run_id, cols);
     }
@@ -1366,7 +1410,9 @@
     function squadStatus(runId, col, status, message) {
       col.badge.className = 'badge ' + status; col.badge.textContent = status;
       if (status === 'failed' && message) { col.ctx.body.style.display = ''; col.ctx.body.innerHTML += '<p class="err">' + escapeHtml(String(message).slice(0, 300)) + '</p>'; }
-      if ((status === 'done' || status === 'failed') && !col.built) {
+      const terminal = status === 'done' || status === 'failed' || status === 'stopped';
+      if (terminal && col.stopBtn) { col.stopBtn.remove(); col.stopBtn = null; }
+      if (terminal && !col.built) {
         col.built = true;
         const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn btn-sm ' + cls; b.textContent = label; b.onclick = fn; return b; };
         col.actions.append(
@@ -1375,6 +1421,10 @@
           mk('Discard', 'btn-ghost', () => squadDiscard(runId, col.id, col)),
         );
       }
+    }
+    async function squadStop(runId, taskId) {
+      // The 'stopped' status arrives back over SSE and updates the column.
+      await api('/api/squad/' + runId + '/' + taskId + '/stop', { method: 'POST' });
     }
 
     function renderDiff(diff) {

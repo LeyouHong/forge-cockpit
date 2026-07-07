@@ -122,6 +122,10 @@ where
         .route("/api/squad/{run}/{task}/diff", get(squad::squad_diff::<A>))
         .route("/api/squad/{run}/{task}/pr", post(squad::squad_pr::<A>))
         .route("/api/squad/{run}/{task}/discard", post(squad::squad_discard::<A>))
+        .route("/api/squad/{run}/{task}/stop", post(squad::squad_stop::<A>))
+        .route("/api/worktrees", get(squad::list_worktrees_h::<A>))
+        .route("/api/worktrees/diff", post(squad::worktree_diff::<A>))
+        .route("/api/worktrees/remove", post(squad::worktree_remove::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
