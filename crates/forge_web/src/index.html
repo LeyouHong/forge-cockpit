@@ -130,6 +130,7 @@
       padding: 0 20px; border-bottom: 1px solid var(--border);
     }
     .topbar .title { font-weight: 500; font-size: 13.5px; flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .usage-info { color: var(--faint); font-size: 11.5px; white-space: nowrap; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
     .topbar .spacer { flex: 1; }
     .field { display: flex; align-items: center; gap: 6px; }
     .field label { color: var(--faint); font-size: 11.5px; font-weight: 500; }
@@ -412,6 +413,7 @@
     <div class="topbar">
       <button class="icon-btn hamburger" id="hamburger" title="Menu">☰</button>
       <div class="title" id="conv-title">Forge</div>
+      <span class="usage-info" id="usage-info"></span>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="squad-open" title="Parallel tasks (worktree agents)">⚡</button>
@@ -520,7 +522,6 @@
     const messagesEl = $('messages'), convosEl = $('convos'), inputEl = $('input');
     let conversationId = null;
     let streaming = false;
-    let currentAbort = null;
     let pendingImages = [];
 
     // Every API call carries the per-run bearer token. Using a custom header
@@ -818,7 +819,10 @@
       $('conv-title').textContent = label || 'Conversation';
       clearMessages();
       renderHistory(msgs);
+      refreshUsage(id);
       await loadConversations();
+      // Resume an in-flight turn, if one is still running server-side.
+      attachLive(id, {});
     }
 
     function renderHistory(msgs) {
@@ -873,7 +877,9 @@
       await api('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: e.target.value }) });
     };
 
-    /* ---------- chat streaming ---------- */
+    /* ---------- chat streaming (resumable turns) ---------- */
+    // Turns run server-side and survive page refreshes: POST /api/chat starts a
+    // background turn; GET /api/chat/{conv}/live replays + streams its events.
     async function send() {
       const text = inputEl.value.trim();
       const images = pendingImages.slice();
@@ -887,18 +893,34 @@
       const first = messagesEl.querySelector('.empty');
       if (first) first.remove();
       addUser(text, images);
-      const out = addStreamingAssistant();
+      const res = await api('/api/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId, message: text, images }),
+      });
+      if (!res.ok) {
+        const out = addStreamingAssistant();
+        out.body.style.display = ''; out.body.classList.add('err');
+        const e = await res.json().catch(() => ({}));
+        out.body.textContent = 'Error: ' + (e.error || ('HTTP ' + res.status));
+        const retry = document.createElement('button');
+        retry.className = 'btn btn-sm btn-ghost retry-btn'; retry.textContent = 'Retry';
+        retry.onclick = () => { if (!streaming) runTurn(text, images); };
+        out.body.appendChild(retry);
+        return;
+      }
+      await attachLive(conversationId, { skipUser: true });
+    }
+
+    // Attaches to a conversation's live turn (if any). Renders replayed +
+    // live events; used both right after send() and to resume after a refresh.
+    async function attachLive(convId, opts) {
+      const res = await api('/api/chat/' + convId + '/live');
+      if (!res.ok) return false; // no active turn — nothing to resume
       streaming = true; setStreamingUI(true);
-      // Aborting the fetch closes the SSE stream; the backend's send then fails
-      // and the agent turn stops.
-      currentAbort = new AbortController();
+      let out = null; // created lazily so the user bubble lands first
+      const seen = new Set();
+      let skipUser = !!(opts && opts.skipUser);
       try {
-        const res = await api('/api/chat', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: conversationId, message: text, images }),
-          signal: currentAbort.signal,
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -911,24 +933,25 @@
           for (const frame of frames) {
             const line = frame.split('\n').find((l) => l.startsWith('data:'));
             if (!line) continue;
-            handleEvent(JSON.parse(line.slice(5).trim()), out);
+            let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+            if (ev.seq != null) { if (seen.has(ev.seq)) continue; seen.add(ev.seq); }
+            if (conversationId !== convId) continue; // user switched away; keep draining
+            if (ev.type === 'user') {
+              if (skipUser) { skipUser = false; continue; }
+              addUser(ev.text || ''); continue;
+            }
+            if (ev.type === 'usage') { renderUsage(ev); continue; }
+            if (!out) out = addStreamingAssistant();
+            handleEvent(ev, out);
           }
         }
       } catch (e) {
-        out.body.style.display = '';
-        if (e.name === 'AbortError') {
-          out.body.innerHTML += '<p class="err">[stopped]</p>';
-        } else {
-          out.body.classList.add('err'); out.body.textContent = 'Error: ' + e.message;
-          const retry = document.createElement('button');
-          retry.className = 'btn btn-sm btn-ghost retry-btn'; retry.textContent = 'Retry';
-          retry.onclick = () => { if (!streaming) runTurn(text, images); };
-          out.body.appendChild(retry);
-        }
+        if (out) { out.body.style.display = ''; out.body.classList.add('err'); out.body.textContent = 'Error: ' + e.message; }
       } finally {
-        streaming = false; setStreamingUI(false); currentAbort = null;
+        if (conversationId === convId) { streaming = false; setStreamingUI(false); }
         loadConversations();
       }
+      return true;
     }
 
     function setStreamingUI(on) {
@@ -937,7 +960,25 @@
       btn.title = on ? 'Stop' : 'Send (Enter)';
       btn.classList.toggle('stop', on);
     }
-    function stopStreaming() { if (currentAbort) currentAbort.abort(); }
+    // Stop is an explicit endpoint now (disconnecting no longer kills the turn).
+    function stopStreaming() {
+      if (conversationId) api('/api/chat/' + conversationId + '/stop', { method: 'POST' });
+    }
+
+    /* ---------- usage display ---------- */
+    function fmtTokens(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+    function renderUsage(u) {
+      const el = $('usage-info');
+      if (!u || !u.total_tokens) { el.textContent = ''; return; }
+      let s = fmtTokens(u.total_tokens) + ' tok';
+      if (u.cost != null) s += ' · $' + Number(u.cost).toFixed(4);
+      el.textContent = s;
+      el.title = 'prompt ' + (u.prompt_tokens || 0) + ' · completion ' + (u.completion_tokens || 0);
+    }
+    async function refreshUsage(convId) {
+      try { renderUsage(await (await api('/api/conversations/' + convId + '/usage')).json()); }
+      catch (e) { renderUsage(null); }
+    }
 
     function handleEvent(ev, out) {
       switch (ev.type) {
@@ -1424,6 +1465,13 @@
             const d = await (await api('/api/worktrees/diff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: w.path }) })).json();
             await showHtmlModal(w.branch + ' — diff', (d.stat ? '<div class="conn-empty">' + escapeHtml(d.stat) + '</div>' : '') + (d.diff ? '<div class="diff-pre">' + renderDiff(d.diff) + '</div>' : '<div class="conn-empty">No changes.</div>'));
           }),
+          mk('Apply', async () => {
+            const ok = await confirmModal({ title: 'Apply to current branch', body: 'Squash ' + w.branch + ' onto your current branch (staged, not committed)?', confirmText: 'Apply', danger: false });
+            if (!ok) return;
+            const res = await api('/api/worktrees/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: w.path }) });
+            const d = await res.json().catch(() => ({}));
+            await confirmModal({ title: res.ok ? 'Applied' : 'Apply failed', body: d.message || d.error || (res.ok ? 'Done.' : 'Failed.'), confirmText: 'OK', hideCancel: true, danger: false });
+          }),
           mk('Remove', async () => {
             const ok = await confirmModal({ title: 'Remove worktree', body: 'Remove ' + w.branch + ' and its worktree?', confirmText: 'Remove' });
             if (!ok) return;
@@ -1510,6 +1558,11 @@
           if (ev.seq != null) { if (seen.has(ev.seq)) continue; seen.add(ev.seq); }
           const col = cols[ev.task_id]; if (!col) continue;
           if (ev.type === 'task_status') { squadStatus(runId, col, ev.status, ev.message); continue; }
+          if (ev.type === 'usage') {
+            if (ev.total_tokens) { const u = document.createElement('span'); u.className = 'usage-info'; u.textContent = fmtTokens(ev.total_tokens) + ' tok'; col.badge.after(u); }
+            continue;
+          }
+          if (ev.type === 'user') continue; // squad columns show only agent output
           handleEvent(ev, col.ctx);
         }
       }
@@ -1525,7 +1578,8 @@
         const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn btn-sm ' + cls; b.textContent = label; b.onclick = fn; return b; };
         col.actions.append(
           mk('View diff', 'btn-ghost', () => squadDiff(runId, col.id, col.name)),
-          mk('Open PR', 'btn-primary', () => squadPr(runId, col.id)),
+          mk('Apply', 'btn-primary', () => squadApply(runId, col.id)),
+          mk('Open PR', 'btn-ghost', () => squadPr(runId, col.id)),
           mk('Discard', 'btn-ghost', () => squadDiscard(runId, col.id, col)),
         );
       }
@@ -1550,6 +1604,13 @@
       const html = (d.stat ? '<div class="conn-empty">' + escapeHtml(d.stat) + '</div>' : '') +
         (d.diff ? '<div class="diff-pre">' + renderDiff(d.diff) + '</div>' : '<div class="conn-empty">No changes.</div>');
       await showHtmlModal(name + ' — diff', html);
+    }
+    async function squadApply(runId, taskId) {
+      const ok = await confirmModal({ title: 'Apply to current branch', body: 'Squash this task’s changes onto your current branch (staged, not committed)?', confirmText: 'Apply', danger: false });
+      if (!ok) return;
+      const res = await api('/api/squad/' + runId + '/' + taskId + '/apply', { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      await confirmModal({ title: res.ok ? 'Applied' : 'Apply failed', body: d.message || d.error || (res.ok ? 'Done.' : 'Failed.'), confirmText: 'OK', hideCancel: true, danger: false });
     }
     async function squadPr(runId, taskId) {
       const res = await api('/api/squad/' + runId + '/' + taskId + '/pr', { method: 'POST' });

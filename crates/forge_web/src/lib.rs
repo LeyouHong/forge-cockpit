@@ -10,6 +10,7 @@
 //! itself) behind a per-run bearer token printed at startup.
 
 mod dto;
+mod live;
 mod squad;
 
 use std::collections::HashMap;
@@ -29,16 +30,14 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use forge_api::API;
 use forge_domain::{
-    AgentId, Attachment, AttachmentContent, AuthContextRequest, AuthContextResponse, AuthMethod,
-    ChatRequest, ChatResponse, ConfigOperation, Context, ContextMessage, Conversation,
-    ConversationId, Event as DomainEvent, Image, McpHttpServer, McpOAuthSetting, McpServerConfig,
+    AgentId, AuthContextRequest, AuthContextResponse, AuthMethod, ConfigOperation, Context,
+    ContextMessage, Conversation, ConversationId, McpHttpServer, McpOAuthSetting, McpServerConfig,
     McpStdioServer, ModelId, ProviderId, Role, Scope, ServerName,
 };
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::dto::{ChatEventDto, MessageDto};
+use crate::dto::MessageDto;
 
 /// Builds a fresh API bound to a given working directory (a git worktree).
 /// Threaded in from `forge_main`, where the concrete `ForgeAPI` type is known.
@@ -56,6 +55,8 @@ pub(crate) struct AppState<A> {
     pub(crate) worktree_factory: WorktreeFactory<A>,
     /// Live parallel runs, keyed by run id.
     pub(crate) squads: squad::SquadRegistry,
+    /// Resumable chat turns, keyed by conversation id.
+    pub(crate) turns: live::TurnRegistry,
 }
 
 // Manual `Clone` so we don't require `A: Clone` (only the `Arc`s are cloned).
@@ -67,6 +68,7 @@ impl<A> Clone for AppState<A> {
             config_lock: self.config_lock.clone(),
             worktree_factory: self.worktree_factory.clone(),
             squads: self.squads.clone(),
+            turns: self.turns.clone(),
         }
     }
 }
@@ -94,6 +96,7 @@ where
         config_lock: Arc::new(tokio::sync::Mutex::new(())),
         worktree_factory,
         squads: Default::default(),
+        turns: Default::default(),
     };
 
     // `/api/*` routes require the bearer token.
@@ -119,15 +122,20 @@ where
         .route("/api/providers/{id}", delete(remove_provider::<A>))
         .route("/api/mcp", get(list_mcp::<A>).post(add_mcp::<A>))
         .route("/api/mcp/{name}", delete(delete_mcp::<A>))
-        .route("/api/chat", post(chat::<A>))
+        .route("/api/chat", post(live::start_turn::<A>))
+        .route("/api/chat/{conv}/live", get(live::turn_live::<A>))
+        .route("/api/chat/{conv}/stop", post(live::turn_stop::<A>))
+        .route("/api/conversations/{id}/usage", get(live::get_usage::<A>))
         .route("/api/squad", post(squad::start_squad::<A>))
         .route("/api/squad/{run}/events", get(squad::squad_events::<A>))
         .route("/api/squad/{run}/{task}/diff", get(squad::squad_diff::<A>))
         .route("/api/squad/{run}/{task}/pr", post(squad::squad_pr::<A>))
         .route("/api/squad/{run}/{task}/discard", post(squad::squad_discard::<A>))
         .route("/api/squad/{run}/{task}/stop", post(squad::squad_stop::<A>))
+        .route("/api/squad/{run}/{task}/apply", post(squad::squad_apply::<A>))
         .route("/api/worktrees", get(squad::list_worktrees_h::<A>))
         .route("/api/worktrees/diff", post(squad::worktree_diff::<A>))
+        .route("/api/worktrees/apply", post(squad::worktree_apply::<A>))
         .route("/api/worktrees/remove", post(squad::worktree_remove::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
@@ -768,79 +776,6 @@ async fn delete_mcp<A: API>(
     drop(_guard);
     let _ = state.api.reload_mcp().await;
     Ok(Json(json!({ "ok": true })))
-}
-
-/// An inline image attached to a chat message.
-#[derive(Deserialize)]
-struct ImageInput {
-    /// Base64 payload (without the `data:` prefix).
-    base64: String,
-    mime: String,
-    #[serde(default)]
-    name: Option<String>,
-}
-
-/// Request body for `POST /api/chat`.
-#[derive(Deserialize)]
-struct ChatBody {
-    conversation_id: String,
-    message: String,
-    #[serde(default)]
-    images: Vec<ImageInput>,
-}
-
-/// `POST /api/chat` — streams the agent's response as Server-Sent Events.
-///
-/// Each SSE `data:` payload is a JSON [`ChatEventDto`]. The stream ends after a
-/// `complete` (or `error`) event.
-async fn chat<A: API>(State(state): State<AppState<A>>, Json(body): Json<ChatBody>) -> Response {
-    let conversation_id = match ConversationId::parse(&body.conversation_id) {
-        Ok(id) => id,
-        Err(err) => return AppError::from(err).into_response(),
-    };
-
-    let mut event = DomainEvent::new(body.message);
-    if !body.images.is_empty() {
-        let attachments = body
-            .images
-            .into_iter()
-            .map(|img| Attachment {
-                content: AttachmentContent::Image(Image::new_base64(img.base64, img.mime)),
-                path: img.name.unwrap_or_else(|| "pasted-image".to_string()),
-            })
-            .collect::<Vec<_>>();
-        event = event.attachments(attachments);
-    }
-    let request = ChatRequest::new(event, conversation_id);
-
-    let stream = match state.api.chat(request).await {
-        Ok(stream) => stream,
-        Err(err) => return AppError::from(err).into_response(),
-    };
-
-    let sse = stream.map(|item| {
-        let dto = match &item {
-            Ok(response) => {
-                // The orchestrator awaits this notifier after emitting
-                // `ToolCallStart` before it runs the tool. The TUI signals it
-                // once the tool header is rendered; we must do the same or every
-                // tool-using turn deadlocks.
-                if let ChatResponse::ToolCallStart { notifier, .. } = response {
-                    notifier.notify_one();
-                }
-                ChatEventDto::from(response)
-            }
-            Err(err) => ChatEventDto::Error { message: format!("{err:?}") },
-        };
-        // `json_data` only fails if the value can't be serialized, which our
-        // DTOs always can; fall back to a plain error event just in case.
-        let event = SseEvent::default().json_data(&dto).unwrap_or_else(|_| {
-            SseEvent::default().data("{\"type\":\"error\",\"message\":\"serialize failed\"}")
-        });
-        Ok::<_, Infallible>(event)
-    });
-
-    Sse::new(sse).into_response()
 }
 
 /// Error wrapper that renders as a JSON error response.

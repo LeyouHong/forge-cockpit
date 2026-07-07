@@ -240,6 +240,9 @@ pub(crate) async fn start_squad<A: API + 'static>(
                             }
                         }
                     }
+                    if let Some(usage) = crate::live::conversation_usage(api.as_ref(), &conv_id).await {
+                        emit(&run2, &task.id, usage).await;
+                    }
                     set_status(&run2, &task, "done", json!({})).await;
                 }
                 Err(e) => {
@@ -472,6 +475,56 @@ pub(crate) async fn worktree_diff<A: API>(
     let diff = git(&["-C", &body.path, "diff", "--cached", &base], &root).unwrap_or_default();
     let stat = git(&["-C", &body.path, "diff", "--cached", "--stat", &base], &root).unwrap_or_default();
     Ok(Json(json!({ "diff": diff, "stat": stat, "branch": branch })))
+}
+
+/// Commits any pending worktree changes, then squash-merges the branch into
+/// the main repo's current branch, leaving the result **staged** for the user
+/// to review and commit. Rejects when the main repo has uncommitted tracked
+/// changes (they would tangle with the merge).
+fn apply_branch(git_root: &Path, worktree: &str, branch: &str, label: &str) -> Result<Value, AppError> {
+    let _ = git(&["-C", worktree, "add", "-A"], git_root);
+    let _ = git(&["-C", worktree, "commit", "-m", &format!("squad: {label}")], git_root);
+
+    let dirty = git(&["status", "--porcelain", "-uno"], git_root).unwrap_or_default();
+    if !dirty.is_empty() {
+        return Err(AppError::bad_request(
+            "current branch has uncommitted changes — commit or stash them first",
+        ));
+    }
+    match git(&["merge", "--squash", branch], git_root) {
+        Ok(_) => Ok(json!({
+            "ok": true,
+            "message": format!("Changes from {branch} are staged on your current branch. Review and commit."),
+        })),
+        Err(e) => {
+            let _ = git(&["reset", "--merge"], git_root);
+            Err(AppError::bad_request(format!("merge conflict — apply aborted: {e}")))
+        }
+    }
+}
+
+/// `POST /api/squad/{run}/{task}/apply` — squash the task's changes onto the
+/// current branch (staged, not committed).
+pub(crate) async fn squad_apply<A: API>(
+    State(state): State<AppState<A>>,
+    AxPath((run_id, task_id)): AxPath<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let run = get_run(&state, &run_id).await?;
+    let task = get_task(&run, &task_id)?;
+    let wt = task.worktree.to_str().unwrap_or_default().to_string();
+    let _guard = state.config_lock.lock().await;
+    apply_branch(&run.git_root, &wt, &task.branch, &task.name).map(Json)
+}
+
+/// `POST /api/worktrees/apply` — same, for leftover worktrees (path-based).
+pub(crate) async fn worktree_apply<A: API>(
+    State(state): State<AppState<A>>,
+    Json(body): Json<PathBody>,
+) -> Result<Json<Value>, AppError> {
+    let root = repo_root(&state)?;
+    let branch = validated_worktree(&root, &body.path)?;
+    let _guard = state.config_lock.lock().await;
+    apply_branch(&root, &body.path, &branch, &branch).map(Json)
 }
 
 /// `POST /api/worktrees/remove` — remove a squad worktree + branch (validated).
