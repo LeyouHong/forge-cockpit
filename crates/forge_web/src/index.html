@@ -332,6 +332,27 @@
     .badge.off { background: var(--hover); color: var(--muted); }
     .conn-empty { color: var(--faint); font-size: 12.5px; padding: 6px 2px; }
 
+    /* ---------- boards (kanban) ---------- */
+    .kanban-overlay { position: fixed; inset: 0; z-index: 95; display: none; flex-direction: column; background: var(--bg); }
+    .kanban-overlay.open { display: flex; animation: fade .12s ease; }
+    .kanban-head { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+    .kanban-tabs { display: flex; gap: 4px; }
+    .kanban-tabs .tab { display: flex; align-items: center; gap: 7px; padding: 6px 13px; border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+    .kanban-tabs .tab .gh-logo { width: 15px; height: 15px; }
+    .kanban-tabs .tab:hover { border-color: var(--border-strong); color: var(--text); }
+    .kanban-tabs .tab.sel { background: var(--accent-weak); border-color: var(--accent-solid); color: var(--text); }
+    .kanban-board { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 16px 20px; }
+    .kb-col { flex: 0 0 300px; display: flex; flex-direction: column; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .kb-col-head { padding: 10px 13px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); display: flex; justify-content: space-between; }
+    .kb-col-head .cnt { color: var(--faint); }
+    .kb-col-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .kb-card { display: block; text-decoration: none; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; transition: border-color .12s ease; }
+    .kb-card:hover { border-color: var(--accent-solid); }
+    .kb-card .kid { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; color: var(--accent); }
+    .kb-card .ktitle { color: var(--text); font-size: 13px; margin: 3px 0; line-height: 1.4; }
+    .kb-card .kmeta { color: var(--faint); font-size: 11px; }
+    .kb-empty, .kb-loading { color: var(--faint); text-align: center; margin-top: 18vh; font-size: 14px; width: 100%; }
+
     .gh-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel-2); padding: 13px 14px; }
     .gh-head { display: flex; align-items: center; gap: 9px; }
     .gh-logo { width: 22px; height: 22px; flex: 0 0 auto; }
@@ -373,6 +394,7 @@
       <div class="title" id="conv-title">Forge</div>
       <span class="usage-info" id="usage-info"></span>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
+      <button class="icon-btn" id="kanban-open" title="Boards (GitHub / Jira / Sentry)">📋</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -402,6 +424,18 @@
     </div>
   </div>
 
+
+  <!-- Boards (kanban) -->
+  <div class="kanban-overlay" id="kanban-overlay">
+    <div class="kanban-head">
+      <span><b>📋 Boards</b></span>
+      <div class="kanban-tabs" id="kanban-tabs"></div>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="kanban-refresh">Refresh</button>
+      <button class="icon-btn" id="kanban-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-board" id="kanban-board"></div>
+  </div>
 
   <!-- Settings / connections drawer -->
   <div class="drawer-overlay" id="drawer-overlay">
@@ -1132,9 +1166,6 @@
     const GH_LOGO = '<svg class="gh-logo" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
     const JIRA_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><path fill="#2684FF" d="M16 1 30.5 15.5a1.3 1.3 0 0 1 0 1.9L16 31.9l-6.4-6.4L16 19.1l6.4-6.4z"/><path fill="#2684FF" opacity=".8" d="M16 12.7 9.6 6.3 3.2 12.7a1.3 1.3 0 0 0 0 1.9L9.6 21 16 14.6z"/></svg>';
     const SENTRY_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#362D59"/><path fill="#fff" d="M16 8.5c-.5 0-1 .27-1.27.73l-1.8 3.1.98.57a8.9 8.9 0 0 1 4.32 6.94h-1.9a7 7 0 0 0-3.36-5.32l-1.8 3.12.86.5a3.5 3.5 0 0 1 1.64 2.5H9.1a.28.28 0 0 1-.24-.42l.98-1.7-.98-.57-1 1.7A1.15 1.15 0 0 0 8.86 21h4.7a5.2 5.2 0 0 0-2.28-4.32l.83-1.43a6.8 6.8 0 0 1 2.94 5.75h5.1a10.6 10.6 0 0 0-5.2-9.14l.83-1.43c.05-.09.18-.09.23 0l5.75 9.96a.28.28 0 0 1-.24.42h-1.55c.02.38.03.76.03 1.15h1.52c.88 0 1.43-.96 1-1.72l-5.76-9.96A1.46 1.46 0 0 0 16 8.5z"/></svg>';
-    const SLACK_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#E01E5A" d="M5 15.2a2 2 0 1 1-2-2h2v2zm1 0a2 2 0 0 1 4 0v5a2 2 0 1 1-4 0v-5z"/><path fill="#36C5F0" d="M8.8 5a2 2 0 1 1 2-2v2h-2zm0 1a2 2 0 0 1 0 4h-5a2 2 0 1 1 0-4h5z"/><path fill="#2EB67D" d="M19 8.8a2 2 0 1 1 2 2h-2v-2zm-1 0a2 2 0 0 1-4 0v-5a2 2 0 1 1 4 0v5z"/><path fill="#ECB22E" d="M15.2 19a2 2 0 1 1-2 2v-2h2zm0-1a2 2 0 0 1 0-4h5a2 2 0 1 1 0 4h-5z"/></svg>';
-    const TELEGRAM_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#29A9EB"/><path fill="#fff" d="M5.5 11.8 17 7.3c.5-.2 1 .1.85.86l-1.96 9.24c-.13.6-.5.74-1 .46l-2.77-2.04-1.34 1.29c-.15.15-.28.28-.56.28l.2-2.86 5.2-4.7c.23-.2-.05-.32-.35-.12l-6.42 4.04-2.77-.86c-.6-.2-.62-.6.13-.9z"/></svg>';
-    const WECOM_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#2F89FF"/><text x="16" y="22" font-size="15" font-weight="700" fill="#fff" text-anchor="middle" font-family="-apple-system,sans-serif">W</text></svg>';
 
     // Built-in integrations. These MCP endpoints don't support OAuth dynamic
     // client registration, so we connect with a token (Bearer header).
@@ -1163,30 +1194,6 @@
         ],
         build: (v) => ({ command: 'npx', args: ['-y', '@sentry/mcp-server@latest'].concat(v.host ? ['--host=' + v.host] : []), env: { SENTRY_ACCESS_TOKEN: v.token } }),
         note: 'Runs the official <b>@sentry/mcp-server</b> via <code>npx</code> (needs Node). Create a <a href="https://sentry.io/settings/account/api/auth-tokens/" target="_blank" rel="noopener">user auth token</a> with org/project/event scopes.',
-      },
-      {
-        key: 'slack', name: 'Slack', logo: SLACK_LOGO, type: 'stdio',
-        fields: [
-          { id: 'webhook', placeholder: 'Incoming Webhook URL (https://hooks.slack.com/services/…)', required: true },
-        ],
-        build: (v) => ({ command: 'npx', args: ['-y', '@kevinwatt/mcp-webhook'], env: { WEBHOOK_URL: v.webhook } }),
-        note: 'Sends messages via a Slack <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener">Incoming Webhook</a> using <b>@kevinwatt/mcp-webhook</b> (needs Node). Send-only.',
-      },
-      {
-        key: 'telegram', name: 'Telegram', logo: TELEGRAM_LOGO, type: 'stdio',
-        fields: [
-          { id: 'token', placeholder: 'Bot token from @BotFather', password: true, required: true },
-        ],
-        build: (v) => ({ command: 'npx', args: ['-y', '@iqai/mcp-telegram'], env: { TELEGRAM_BOT_TOKEN: v.token } }),
-        note: 'Runs <b>@iqai/mcp-telegram</b> via <code>npx</code>. Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> and paste its token.',
-      },
-      {
-        key: 'wecom', name: 'WeCom (企业微信)', logo: WECOM_LOGO, type: 'stdio',
-        fields: [
-          { id: 'webhook', placeholder: 'Group bot Webhook URL (https://qyapi.weixin.qq.com/…)', required: true },
-        ],
-        build: (v) => ({ command: 'uvx', args: ['wecom-bot-mcp-server'], env: { WECOM_WEBHOOK_URL: v.webhook } }),
-        note: 'Runs <b>wecom-bot-mcp-server</b> via <code>uvx</code> (needs Python/uv). Uses a WeCom <b>group bot Webhook URL</b>. Sends messages only.',
       },
     ];
     const PRESET_KEYS = new Set(PRESETS.map((p) => p.key));
@@ -1387,6 +1394,61 @@
       if (!ok) return;
       await api('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
       loadProviders(); loadModels();
+    }
+
+    /* ---------- boards (kanban) ---------- */
+    let kanbanTab = null;
+    const KB_PLATFORMS = [
+      { key: 'github', name: 'GitHub', logo: GH_LOGO },
+      { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
+      { key: 'sentry', name: 'Sentry', logo: SENTRY_LOGO },
+    ];
+    $('kanban-open').onclick = openKanban;
+    $('kanban-close').onclick = () => $('kanban-overlay').classList.remove('open');
+    $('kanban-refresh').onclick = () => { if (kanbanTab) loadBoard(kanbanTab); };
+
+    async function openKanban() {
+      $('kanban-overlay').classList.add('open');
+      $('kanban-board').innerHTML = '<div class="kb-loading">Loading…</div>';
+      const avail = await (await api('/api/board/platforms')).json().catch(() => ({}));
+      const connected = KB_PLATFORMS.filter((p) => avail[p.key]);
+      const tabs = $('kanban-tabs'); tabs.innerHTML = '';
+      if (!connected.length) { $('kanban-board').innerHTML = '<div class="kb-empty">No boards yet — connect GitHub / Jira / Sentry in ⚙ Connections.</div>'; return; }
+      for (const p of connected) {
+        const t = document.createElement('button'); t.className = 'tab'; t.dataset.key = p.key;
+        t.innerHTML = p.logo; t.append(document.createTextNode(p.name));
+        t.onclick = () => selectKanbanTab(p.key);
+        tabs.appendChild(t);
+      }
+      selectKanbanTab(connected.some((p) => p.key === kanbanTab) ? kanbanTab : connected[0].key);
+    }
+    function selectKanbanTab(key) {
+      kanbanTab = key;
+      [...$('kanban-tabs').children].forEach((el) => el.classList.toggle('sel', el.dataset.key === key));
+      loadBoard(key);
+    }
+    async function loadBoard(key) {
+      const board = $('kanban-board'); board.innerHTML = '<div class="kb-loading">Loading…</div>';
+      let data;
+      try { data = await (await api('/api/board/' + key)).json(); } catch (e) { board.innerHTML = '<div class="kb-empty err">Failed to load.</div>'; return; }
+      if (kanbanTab !== key) return; // switched tab while loading
+      if (data.error) { board.innerHTML = '<div class="kb-empty err">' + escapeHtml(String(data.error).slice(0, 200)) + '</div>'; return; }
+      const cols = data.columns || [];
+      const total = cols.reduce((n, c) => n + c.items.length, 0);
+      board.innerHTML = '';
+      if (!total) { board.innerHTML = '<div class="kb-empty">Nothing here.</div>'; return; }
+      for (const c of cols) {
+        const col = document.createElement('div'); col.className = 'kb-col';
+        const head = document.createElement('div'); head.className = 'kb-col-head';
+        head.innerHTML = '<span>' + escapeHtml(c.name) + '</span><span class="cnt">' + c.items.length + '</span>';
+        const body = document.createElement('div'); body.className = 'kb-col-body';
+        for (const it of c.items) {
+          const a = document.createElement('a'); a.className = 'kb-card'; a.href = it.url || '#'; a.target = '_blank'; a.rel = 'noopener';
+          a.innerHTML = '<div class="kid">' + escapeHtml(it.id || '') + '</div><div class="ktitle">' + escapeHtml(it.title || '') + '</div>' + (it.meta ? '<div class="kmeta">' + escapeHtml(it.meta) + '</div>' : '');
+          body.appendChild(a);
+        }
+        col.append(head, body); board.appendChild(col);
+      }
     }
 
     loadConversations();

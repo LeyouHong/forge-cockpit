@@ -9,6 +9,7 @@
 //! The server binds to loopback and gates every `/api/*` route (and the page
 //! itself) behind a per-run bearer token printed at startup.
 
+mod board;
 mod dto;
 mod live;
 
@@ -107,6 +108,10 @@ where
         .route("/api/chat/{conv}/live", get(live::turn_live::<A>))
         .route("/api/chat/{conv}/stop", post(live::turn_stop::<A>))
         .route("/api/conversations/{id}/usage", get(live::get_usage::<A>))
+        .route("/api/board/platforms", get(board::platforms::<A>))
+        .route("/api/board/github", get(board::github_board::<A>))
+        .route("/api/board/jira", get(board::jira_board::<A>))
+        .route("/api/board/sentry", get(board::sentry_board::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
