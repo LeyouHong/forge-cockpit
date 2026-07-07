@@ -1165,6 +1165,7 @@
     const GH_LOGO = '<svg class="gh-logo" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
     const JIRA_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><path fill="#2684FF" d="M16 1 30.5 15.5a1.3 1.3 0 0 1 0 1.9L16 31.9l-6.4-6.4L16 19.1l6.4-6.4z"/><path fill="#2684FF" opacity=".8" d="M16 12.7 9.6 6.3 3.2 12.7a1.3 1.3 0 0 0 0 1.9L9.6 21 16 14.6z"/></svg>';
     const SENTRY_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#362D59"/><path fill="#fff" d="M16 8.5c-.5 0-1 .27-1.27.73l-1.8 3.1.98.57a8.9 8.9 0 0 1 4.32 6.94h-1.9a7 7 0 0 0-3.36-5.32l-1.8 3.12.86.5a3.5 3.5 0 0 1 1.64 2.5H9.1a.28.28 0 0 1-.24-.42l.98-1.7-.98-.57-1 1.7A1.15 1.15 0 0 0 8.86 21h4.7a5.2 5.2 0 0 0-2.28-4.32l.83-1.43a6.8 6.8 0 0 1 2.94 5.75h5.1a10.6 10.6 0 0 0-5.2-9.14l.83-1.43c.05-.09.18-.09.23 0l5.75 9.96a.28.28 0 0 1-.24.42h-1.55c.02.38.03.76.03 1.15h1.52c.88 0 1.43-.96 1-1.72l-5.76-9.96A1.46 1.46 0 0 0 16 8.5z"/></svg>';
+    const GCAL_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="6" width="20" height="20" rx="3" fill="#fff" stroke="#4285F4" stroke-width="2"/><rect x="6" y="6" width="20" height="6" rx="3" fill="#4285F4"/><text x="16" y="24" font-size="10" font-weight="700" fill="#4285F4" text-anchor="middle" font-family="-apple-system,Arial,sans-serif">31</text></svg>';
 
     // Built-in integrations. These MCP endpoints don't support OAuth dynamic
     // client registration, so we connect with a token (Bearer header).
@@ -1201,6 +1202,7 @@
       const servers = await (await api('/api/mcp')).json();
       const box = $('integrations'); box.innerHTML = '';
       for (const p of PRESETS) box.appendChild(renderIntegrationCard(p, servers.find((s) => s.name === p.key)));
+      box.appendChild(await renderGcalCard());
 
       // Any non-preset custom servers, shown read-only with a Remove button.
       const others = servers.filter((s) => !PRESET_KEYS.has(s.name));
@@ -1256,6 +1258,55 @@
         row.append(input, btn); body.appendChild(row);
         if (failed) { const f = document.createElement('div'); f.className = 'gh-fail'; f.textContent = String(srv.detail || '').slice(0, 240); body.appendChild(f); }
         const note = document.createElement('div'); note.className = 'gh-note'; note.innerHTML = preset.note;
+        body.appendChild(note);
+      }
+      card.appendChild(body);
+      return card;
+    }
+
+    // Google Calendar is not an MCP server: it connects via a read-only private
+    // iCal URL, stored server-side, and only powers the Boards card.
+    async function renderGcalCard() {
+      let cur = null;
+      try { cur = (await (await api('/api/gcal')).json()).url; } catch (e) {}
+      const connected = !!cur;
+      const card = document.createElement('div'); card.className = 'gh-card';
+      const head = document.createElement('div'); head.className = 'gh-head';
+      head.innerHTML = GCAL_LOGO;
+      const t = document.createElement('div'); t.style.flex = '1';
+      const title = document.createElement('div'); title.className = 'gh-title'; title.textContent = 'Google Calendar';
+      const sub = document.createElement('div'); sub.className = 'gh-sub'; sub.textContent = connected ? 'connected (read-only)' : 'not connected';
+      t.append(title, sub); head.appendChild(t);
+      const badge = document.createElement('span'); badge.className = 'badge ' + (connected ? 'on' : 'off'); badge.textContent = connected ? 'connected' : 'not connected';
+      head.appendChild(badge); card.appendChild(head);
+
+      const body = document.createElement('div'); body.className = 'gh-body';
+      if (connected) {
+        const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-ghost'; btn.textContent = 'Disconnect';
+        btn.onclick = async () => { btn.disabled = true; await api('/api/gcal', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '' }) }); loadMcp(); };
+        body.appendChild(btn);
+      } else {
+        const row = document.createElement('div'); row.className = 'gh-connect';
+        const input = document.createElement('input'); input.placeholder = 'Secret iCal URL (…/basic.ics)';
+        const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-primary'; btn.textContent = 'Connect';
+        const go = async () => {
+          const url = input.value.trim(); if (!url) return;
+          btn.disabled = true; btn.textContent = 'Connecting…';
+          await api('/api/gcal', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+          // Validate by fetching the board once; surface a clear error if it fails.
+          const chk = await api('/api/board/gcal');
+          if (!chk.ok) {
+            const d = await chk.json().catch(() => ({}));
+            await api('/api/gcal', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '' }) });
+            await confirmModal({ title: 'Could not read calendar', body: (d.error || 'That URL did not return an iCal feed.') + '\n\nIn Google Calendar: Settings → your calendar → "Secret address in iCal format".', confirmText: 'OK', hideCancel: true, danger: false });
+          }
+          loadMcp();
+        };
+        btn.onclick = go;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) go(); });
+        row.append(input, btn); body.appendChild(row);
+        const note = document.createElement('div'); note.className = 'gh-note';
+        note.innerHTML = 'In Google Calendar: <b>Settings → [your calendar] → Integrate calendar → “Secret address in iCal format”</b>. Read-only; shows upcoming events on the 📋 board.';
         body.appendChild(note);
       }
       card.appendChild(body);
@@ -1400,6 +1451,7 @@
       { key: 'github', name: 'GitHub', logo: GH_LOGO },
       { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
       { key: 'sentry', name: 'Sentry', logo: SENTRY_LOGO },
+      { key: 'gcal', name: 'Google Calendar', logo: GCAL_LOGO },
     ];
     $('kanban-open').onclick = openKanban;
     $('kanban-close').onclick = () => $('kanban-overlay').classList.remove('open');

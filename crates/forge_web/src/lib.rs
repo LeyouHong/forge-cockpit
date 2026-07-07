@@ -112,6 +112,8 @@ where
         .route("/api/board/github", get(board::github_board::<A>))
         .route("/api/board/jira", get(board::jira_board::<A>))
         .route("/api/board/sentry", get(board::sentry_board::<A>))
+        .route("/api/board/gcal", get(board::gcal_board::<A>))
+        .route("/api/gcal", get(board::get_gcal::<A>).put(board::set_gcal::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
