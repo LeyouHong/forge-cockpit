@@ -26,8 +26,11 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::dto::ChatEventDto;
-use crate::squad::short_id;
 use crate::{AppError, AppState};
+
+fn short_id() -> String {
+    ConversationId::generate().into_string().chars().take(8).collect()
+}
 
 /// How long a finished turn stays attachable (covers "completed right as the
 /// client was re-attaching" races); swept lazily.

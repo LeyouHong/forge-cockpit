@@ -11,12 +11,10 @@
 
 mod dto;
 mod live;
-mod squad;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,22 +37,14 @@ use serde_json::json;
 
 use crate::dto::MessageDto;
 
-/// Builds a fresh API bound to a given working directory (a git worktree).
-/// Threaded in from `forge_main`, where the concrete `ForgeAPI` type is known.
-pub type WorktreeFactory<A> = Arc<dyn Fn(PathBuf) -> Arc<A> + Send + Sync>;
-
 /// Shared application state handed to every request handler.
 pub(crate) struct AppState<A> {
     pub(crate) api: Arc<A>,
     /// Per-run bearer token that gates the UI and API.
     pub(crate) token: Arc<String>,
-    /// Serializes MCP config read-modify-write (and git worktree mutations) so
-    /// concurrent operations can't corrupt shared files / the `.git` dir.
+    /// Serializes MCP config read-modify-write so concurrent operations can't
+    /// corrupt the config file.
     pub(crate) config_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Mints per-worktree APIs for the parallel "squad" runs.
-    pub(crate) worktree_factory: WorktreeFactory<A>,
-    /// Live parallel runs, keyed by run id.
-    pub(crate) squads: squad::SquadRegistry,
     /// Resumable chat turns, keyed by conversation id.
     pub(crate) turns: live::TurnRegistry,
 }
@@ -66,8 +56,6 @@ impl<A> Clone for AppState<A> {
             api: self.api.clone(),
             token: self.token.clone(),
             config_lock: self.config_lock.clone(),
-            worktree_factory: self.worktree_factory.clone(),
-            squads: self.squads.clone(),
             turns: self.turns.clone(),
         }
     }
@@ -78,12 +66,7 @@ impl<A> Clone for AppState<A> {
 /// # Arguments
 /// * `api` - The initialised Forge API facade, shared with the caller.
 /// * `addr` - Address to bind. Callers should pass a loopback address.
-pub async fn serve<A>(
-    api: Arc<A>,
-    addr: SocketAddr,
-    open_browser: bool,
-    worktree_factory: WorktreeFactory<A>,
-) -> anyhow::Result<()>
+pub async fn serve<A>(api: Arc<A>, addr: SocketAddr, open_browser: bool) -> anyhow::Result<()>
 where
     A: API + 'static,
 {
@@ -94,8 +77,6 @@ where
         api,
         token: Arc::new(token),
         config_lock: Arc::new(tokio::sync::Mutex::new(())),
-        worktree_factory,
-        squads: Default::default(),
         turns: Default::default(),
     };
 
@@ -126,18 +107,6 @@ where
         .route("/api/chat/{conv}/live", get(live::turn_live::<A>))
         .route("/api/chat/{conv}/stop", post(live::turn_stop::<A>))
         .route("/api/conversations/{id}/usage", get(live::get_usage::<A>))
-        .route("/api/squad", post(squad::start_squad::<A>))
-        .route("/api/squad/{run}/events", get(squad::squad_events::<A>))
-        .route("/api/squad/{run}/{task}/diff", get(squad::squad_diff::<A>))
-        .route("/api/squad/{run}/{task}/pr", post(squad::squad_pr::<A>))
-        .route("/api/squad/{run}/{task}/discard", post(squad::squad_discard::<A>))
-        .route("/api/squad/{run}/{task}/stop", post(squad::squad_stop::<A>))
-        .route("/api/squad/{run}/{task}/followup", post(squad::squad_followup::<A>))
-        .route("/api/squad/{run}/{task}/apply", post(squad::squad_apply::<A>))
-        .route("/api/worktrees", get(squad::list_worktrees_h::<A>))
-        .route("/api/worktrees/diff", post(squad::worktree_diff::<A>))
-        .route("/api/worktrees/apply", post(squad::worktree_apply::<A>))
-        .route("/api/worktrees/remove", post(squad::worktree_remove::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()

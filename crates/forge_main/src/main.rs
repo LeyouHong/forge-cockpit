@@ -122,19 +122,7 @@ async fn run() -> Result<()> {
         (_, _) => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
 
-    // Factory that mints a fresh API bound to an arbitrary worktree path — used
-    // by `forge serve` for parallel "squad" runs. Built here where the concrete
-    // ForgeAPI type is known.
-    let wt_config = config.clone();
-    let worktree_factory: forge_web::WorktreeFactory<_> =
-        std::sync::Arc::new(move |wt: PathBuf| std::sync::Arc::new(ForgeAPI::init(wt, wt_config.clone())));
-
-    let mut ui = UI::init(
-        cli,
-        config,
-        move |config| ForgeAPI::init(cwd.clone(), config),
-        worktree_factory,
-    )?;
+    let mut ui = UI::init(cli, config, move |config| ForgeAPI::init(cwd.clone(), config))?;
     ui.run().await;
 
     Ok(())
