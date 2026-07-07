@@ -107,6 +107,8 @@ pub struct UI<A: ConsoleWriter, F: Fn(ForgeConfig) -> A> {
     state: UIState,
     api: Arc<F::Output>,
     new_api: Arc<F>,
+    /// Builds a fresh API bound to a worktree path, for parallel `serve` runs.
+    worktree_factory: forge_web::WorktreeFactory<A>,
     console: Console,
     command: Arc<ForgeCommandManager>,
     cli: Cli,
@@ -271,7 +273,12 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     /// * `f` - Factory closure invoked once at startup and again on each `/new`
     ///   command; receives the latest [`ForgeConfig`] so that config changes
     ///   from `forge config set` are reflected in new conversations
-    pub fn init(cli: Cli, config: ForgeConfig, f: F) -> Result<Self> {
+    pub fn init(
+        cli: Cli,
+        config: ForgeConfig,
+        f: F,
+        worktree_factory: forge_web::WorktreeFactory<A>,
+    ) -> Result<Self> {
         // Parse CLI arguments first to get flags
         let api = Arc::new(f(config.clone()));
         let env = api.environment();
@@ -281,6 +288,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             state: UIState::new(env.clone()),
             api,
             new_api: Arc::new(f),
+            worktree_factory,
             console: Console::new(
                 env.clone(),
                 config.custom_history_path.clone(),
@@ -845,7 +853,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     "Starting Forge web UI on http://{addr}"
                 )))?;
 
-                forge_web::serve(self.api.clone(), addr, !no_open).await?;
+                forge_web::serve(self.api.clone(), addr, !no_open, self.worktree_factory.clone())
+                    .await?;
                 return Ok(());
             }
             TopLevelCommand::Select(cmd) => {

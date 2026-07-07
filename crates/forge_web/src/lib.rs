@@ -10,10 +10,12 @@
 //! itself) behind a per-run bearer token printed at startup.
 
 mod dto;
+mod squad;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,20 +40,34 @@ use serde_json::json;
 
 use crate::dto::{ChatEventDto, MessageDto};
 
+/// Builds a fresh API bound to a given working directory (a git worktree).
+/// Threaded in from `forge_main`, where the concrete `ForgeAPI` type is known.
+pub type WorktreeFactory<A> = Arc<dyn Fn(PathBuf) -> Arc<A> + Send + Sync>;
+
 /// Shared application state handed to every request handler.
-struct AppState<A> {
-    api: Arc<A>,
+pub(crate) struct AppState<A> {
+    pub(crate) api: Arc<A>,
     /// Per-run bearer token that gates the UI and API.
-    token: Arc<String>,
-    /// Serializes MCP config read-modify-write so concurrent add/delete can't
-    /// corrupt the config file.
-    config_lock: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) token: Arc<String>,
+    /// Serializes MCP config read-modify-write (and git worktree mutations) so
+    /// concurrent operations can't corrupt shared files / the `.git` dir.
+    pub(crate) config_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Mints per-worktree APIs for the parallel "squad" runs.
+    pub(crate) worktree_factory: WorktreeFactory<A>,
+    /// Live parallel runs, keyed by run id.
+    pub(crate) squads: squad::SquadRegistry,
 }
 
 // Manual `Clone` so we don't require `A: Clone` (only the `Arc`s are cloned).
 impl<A> Clone for AppState<A> {
     fn clone(&self) -> Self {
-        Self { api: self.api.clone(), token: self.token.clone(), config_lock: self.config_lock.clone() }
+        Self {
+            api: self.api.clone(),
+            token: self.token.clone(),
+            config_lock: self.config_lock.clone(),
+            worktree_factory: self.worktree_factory.clone(),
+            squads: self.squads.clone(),
+        }
     }
 }
 
@@ -60,14 +76,25 @@ impl<A> Clone for AppState<A> {
 /// # Arguments
 /// * `api` - The initialised Forge API facade, shared with the caller.
 /// * `addr` - Address to bind. Callers should pass a loopback address.
-pub async fn serve<A>(api: Arc<A>, addr: SocketAddr, open_browser: bool) -> anyhow::Result<()>
+pub async fn serve<A>(
+    api: Arc<A>,
+    addr: SocketAddr,
+    open_browser: bool,
+    worktree_factory: WorktreeFactory<A>,
+) -> anyhow::Result<()>
 where
     A: API + 'static,
 {
     // A fresh random token per run. UUID v4 gives us ample entropy without a
     // new dependency.
     let token = ConversationId::generate().into_string();
-    let state = AppState { api, token: Arc::new(token), config_lock: Arc::new(tokio::sync::Mutex::new(())) };
+    let state = AppState {
+        api,
+        token: Arc::new(token),
+        config_lock: Arc::new(tokio::sync::Mutex::new(())),
+        worktree_factory,
+        squads: Default::default(),
+    };
 
     // `/api/*` routes require the bearer token.
     let api_routes = Router::new()
@@ -90,6 +117,11 @@ where
         .route("/api/mcp", get(list_mcp::<A>).post(add_mcp::<A>))
         .route("/api/mcp/{name}", delete(delete_mcp::<A>))
         .route("/api/chat", post(chat::<A>))
+        .route("/api/squad", post(squad::start_squad::<A>))
+        .route("/api/squad/{run}/events", get(squad::squad_events::<A>))
+        .route("/api/squad/{run}/{task}/diff", get(squad::squad_diff::<A>))
+        .route("/api/squad/{run}/{task}/pr", post(squad::squad_pr::<A>))
+        .route("/api/squad/{run}/{task}/discard", post(squad::squad_discard::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
@@ -748,17 +780,17 @@ async fn chat<A: API>(State(state): State<AppState<A>>, Json(body): Json<ChatBod
 }
 
 /// Error wrapper that renders as a JSON error response.
-struct AppError {
+pub(crate) struct AppError {
     status: StatusCode,
     message: String,
 }
 
 impl AppError {
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self { status: StatusCode::NOT_FOUND, message: message.into() }
     }
 
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_REQUEST, message: message.into() }
     }
 }
