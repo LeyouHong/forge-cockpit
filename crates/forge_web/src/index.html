@@ -345,11 +345,11 @@
     .sc-head[role="link"] { cursor: pointer; }
     .sc-head[role="link"]:hover .sc-name { color: var(--accent); }
     .sc-sub { color: var(--faint); font-size: 11.5px; margin: 3px 0 14px; }
-    .sc-tiles { display: flex; gap: 10px; }
-    .stat-tile { flex: 1; text-align: center; text-decoration: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 6px; transition: border-color .12s ease; }
+    .sc-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+    .stat-tile { flex: 1 1 64px; text-align: center; text-decoration: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 11px 6px; transition: border-color .12s ease; }
     a.stat-tile:hover { border-color: var(--accent-solid); }
-    .stat-tile .sv { font-size: 26px; font-weight: 650; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
-    .stat-tile .sl { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stat-tile .sv { font-size: 23px; font-weight: 650; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .stat-tile .sl { font-size: 10.5px; color: var(--muted); margin-top: 4px; line-height: 1.3; }
     .kb-empty, .kb-loading { color: var(--faint); text-align: center; margin-top: 16vh; font-size: 14px; grid-column: 1 / -1; }
     .kb-empty.err { color: var(--danger); }
 

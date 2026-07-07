@@ -74,6 +74,22 @@ fn client() -> reqwest::Client {
     reqwest::Client::builder().user_agent("forge-web").build().unwrap_or_default()
 }
 
+/// Exact hit count for a GitHub search query (0 on any error).
+async fn gh_count(cl: &reqwest::Client, pat: &str, q: &str) -> i64 {
+    let resp = match cl
+        .get("https://api.github.com/search/issues")
+        .query(&[("q", q), ("per_page", "1")])
+        .header("Authorization", format!("Bearer {pat}"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    resp.json::<Value>().await.ok().and_then(|v| v["total_count"].as_i64()).unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/board/platforms — which boards are available
 // ---------------------------------------------------------------------------
@@ -100,29 +116,28 @@ pub(crate) async fn github_board<A: API>(
     let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
     let (owner, repo) = origin_slug(&root).ok_or_else(|| AppError::bad_request("no github origin remote"))?;
 
-    let resp = client()
-        .get(format!("https://api.github.com/repos/{owner}/{repo}/issues?state=open&per_page=50"))
-        .header("Authorization", format!("Bearer {pat}"))
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| AppError::bad_request(format!("github: {e}")))?;
-    let arr: Value = resp.json().await.map_err(|e| AppError::bad_request(format!("github: {e}")))?;
-
-    let (mut issues, mut prs) = (0, 0);
-    if let Some(list) = arr.as_array() {
-        for it in list {
-            if it.get("pull_request").is_some() { prs += 1 } else { issues += 1 }
-        }
-    }
-    // The `issues` endpoint returns issues + PRs; note the 50-item page cap.
-    let capped = arr.as_array().map(|a| a.len() >= 50).unwrap_or(false);
+    // Exact counts via the search API (no page cap), fetched concurrently.
+    let cl = client();
+    let scope = format!("repo:{owner}/{repo}");
+    let q_issues = format!("{scope} is:open is:issue");
+    let q_prs = format!("{scope} is:open is:pr");
+    let q_assigned = format!("{scope} is:open is:issue assignee:@me");
+    let q_reviews = format!("{scope} is:open is:pr review-requested:@me");
+    let (issues, prs, assigned, reviews) = tokio::join!(
+        gh_count(&cl, &pat, &q_issues),
+        gh_count(&cl, &pat, &q_prs),
+        gh_count(&cl, &pat, &q_assigned),
+        gh_count(&cl, &pat, &q_reviews),
+    );
+    let base = format!("https://github.com/{owner}/{repo}");
     Ok(Json(json!({
-        "url": format!("https://github.com/{owner}/{repo}"),
+        "url": base,
         "subtitle": format!("{owner}/{repo}"),
         "stats": [
-            { "label": "Open issues", "value": issues, "suffix": if capped { "+" } else { "" }, "url": format!("https://github.com/{owner}/{repo}/issues") },
-            { "label": "Open PRs", "value": prs, "url": format!("https://github.com/{owner}/{repo}/pulls") },
+            { "label": "Open issues", "value": issues, "url": format!("{base}/issues") },
+            { "label": "Open PRs", "value": prs, "url": format!("{base}/pulls") },
+            { "label": "Assigned to me", "value": assigned, "url": format!("{base}/issues?q=is%3Aopen+assignee%3A%40me") },
+            { "label": "Review requests", "value": reviews, "url": format!("{base}/pulls?q=is%3Aopen+review-requested%3A%40me") },
         ]
     })))
 }
@@ -141,9 +156,10 @@ pub(crate) async fn jira_board<A: API>(
     let base = url.trim_end_matches('/');
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
 
+    let cl = client();
     // Jira Cloud requires the (newer) /search/jql endpoint with a *bounded* JQL.
     let jql = "updated >= -30d ORDER BY updated DESC";
-    let resp = client()
+    let resp = cl
         .get(format!("{base}/rest/api/3/search/jql"))
         .query(&[("jql", jql), ("maxResults", "50"), ("fields", "summary,status")])
         .header("Authorization", format!("Basic {auth}"))
@@ -153,7 +169,7 @@ pub(crate) async fn jira_board<A: API>(
         .map_err(|e| AppError::bad_request(format!("jira: {e}")))?;
     let v: Value = resp.json().await.map_err(|e| AppError::bad_request(format!("jira: {e}")))?;
 
-    // Count by status category.
+    // Count the last-30d window by status category.
     let (mut todo, mut prog, mut done) = (0, 0, 0);
     if let Some(list) = v["issues"].as_array() {
         for it in list {
@@ -164,6 +180,22 @@ pub(crate) async fn jira_board<A: API>(
             }
         }
     }
+
+    // Issues assigned to me (open) — an approximate count avoids paging.
+    let mine = cl
+        .post(format!("{base}/rest/api/3/search/approximate-count"))
+        .header("Authorization", format!("Basic {auth}"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&json!({ "jql": "assignee = currentUser() AND statusCategory != Done" }))
+        .send()
+        .await
+        .ok();
+    let mine = match mine {
+        Some(r) => r.json::<Value>().await.ok().and_then(|v| v["count"].as_i64()).unwrap_or(0),
+        None => 0,
+    };
+
     Ok(Json(json!({
         "url": format!("{base}/issues"),
         "subtitle": "last 30 days",
@@ -171,6 +203,7 @@ pub(crate) async fn jira_board<A: API>(
             { "label": "To Do", "value": todo },
             { "label": "In Progress", "value": prog },
             { "label": "Done", "value": done },
+            { "label": "Assigned to me", "value": mine },
         ]
     })))
 }
@@ -228,6 +261,20 @@ pub(crate) async fn sentry_board<A: API>(
     }
     let capped = issues.as_array().map(|a| a.len() >= 50).unwrap_or(false);
     let suffix = if capped { "+" } else { "" };
+
+    // Newly-seen issues in the last 24h.
+    let new24 = cl
+        .get(format!("https://{host}/api/0/organizations/{org}/issues/"))
+        .query(&[("query", "is:unresolved firstSeen:-24h"), ("limit", "100")])
+        .header("Authorization", &bearer)
+        .send()
+        .await
+        .ok();
+    let new24 = match new24 {
+        Some(r) => r.json::<Value>().await.ok().and_then(|v| v.as_array().map(|a| a.len())).unwrap_or(0),
+        None => 0,
+    };
+
     Ok(Json(json!({
         "url": format!("https://{host}/organizations/{org}/issues/"),
         "subtitle": format!("org: {org} · unresolved · 14d"),
@@ -235,6 +282,7 @@ pub(crate) async fn sentry_board<A: API>(
             { "label": "Errors", "value": errors, "suffix": suffix },
             { "label": "Warnings", "value": warnings },
             { "label": "Other", "value": other },
+            { "label": "New 24h", "value": new24 },
         ]
     })))
 }
