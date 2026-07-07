@@ -109,23 +109,22 @@ pub(crate) async fn github_board<A: API>(
         .map_err(|e| AppError::bad_request(format!("github: {e}")))?;
     let arr: Value = resp.json().await.map_err(|e| AppError::bad_request(format!("github: {e}")))?;
 
-    let mut issues = Vec::new();
-    let mut prs = Vec::new();
+    let (mut issues, mut prs) = (0, 0);
     if let Some(list) = arr.as_array() {
         for it in list {
-            let item = json!({
-                "id": format!("#{}", it["number"].as_i64().unwrap_or(0)),
-                "title": it["title"].as_str().unwrap_or(""),
-                "url": it["html_url"].as_str().unwrap_or(""),
-                "meta": it["user"]["login"].as_str().unwrap_or(""),
-            });
-            if it.get("pull_request").is_some() { prs.push(item); } else { issues.push(item); }
+            if it.get("pull_request").is_some() { prs += 1 } else { issues += 1 }
         }
     }
-    Ok(Json(json!({ "columns": [
-        { "name": "Issues", "items": issues },
-        { "name": "Pull requests", "items": prs },
-    ]})))
+    // The `issues` endpoint returns issues + PRs; note the 50-item page cap.
+    let capped = arr.as_array().map(|a| a.len() >= 50).unwrap_or(false);
+    Ok(Json(json!({
+        "url": format!("https://github.com/{owner}/{repo}"),
+        "subtitle": format!("{owner}/{repo}"),
+        "stats": [
+            { "label": "Open issues", "value": issues, "suffix": if capped { "+" } else { "" }, "url": format!("https://github.com/{owner}/{repo}/issues") },
+            { "label": "Open PRs", "value": prs, "url": format!("https://github.com/{owner}/{repo}/pulls") },
+        ]
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -154,33 +153,26 @@ pub(crate) async fn jira_board<A: API>(
         .map_err(|e| AppError::bad_request(format!("jira: {e}")))?;
     let v: Value = resp.json().await.map_err(|e| AppError::bad_request(format!("jira: {e}")))?;
 
-    // Group into To Do / In Progress / Done by status category key.
-    let mut todo = Vec::new();
-    let mut prog = Vec::new();
-    let mut done = Vec::new();
+    // Count by status category.
+    let (mut todo, mut prog, mut done) = (0, 0, 0);
     if let Some(list) = v["issues"].as_array() {
         for it in list {
-            let key = it["key"].as_str().unwrap_or("");
-            let status = it["fields"]["status"]["name"].as_str().unwrap_or("");
-            let cat = it["fields"]["status"]["statusCategory"]["key"].as_str().unwrap_or("new");
-            let item = json!({
-                "id": key,
-                "title": it["fields"]["summary"].as_str().unwrap_or(""),
-                "url": format!("{base}/browse/{key}"),
-                "meta": status,
-            });
-            match cat {
-                "done" => done.push(item),
-                "indeterminate" => prog.push(item),
-                _ => todo.push(item),
+            match it["fields"]["status"]["statusCategory"]["key"].as_str().unwrap_or("new") {
+                "done" => done += 1,
+                "indeterminate" => prog += 1,
+                _ => todo += 1,
             }
         }
     }
-    Ok(Json(json!({ "columns": [
-        { "name": "To Do", "items": todo },
-        { "name": "In Progress", "items": prog },
-        { "name": "Done", "items": done },
-    ]})))
+    Ok(Json(json!({
+        "url": format!("{base}/issues"),
+        "subtitle": "last 30 days",
+        "stats": [
+            { "label": "To Do", "value": todo },
+            { "label": "In Progress", "value": prog },
+            { "label": "Done", "value": done },
+        ]
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -224,28 +216,25 @@ pub(crate) async fn sentry_board<A: API>(
         .await
         .map_err(|e| AppError::bad_request(format!("sentry: {e}")))?;
 
-    let mut errors = Vec::new();
-    let mut warnings = Vec::new();
-    let mut other = Vec::new();
+    let (mut errors, mut warnings, mut other) = (0, 0, 0);
     if let Some(list) = issues.as_array() {
         for it in list {
-            let level = it["level"].as_str().unwrap_or("error");
-            let item = json!({
-                "id": it["shortId"].as_str().unwrap_or(""),
-                "title": it["title"].as_str().or_else(|| it["metadata"]["value"].as_str()).unwrap_or(""),
-                "url": it["permalink"].as_str().unwrap_or(""),
-                "meta": format!("{} events", it["count"].as_str().unwrap_or("0")),
-            });
-            match level {
-                "error" | "fatal" => errors.push(item),
-                "warning" => warnings.push(item),
-                _ => other.push(item),
+            match it["level"].as_str().unwrap_or("error") {
+                "error" | "fatal" => errors += 1,
+                "warning" => warnings += 1,
+                _ => other += 1,
             }
         }
     }
-    Ok(Json(json!({ "columns": [
-        { "name": "Errors", "items": errors },
-        { "name": "Warnings", "items": warnings },
-        { "name": "Other", "items": other },
-    ]})))
+    let capped = issues.as_array().map(|a| a.len() >= 50).unwrap_or(false);
+    let suffix = if capped { "+" } else { "" };
+    Ok(Json(json!({
+        "url": format!("https://{host}/organizations/{org}/issues/"),
+        "subtitle": format!("org: {org} · unresolved · 14d"),
+        "stats": [
+            { "label": "Errors", "value": errors, "suffix": suffix },
+            { "label": "Warnings", "value": warnings },
+            { "label": "Other", "value": other },
+        ]
+    })))
 }

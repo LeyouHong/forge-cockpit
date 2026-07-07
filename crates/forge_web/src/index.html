@@ -336,22 +336,22 @@
     .kanban-overlay { position: fixed; inset: 0; z-index: 95; display: none; flex-direction: column; background: var(--bg); }
     .kanban-overlay.open { display: flex; animation: fade .12s ease; }
     .kanban-head { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-    .kanban-tabs { display: flex; gap: 4px; }
-    .kanban-tabs .tab { display: flex; align-items: center; gap: 7px; padding: 6px 13px; border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
-    .kanban-tabs .tab .gh-logo { width: 15px; height: 15px; }
-    .kanban-tabs .tab:hover { border-color: var(--border-strong); color: var(--text); }
-    .kanban-tabs .tab.sel { background: var(--accent-weak); border-color: var(--accent-solid); color: var(--text); }
-    .kanban-board { flex: 1; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 16px 20px; }
-    .kb-col { flex: 0 0 300px; display: flex; flex-direction: column; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-    .kb-col-head { padding: 10px 13px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); display: flex; justify-content: space-between; }
-    .kb-col-head .cnt { color: var(--faint); }
-    .kb-col-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-    .kb-card { display: block; text-decoration: none; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; transition: border-color .12s ease; }
-    .kb-card:hover { border-color: var(--accent-solid); }
-    .kb-card .kid { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; color: var(--accent); }
-    .kb-card .ktitle { color: var(--text); font-size: 13px; margin: 3px 0; line-height: 1.4; }
-    .kb-card .kmeta { color: var(--faint); font-size: 11px; }
-    .kb-empty, .kb-loading { color: var(--faint); text-align: center; margin-top: 18vh; font-size: 14px; width: 100%; }
+    .kanban-board { flex: 1; overflow-y: auto; padding: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-content: start; }
+    .stat-card { display: flex; flex-direction: column; background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+    .sc-head { display: flex; align-items: center; gap: 9px; }
+    .sc-head .gh-logo { width: 20px; height: 20px; }
+    .sc-head .sc-name { font-weight: 600; font-size: 14.5px; flex: 1; }
+    .sc-head .sc-go { color: var(--faint); font-size: 13px; }
+    .sc-head[role="link"] { cursor: pointer; }
+    .sc-head[role="link"]:hover .sc-name { color: var(--accent); }
+    .sc-sub { color: var(--faint); font-size: 11.5px; margin: 3px 0 14px; }
+    .sc-tiles { display: flex; gap: 10px; }
+    .stat-tile { flex: 1; text-align: center; text-decoration: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 6px; transition: border-color .12s ease; }
+    a.stat-tile:hover { border-color: var(--accent-solid); }
+    .stat-tile .sv { font-size: 26px; font-weight: 650; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .stat-tile .sl { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .kb-empty, .kb-loading { color: var(--faint); text-align: center; margin-top: 16vh; font-size: 14px; grid-column: 1 / -1; }
+    .kb-empty.err { color: var(--danger); }
 
     .gh-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel-2); padding: 13px 14px; }
     .gh-head { display: flex; align-items: center; gap: 9px; }
@@ -428,8 +428,7 @@
   <!-- Boards (kanban) -->
   <div class="kanban-overlay" id="kanban-overlay">
     <div class="kanban-head">
-      <span><b>📋 Boards</b></span>
-      <div class="kanban-tabs" id="kanban-tabs"></div>
+      <span><b>📋 Boards</b> <span class="drawer-hint">overview of your connected platforms</span></span>
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="kanban-refresh">Refresh</button>
       <button class="icon-btn" id="kanban-close" title="Close">✕</button>
@@ -1397,7 +1396,6 @@
     }
 
     /* ---------- boards (kanban) ---------- */
-    let kanbanTab = null;
     const KB_PLATFORMS = [
       { key: 'github', name: 'GitHub', logo: GH_LOGO },
       { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
@@ -1405,49 +1403,38 @@
     ];
     $('kanban-open').onclick = openKanban;
     $('kanban-close').onclick = () => $('kanban-overlay').classList.remove('open');
-    $('kanban-refresh').onclick = () => { if (kanbanTab) loadBoard(kanbanTab); };
+    $('kanban-refresh').onclick = openKanban;
 
+    // Renders one framed stats card per connected platform, each with a small
+    // row of KPI tiles fetched from its board endpoint.
     async function openKanban() {
       $('kanban-overlay').classList.add('open');
-      $('kanban-board').innerHTML = '<div class="kb-loading">Loading…</div>';
+      const board = $('kanban-board'); board.innerHTML = '<div class="kb-loading">Loading…</div>';
       const avail = await (await api('/api/board/platforms')).json().catch(() => ({}));
       const connected = KB_PLATFORMS.filter((p) => avail[p.key]);
-      const tabs = $('kanban-tabs'); tabs.innerHTML = '';
-      if (!connected.length) { $('kanban-board').innerHTML = '<div class="kb-empty">No boards yet — connect GitHub / Jira / Sentry in ⚙ Connections.</div>'; return; }
-      for (const p of connected) {
-        const t = document.createElement('button'); t.className = 'tab'; t.dataset.key = p.key;
-        t.innerHTML = p.logo; t.append(document.createTextNode(p.name));
-        t.onclick = () => selectKanbanTab(p.key);
-        tabs.appendChild(t);
-      }
-      selectKanbanTab(connected.some((p) => p.key === kanbanTab) ? kanbanTab : connected[0].key);
-    }
-    function selectKanbanTab(key) {
-      kanbanTab = key;
-      [...$('kanban-tabs').children].forEach((el) => el.classList.toggle('sel', el.dataset.key === key));
-      loadBoard(key);
-    }
-    async function loadBoard(key) {
-      const board = $('kanban-board'); board.innerHTML = '<div class="kb-loading">Loading…</div>';
-      let data;
-      try { data = await (await api('/api/board/' + key)).json(); } catch (e) { board.innerHTML = '<div class="kb-empty err">Failed to load.</div>'; return; }
-      if (kanbanTab !== key) return; // switched tab while loading
-      if (data.error) { board.innerHTML = '<div class="kb-empty err">' + escapeHtml(String(data.error).slice(0, 200)) + '</div>'; return; }
-      const cols = data.columns || [];
-      const total = cols.reduce((n, c) => n + c.items.length, 0);
+      if (!connected.length) { board.innerHTML = '<div class="kb-empty">No boards yet — connect GitHub / Jira / Sentry in ⚙ Connections.</div>'; return; }
       board.innerHTML = '';
-      if (!total) { board.innerHTML = '<div class="kb-empty">Nothing here.</div>'; return; }
-      for (const c of cols) {
-        const col = document.createElement('div'); col.className = 'kb-col';
-        const head = document.createElement('div'); head.className = 'kb-col-head';
-        head.innerHTML = '<span>' + escapeHtml(c.name) + '</span><span class="cnt">' + c.items.length + '</span>';
-        const body = document.createElement('div'); body.className = 'kb-col-body';
-        for (const it of c.items) {
-          const a = document.createElement('a'); a.className = 'kb-card'; a.href = it.url || '#'; a.target = '_blank'; a.rel = 'noopener';
-          a.innerHTML = '<div class="kid">' + escapeHtml(it.id || '') + '</div><div class="ktitle">' + escapeHtml(it.title || '') + '</div>' + (it.meta ? '<div class="kmeta">' + escapeHtml(it.meta) + '</div>' : '');
-          body.appendChild(a);
-        }
-        col.append(head, body); board.appendChild(col);
+      for (const p of connected) {
+        const card = document.createElement('div'); card.className = 'stat-card'; card.id = 'sc-' + p.key;
+        card.innerHTML = '<div class="sc-head">' + p.logo + '<span class="sc-name">' + p.name + '</span><span class="sc-go">↗</span></div><div class="sc-sub"></div><div class="sc-tiles"><span class="sl">Loading…</span></div>';
+        board.appendChild(card);
+        loadStats(p);
+      }
+    }
+    async function loadStats(p) {
+      const card = $('sc-' + p.key); if (!card) return;
+      const tiles = card.querySelector('.sc-tiles');
+      let d;
+      try { d = await (await api('/api/board/' + p.key)).json(); } catch (e) { tiles.innerHTML = '<span class="sl">failed to load</span>'; return; }
+      if (d.error) { tiles.innerHTML = '<span class="sl">' + escapeHtml(String(d.error).slice(0, 120)) + '</span>'; return; }
+      card.querySelector('.sc-sub').textContent = d.subtitle || '';
+      if (d.url) { const h = card.querySelector('.sc-head'); h.setAttribute('role', 'link'); h.onclick = () => window.open(d.url, '_blank', 'noopener'); }
+      tiles.innerHTML = '';
+      for (const st of (d.stats || [])) {
+        const t = document.createElement(st.url ? 'a' : 'div'); t.className = 'stat-tile';
+        if (st.url) { t.href = st.url; t.target = '_blank'; t.rel = 'noopener'; }
+        t.innerHTML = '<div class="sv">' + (st.value != null ? st.value : 0) + escapeHtml(st.suffix || '') + '</div><div class="sl">' + escapeHtml(st.label || '') + '</div>';
+        tiles.appendChild(t);
       }
     }
 
