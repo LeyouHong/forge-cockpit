@@ -224,6 +224,14 @@
     #send:disabled { opacity: .4; cursor: default; }
     .empty { color: var(--faint); text-align: center; margin-top: 22vh; font-size: 14px; }
     .empty .big { font-size: 22px; margin-bottom: 6px; opacity: .8; }
+    /* slash command / skill palette */
+    .cmd-palette { display: none; max-width: 760px; margin: 0 auto 8px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); max-height: 280px; overflow-y: auto; }
+    .cmd-palette.open { display: block; }
+    .cmd-sec { padding: 8px 13px 3px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); }
+    .cmd-item { display: flex; gap: 10px; align-items: baseline; padding: 7px 13px; cursor: pointer; }
+    .cmd-item.sel, .cmd-item:hover { background: var(--hover); }
+    .cmd-item .k { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--accent); flex: 0 0 auto; }
+    .cmd-item .d { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .retry-btn { margin-top: 6px; }
     /* image attachments */
     .composer-btn { flex: 0 0 auto; background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 17px; width: 30px; height: 34px; display: grid; place-items: center; border-radius: 8px; }
@@ -327,6 +335,11 @@
     .squad-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid var(--border); font-size: 14px; flex: 0 0 auto; }
     .squad-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 18px 22px; }
     #squad-launcher { max-width: 720px; width: 100%; margin: 0 auto; }
+    .squad-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+    .squad-mode .seg { padding: 7px 14px; background: transparent; border: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+    .squad-mode .seg.sel { background: var(--accent-solid); color: #fff; }
+    #squad-bestof-form textarea { width: 100%; min-height: 80px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 13px; resize: vertical; }
+    #squad-bestof-form textarea:focus { outline: none; border-color: var(--accent-solid); }
     .squad-task { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; }
     .squad-task input { flex: 0 0 150px; }
     .squad-task textarea { flex: 1; min-height: 38px; max-height: 120px; resize: vertical; }
@@ -400,12 +413,14 @@
       <button class="icon-btn hamburger" id="hamburger" title="Menu">☰</button>
       <div class="title" id="conv-title">Forge</div>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
+      <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="squad-open" title="Parallel tasks (worktree agents)">⚡</button>
       <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
     </div>
     <div id="messages"><div class="empty"><div class="big">⚒</div>Start a new conversation.</div></div>
     <footer>
+      <div class="cmd-palette" id="cmd-palette"></div>
       <div id="attach-preview" class="attach-preview"></div>
       <div class="composer">
         <button id="attach" class="composer-btn" title="Attach image">📎</button>
@@ -439,8 +454,18 @@
     </div>
     <div class="squad-body">
       <div id="squad-launcher">
-        <div id="squad-tasks"></div>
-        <button class="btn btn-ghost btn-sm" id="squad-add">+ Add task</button>
+        <div class="squad-mode">
+          <button class="seg sel" id="mode-diff">Different tasks</button>
+          <button class="seg" id="mode-best">Best-of-N · same task</button>
+        </div>
+        <div id="squad-diff-form">
+          <div id="squad-tasks"></div>
+          <button class="btn btn-ghost btn-sm" id="squad-add">+ Add task</button>
+        </div>
+        <div id="squad-bestof-form" style="display:none">
+          <textarea id="bestof-prompt" placeholder="the task all N agents attempt in parallel — pick the best result afterwards"></textarea>
+          <label class="field" style="margin-top:8px;display:inline-flex;gap:6px;color:var(--muted);font-size:12px"><span>Attempts (N)</span><input id="bestof-n" type="number" min="2" max="6" value="3" style="width:60px" /></label>
+        </div>
         <div class="squad-run-row">
           <label class="field"><span>Concurrency</span><input id="squad-conc" type="number" min="1" max="5" value="3" /></label>
           <label class="field"><span>Base</span><input id="squad-base" placeholder="current branch" /></label>
@@ -972,12 +997,78 @@
     /* ---------- responsive sidebar ---------- */
     $('hamburger').onclick = () => document.body.classList.toggle('sidebar-open');
 
+    /* ---------- export conversation ---------- */
+    $('export-conv').onclick = async () => {
+      if (!conversationId) { await confirmModal({ title: 'No conversation', body: 'Open or start a conversation first.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      const res = await api('/api/conversations/' + conversationId + '/export');
+      if (!res.ok) { await confirmModal({ title: 'Export failed', body: 'Could not export.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      const html = await res.text();
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'forge-' + conversationId.slice(0, 8) + '.html';
+      a.click(); URL.revokeObjectURL(url);
+    };
+
+    /* ---------- slash command / skill palette ---------- */
+    let allCommands = [], allSkills = [], paletteItems = [], paletteSel = 0;
+    async function loadCommandsSkills() {
+      try { allCommands = await (await api('/api/commands')).json(); } catch (e) { allCommands = []; }
+      try { allSkills = await (await api('/api/skills')).json(); } catch (e) { allSkills = []; }
+    }
+    function updatePalette() {
+      const pal = $('cmd-palette');
+      const m = inputEl.value.match(/^\/(\S*)$/);
+      if (!m) { pal.classList.remove('open'); return; }
+      const q = m[1].toLowerCase();
+      const cmds = allCommands.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8);
+      const sks = allSkills.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 6);
+      paletteItems = []; paletteSel = 0; pal.innerHTML = '';
+      const section = (title, arr, kind) => {
+        if (!arr.length) return;
+        const h = document.createElement('div'); h.className = 'cmd-sec'; h.textContent = title; pal.appendChild(h);
+        for (const x of arr) {
+          const idx = paletteItems.length; paletteItems.push({ kind, data: x });
+          const it = document.createElement('div'); it.className = 'cmd-item'; it.dataset.i = idx;
+          const k = document.createElement('span'); k.className = 'k'; k.textContent = (kind === 'cmd' ? '/' : '📚 ') + x.name;
+          const d = document.createElement('span'); d.className = 'd'; d.textContent = x.description || '';
+          it.append(k, d);
+          it.onmousedown = (e) => { e.preventDefault(); palettePick(idx); };
+          it.onmouseenter = () => { paletteSel = idx; paintPalette(); };
+          pal.appendChild(it);
+        }
+      };
+      section('Commands', cmds, 'cmd');
+      section('Skills', sks, 'skill');
+      if (!paletteItems.length) { pal.classList.remove('open'); return; }
+      pal.classList.add('open'); paintPalette();
+    }
+    function paintPalette() {
+      $('cmd-palette').querySelectorAll('.cmd-item').forEach((el) => el.classList.toggle('sel', +el.dataset.i === paletteSel));
+    }
+    function paletteMove(d) {
+      if (!paletteItems.length) return;
+      paletteSel = (paletteSel + d + paletteItems.length) % paletteItems.length; paintPalette();
+      const el = $('cmd-palette').querySelector('.cmd-item.sel'); if (el) el.scrollIntoView({ block: 'nearest' });
+    }
+    function palettePick(idx) {
+      const item = paletteItems[idx != null ? idx : paletteSel]; if (!item) return;
+      if (item.kind === 'cmd') inputEl.value = item.data.prompt || ('/' + item.data.name + ' ');
+      else inputEl.value = 'Use the ' + item.data.name + ' skill to ';
+      $('cmd-palette').classList.remove('open'); inputEl.focus(); autoGrow();
+    }
+
     /* ---------- composer ---------- */
     function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; }
-    inputEl.addEventListener('input', autoGrow);
+    inputEl.addEventListener('input', () => { autoGrow(); updatePalette(); });
     $('send').onclick = () => (streaming ? stopStreaming() : send());
     $('new').onclick = newConversation;
     inputEl.addEventListener('keydown', (e) => {
+      // Slash palette navigation takes priority when it's open.
+      if ($('cmd-palette').classList.contains('open')) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); paletteMove(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); paletteMove(-1); return; }
+        if (e.key === 'Escape') { $('cmd-palette').classList.remove('open'); return; }
+        if ((e.key === 'Enter' || e.key === 'Tab') && !e.isComposing) { e.preventDefault(); palettePick(); return; }
+      }
       // Ignore Enter while an IME is composing (e.g. selecting a pinyin
       // candidate) — `isComposing`/keyCode 229 mark an in-progress composition.
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
@@ -1353,14 +1444,31 @@
       $('squad-tasks').appendChild(row);
     }
 
+    let squadMode = 'diff';
+    $('mode-diff').onclick = () => setSquadMode('diff');
+    $('mode-best').onclick = () => setSquadMode('best');
+    function setSquadMode(m) {
+      squadMode = m;
+      $('mode-diff').classList.toggle('sel', m === 'diff');
+      $('mode-best').classList.toggle('sel', m === 'best');
+      $('squad-diff-form').style.display = m === 'diff' ? '' : 'none';
+      $('squad-bestof-form').style.display = m === 'best' ? '' : 'none';
+    }
+
     $('squad-run').onclick = async () => {
-      const tasks = [];
-      for (const row of $('squad-tasks').children) {
-        const name = row.querySelector('input').value.trim();
-        const prompt = row.querySelector('textarea').value.trim();
-        if (prompt) tasks.push({ name: name || ('task ' + (tasks.length + 1)), prompt });
+      let tasks = [];
+      if (squadMode === 'best') {
+        const prompt = $('bestof-prompt').value.trim();
+        const n = Math.max(2, Math.min(6, parseInt($('bestof-n').value) || 3));
+        if (prompt) for (let i = 1; i <= n; i++) tasks.push({ name: 'attempt ' + i, prompt });
+      } else {
+        for (const row of $('squad-tasks').children) {
+          const name = row.querySelector('input').value.trim();
+          const prompt = row.querySelector('textarea').value.trim();
+          if (prompt) tasks.push({ name: name || ('task ' + (tasks.length + 1)), prompt });
+        }
       }
-      if (!tasks.length) { await confirmModal({ title: 'No tasks', body: 'Add at least one task with a prompt.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      if (!tasks.length) { await confirmModal({ title: 'No tasks', body: squadMode === 'best' ? 'Enter the task to attempt.' : 'Add at least one task with a prompt.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
       const concurrency = Math.max(1, Math.min(5, parseInt($('squad-conc').value) || 3));
       const base_ref = $('squad-base').value.trim() || undefined;
       const res = await api('/api/squad', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tasks, concurrency, base_ref }) });
@@ -1475,6 +1583,7 @@
     loadConversations();
     // Lock in the full-capability agent, then load its models.
     ensureDefaultAgent().then(loadModels);
+    loadCommandsSkills();
     inputEl.focus();
   </script>
 </body>

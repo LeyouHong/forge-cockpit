@@ -108,6 +108,9 @@ where
         )
         .route("/api/conversations/{id}/rename", post(rename_conversation::<A>))
         .route("/api/conversations/{id}/messages", get(get_messages::<A>))
+        .route("/api/conversations/{id}/export", get(export_conversation::<A>))
+        .route("/api/commands", get(list_commands::<A>))
+        .route("/api/skills", get(list_skills::<A>))
         .route("/api/agents", get(list_agents::<A>).post(set_agent::<A>))
         .route("/api/models", get(list_models::<A>).post(set_model::<A>))
         .route("/api/providers", get(list_providers::<A>))
@@ -298,6 +301,63 @@ async fn get_conversation<A: API>(
         Some(conversation) => Ok(Json(conversation)),
         None => Err(AppError::not_found(format!("conversation '{id}' not found"))),
     }
+}
+
+/// `GET /api/conversations/{id}/export` — the conversation as a standalone HTML
+/// document (Forge's own rendering), for download.
+async fn export_conversation<A: API>(
+    State(state): State<AppState<A>>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let id = ConversationId::parse(&id)?;
+    let conversation = state
+        .api
+        .conversation(&id)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("conversation '{id}' not found")))?;
+    let html = conversation.to_html();
+    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response())
+}
+
+/// A command exposed to the command palette.
+#[derive(Serialize)]
+struct CommandDto {
+    name: String,
+    description: String,
+    prompt: Option<String>,
+}
+
+/// `GET /api/commands` — custom commands (named prompt templates).
+async fn list_commands<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Vec<CommandDto>>, AppError> {
+    let commands = state.api.get_commands().await?;
+    Ok(Json(
+        commands
+            .into_iter()
+            .map(|c| CommandDto { name: c.name, description: c.description, prompt: c.prompt })
+            .collect(),
+    ))
+}
+
+/// A skill exposed for discoverability.
+#[derive(Serialize)]
+struct SkillDto {
+    name: String,
+    description: String,
+}
+
+/// `GET /api/skills` — available skills (agent-invoked domain knowledge).
+async fn list_skills<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Vec<SkillDto>>, AppError> {
+    let skills = state.api.get_skills().await?;
+    Ok(Json(
+        skills
+            .into_iter()
+            .map(|s| SkillDto { name: s.name, description: s.description })
+            .collect(),
+    ))
 }
 
 /// Body for `POST /api/conversations/{id}/rename`.
