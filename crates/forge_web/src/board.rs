@@ -376,8 +376,31 @@ fn unfold(ics: &str) -> Vec<String> {
     out
 }
 
-/// Parses a DTSTART value into (epoch-day, minute-of-day, all_day).
-fn parse_dtstart(prop: &str, value: &str) -> Option<(i64, i64, bool)> {
+/// The machine's current UTC offset in seconds (via `date +%z`, e.g. +0800).
+/// Used to render calendar times in the viewer's local zone.
+fn local_offset_seconds() -> i64 {
+    let s = Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    let s = s.trim();
+    if s.len() >= 5 {
+        let sign = if s.starts_with('-') { -1 } else { 1 };
+        let hh: i64 = s[1..3].parse().unwrap_or(0);
+        let mm: i64 = s[3..5].parse().unwrap_or(0);
+        return sign * (hh * 3600 + mm * 60);
+    }
+    0
+}
+
+/// Parses a DTSTART value into (local epoch-day, local minute-of-day, all_day).
+///
+/// Times marked UTC (`…Z`) are shifted by `offset` into local time; times with
+/// a TZID or none are treated as already-local (the common "my calendar in my
+/// own zone" case). All-day dates are never shifted.
+fn parse_dtstart(prop: &str, value: &str, offset: i64) -> Option<(i64, i64, bool)> {
     let digits: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() < 8 {
         return None;
@@ -385,19 +408,22 @@ fn parse_dtstart(prop: &str, value: &str) -> Option<(i64, i64, bool)> {
     let y: i64 = digits[0..4].parse().ok()?;
     let m: i64 = digits[4..6].parse().ok()?;
     let d: i64 = digits[6..8].parse().ok()?;
-    let day = days_from_civil(y, m, d);
+    let base_day = days_from_civil(y, m, d);
     let all_day = prop.contains("VALUE=DATE") || digits.len() < 12;
-    let minute = if all_day {
-        0
-    } else {
-        let hh: i64 = digits[8..10].parse().unwrap_or(0);
-        let mm: i64 = digits[10..12].parse().unwrap_or(0);
-        hh * 60 + mm
-    };
-    Some((day, minute, all_day))
+    if all_day {
+        return Some((base_day, 0, true));
+    }
+    let hh: i64 = digits[8..10].parse().unwrap_or(0);
+    let mm: i64 = digits[10..12].parse().unwrap_or(0);
+    let ss: i64 = if digits.len() >= 14 { digits[12..14].parse().unwrap_or(0) } else { 0 };
+    let mut secs = base_day * 86400 + hh * 3600 + mm * 60 + ss;
+    if value.trim_end().ends_with('Z') {
+        secs += offset; // UTC → local
+    }
+    Some((secs.div_euclid(86400), secs.rem_euclid(86400) / 60, false))
 }
 
-fn parse_ics(ics: &str) -> Vec<Event> {
+fn parse_ics(ics: &str, offset: i64) -> Vec<Event> {
     let mut events = Vec::new();
     let mut cur: Option<Event> = None;
     for line in unfold(ics) {
@@ -418,7 +444,7 @@ fn parse_ics(ics: &str) -> Vec<Event> {
             match key {
                 "SUMMARY" => e.summary = value.replace("\\,", ",").replace("\\n", " ").trim().to_string(),
                 "DTSTART" => {
-                    if let Some((day, minute, all_day)) = parse_dtstart(name, value) {
+                    if let Some((day, minute, all_day)) = parse_dtstart(name, value, offset) {
                         e.day = day;
                         e.minute = minute;
                         e.all_day = all_day;
@@ -475,35 +501,49 @@ pub(crate) async fn gcal_board<A: API>(
     if !text.contains("BEGIN:VCALENDAR") {
         return Err(AppError::bad_request("that URL didn't return an iCal feed"));
     }
-    let events = parse_ics(&text);
+    let offset = local_offset_seconds();
+    let events = parse_ics(&text, offset);
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let today = now / 86400;
-    let now_minute = (now % 86400) / 60;
+    // Work entirely in local time so "today"/times line up with the calendar.
+    let utc = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let local = utc + offset;
+    let today = local.div_euclid(86400);
+    let now_minute = local.rem_euclid(86400) / 60;
 
-    // Count today / next-7-days occurrences over a 14-day look-ahead.
+    // Current calendar week, Monday–Sunday (epoch day 0 = Thursday).
+    let dow_mon = (today + 3).rem_euclid(7); // Mon=0 … Sun=6
+    let week_start = today - dow_mon;
+    let week_end = week_start + 6;
+
+    // Scan from the start of this week through a 14-day look-ahead.
+    let scan_start = today.min(week_start);
+    let scan_end = today + 13;
     let mut today_count = 0;
-    let mut week_count = 0;
+    let mut this_week = 0;
+    let mut next7 = 0;
     let mut next: Option<(i64, i64, String)> = None; // (day, minute, summary)
     for e in &events {
-        for k in 0..14 {
-            let target = today + k;
-            if occurs_on(e, target) {
-                if target == today {
+        let mut day = scan_start;
+        while day <= scan_end {
+            if occurs_on(e, day) {
+                if day == today {
                     today_count += 1;
                 }
-                if k < 7 {
-                    week_count += 1;
+                if day >= week_start && day <= week_end {
+                    this_week += 1;
                 }
-                // Track the soonest upcoming occurrence (future, or later today).
-                let is_future = target > today || (target == today && (e.all_day || e.minute >= now_minute));
+                if day >= today && day <= today + 6 {
+                    next7 += 1;
+                }
+                let is_future = day > today || (day == today && (e.all_day || e.minute >= now_minute));
                 if is_future {
-                    let cand = (target, e.minute, e.summary.clone());
+                    let cand = (day, e.minute, e.summary.clone());
                     if next.as_ref().map(|n| (cand.0, cand.1) < (n.0, n.1)).unwrap_or(true) {
                         next = Some(cand);
                     }
                 }
             }
+            day += 1;
         }
     }
 
@@ -512,7 +552,7 @@ pub(crate) async fn gcal_board<A: API>(
             let when = if *day == today {
                 if *minute > 0 { format!("today {:02}:{:02}", minute / 60, minute % 60) } else { "today".to_string() }
             } else if *day == today + 1 {
-                "tomorrow".to_string()
+                if *minute > 0 { format!("tomorrow {:02}:{:02}", minute / 60, minute % 60) } else { "tomorrow".to_string() }
             } else {
                 format!("in {} days", day - today)
             };
@@ -528,7 +568,8 @@ pub(crate) async fn gcal_board<A: API>(
         "subtitle": subtitle,
         "stats": [
             { "label": "Today", "value": today_count },
-            { "label": "Next 7 days", "value": week_count },
+            { "label": "This week", "value": this_week },
+            { "label": "Next 7 days", "value": next7 },
         ]
     })))
 }
