@@ -66,7 +66,7 @@ fn git(args: &[&str], cwd: &Path) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn short_id() -> String {
+pub(crate) fn short_id() -> String {
     forge_domain::ConversationId::generate()
         .into_string()
         .chars()
@@ -114,6 +114,19 @@ async fn set_status(run: &SquadRun, task: &SquadTask, status: &str, extra: Value
         }
     }
     emit(run, &task.id, ev).await;
+
+    // Close attached SSE streams once every task is terminal (the sender lives
+    // in the registry, so `Closed` never fires on its own).
+    let mut all_terminal = true;
+    for t in &run.tasks {
+        if t.status.lock().await.as_str() == "running" {
+            all_terminal = false;
+            break;
+        }
+    }
+    if all_terminal {
+        let _ = run.tx.send(crate::live::DONE_SENTINEL.to_string());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,15 +287,25 @@ pub(crate) async fn squad_events<A: API + 'static>(
     };
     let mut rx = run.tx.subscribe();
     let backlog = run.log.lock().await.clone();
+    let mut all_terminal = true;
+    for t in &run.tasks {
+        if t.status.lock().await.as_str() == "running" {
+            all_terminal = false;
+            break;
+        }
+    }
     let stream = async_stream::stream! {
         for s in backlog {
             yield Ok::<_, std::convert::Infallible>(SseEvent::default().data(s));
         }
-        loop {
-            match rx.recv().await {
-                Ok(s) => yield Ok(SseEvent::default().data(s)),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
+        if !all_terminal {
+            loop {
+                match rx.recv().await {
+                    Ok(s) if s == crate::live::DONE_SENTINEL => break,
+                    Ok(s) => yield Ok(SseEvent::default().data(s)),
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
         }
     };

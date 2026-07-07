@@ -18,8 +18,7 @@ use axum::response::sse::{Event as SseEvent, Sse};
 use axum::response::{IntoResponse, Response};
 use forge_api::API;
 use forge_domain::{
-    Attachment, AttachmentContent, ChatRequest, ChatResponse, Conversation, ConversationId,
-    Event as DomainEvent, Image, TokenCount,
+    ChatRequest, ChatResponse, Conversation, ConversationId, Event as DomainEvent, TokenCount,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -27,6 +26,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::dto::ChatEventDto;
+use crate::squad::short_id;
 use crate::{AppError, AppState};
 
 /// How long a finished turn stays attachable (covers "completed right as the
@@ -54,9 +54,14 @@ async fn emit(turn: &ActiveTurn, mut ev: Value) {
     let _ = turn.tx.send(s);
 }
 
+/// Sentinel pushed on the broadcast when a turn ends so attached SSE streams
+/// close (the sender lives in the registry, so `Closed` never fires on its own).
+pub(crate) const DONE_SENTINEL: &str = "__done__";
+
 fn finish(turn: &ActiveTurn) {
     turn.done.store(true, Ordering::SeqCst);
     *turn.finished_at.lock().unwrap() = Some(Instant::now());
+    let _ = turn.tx.send(DONE_SENTINEL.to_string());
 }
 
 /// Drops finished turns past their TTL.
@@ -106,8 +111,6 @@ pub(crate) async fn conversation_usage<A: API>(api: &A, id: &ConversationId) -> 
 pub(crate) struct ImageInput {
     base64: String,
     mime: String,
-    #[serde(default)]
-    name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -142,18 +145,30 @@ pub(crate) async fn start_turn<A: API + 'static>(
             .await?;
     }
 
-    let mut event = DomainEvent::new(body.message.clone());
+    // Forge's pipeline picks up attachments by parsing `@[path]` tags in the
+    // message text (Event.attachments is not consumed by the orchestrator), so
+    // uploaded images are written to temp files and referenced by tag.
+    let mut message = body.message.clone();
     if !body.images.is_empty() {
-        let attachments = body
-            .images
-            .iter()
-            .map(|img| Attachment {
-                content: AttachmentContent::Image(Image::new_base64(img.base64.clone(), img.mime.clone())),
-                path: img.name.clone().unwrap_or_else(|| "pasted-image".to_string()),
-            })
-            .collect::<Vec<_>>();
-        event = event.attachments(attachments);
+        use base64::Engine;
+        let dir = std::env::temp_dir().join("forge-web-uploads");
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::bad_request(format!("temp dir: {e}")))?;
+        for img in &body.images {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(img.base64.as_bytes())
+                .map_err(|e| AppError::bad_request(format!("bad image data: {e}")))?;
+            let ext = match img.mime.as_str() {
+                "image/jpeg" | "image/jpg" => "jpg",
+                "image/gif" => "gif",
+                "image/webp" => "webp",
+                _ => "png",
+            };
+            let path = dir.join(format!("{}.{ext}", short_id()));
+            std::fs::write(&path, bytes).map_err(|e| AppError::bad_request(format!("save image: {e}")))?;
+            message.push_str(&format!("\n@[{}]", path.display()));
+        }
     }
+    let event = DomainEvent::new(message);
     let request = ChatRequest::new(event, conversation_id);
 
     let (tx, _rx) = broadcast::channel::<String>(1024);
@@ -232,6 +247,7 @@ pub(crate) async fn turn_live<A: API + 'static>(
         if !done {
             loop {
                 match rx.recv().await {
+                    Ok(s) if s == DONE_SENTINEL => break,
                     Ok(s) => yield Ok(SseEvent::default().data(s)),
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,

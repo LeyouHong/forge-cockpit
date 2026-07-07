@@ -461,6 +461,7 @@ struct ModelDto {
     id: String,
     name: Option<String>,
     active: bool,
+    supports_image: bool,
 }
 
 /// `GET /api/models` — available models with the session model flagged.
@@ -473,6 +474,7 @@ async fn list_models<A: API>(
         .into_iter()
         .map(|m| ModelDto {
             active: active.as_ref() == Some(&m.id),
+            supports_image: m.input_modalities.contains(&forge_domain::InputModality::Image),
             id: m.id.as_str().to_string(),
             name: m.name,
         })

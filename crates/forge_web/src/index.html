@@ -865,10 +865,12 @@
         await api('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pick.id }) });
       }
     }
+    const modelSupportsImage = {};
     async function loadModels() {
       const res = await api('/api/models'); const list = await res.json();
       const sel = $('model'); sel.innerHTML = '';
       for (const m of list) {
+        modelSupportsImage[m.id] = !!m.supports_image;
         const o = document.createElement('option');
         o.value = m.id; o.textContent = m.name || m.id; o.selected = m.active; sel.appendChild(o);
       }
@@ -1019,6 +1021,14 @@
         rm.onclick = () => { pendingImages.splice(i, 1); renderAttachPreview(); };
         t.append(img, rm); box.appendChild(t);
       });
+      // Warn when the active model can't see images.
+      const model = $('model').value;
+      if (pendingImages.length && model && modelSupportsImage[model] === false) {
+        const w = document.createElement('div'); w.className = 'gh-fail';
+        w.style.alignSelf = 'center';
+        w.textContent = '⚠ ' + model + ' 不支持图片输入 — 模型将看不到这张图。请切换支持视觉的模型。';
+        box.appendChild(w);
+      }
     }
     function clearAttachments() { pendingImages = []; renderAttachPreview(); }
     function addImageFile(file) {

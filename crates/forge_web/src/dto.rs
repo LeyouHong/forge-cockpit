@@ -37,11 +37,13 @@ impl MessageDto {
                     // injected `<system_date>` etc). Show the original input:
                     // prefer the pre-template raw prompt, else strip the wrapper.
                     content: if text.role == Role::User {
-                        text.raw_content
+                        let raw = text
+                            .raw_content
                             .as_ref()
                             .and_then(|v| v.as_user_prompt())
                             .map(|p| p.as_str().to_string())
-                            .unwrap_or_else(|| strip_wrapper(&text.content))
+                            .unwrap_or_else(|| strip_wrapper(&text.content));
+                        strip_attachment_tags(&raw)
                     } else {
                         text.content.clone()
                     },
@@ -77,6 +79,20 @@ fn strip_wrapper(s: &str) -> String {
         }
     }
     t.to_string()
+}
+
+/// Hides internal `@[path]` attachment tags (added for uploaded images) from
+/// the displayed user message.
+fn strip_attachment_tags(s: &str) -> String {
+    s.lines()
+        .filter(|l| {
+            let t = l.trim();
+            !(t.starts_with("@[") && t.ends_with(']'))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
 }
 
 fn role_str(role: Role) -> &'static str {
