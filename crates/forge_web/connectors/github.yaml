@@ -1,20 +1,27 @@
-# GitHub REST API v3 via a Personal Access Token (bearer). Pass owner/repo as
-# tool arguments. Create a token at github.com/settings → Personal access tokens.
+# GitHub REST API v3 via OAuth (device flow) — click Connect, enter the code in
+# your browser, done. No PAT to paste. Register a GitHub OAuth App (with device
+# flow enabled) at github.com/settings/developers and put its Client ID below;
+# every user then just consents.
 id: github
 name: GitHub
 protocol: http
 base_url: https://api.github.com
-description: GitHub REST API — issues, pull requests, repos, search (bearer PAT).
+description: GitHub REST API — issues, pull requests, repos, search (OAuth device flow).
 auth:
-  type: bearer
-  token: "{token}"
+  type: oauth
+  flow: device
+  client_id: "{client_id}"
+  device_authorize_url: https://github.com/login/device/code
+  token_url: https://github.com/login/oauth/access_token
+  scopes: [repo, read:org]
+  use: bearer
 headers:
   Accept: application/vnd.github+json
   X-GitHub-Api-Version: "2022-11-28"
 config:
-  - id: token
-    label: Personal access token
-    secret: true
+  - id: client_id
+    label: OAuth App Client ID
+    placeholder: Iv1.xxxxxxxxxxxxxxxx
     required: true
 tools:
   - name: list_my_issues

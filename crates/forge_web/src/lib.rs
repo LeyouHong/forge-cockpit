@@ -137,6 +137,8 @@ where
         .route("/api/connectors/sync", post(connectors::sync::<A>))
         .route("/api/connectors/{id}/config", put(connectors::set_config::<A>))
         .route("/api/connectors/{id}/call", post(connectors::call_connector::<A>))
+        .route("/api/connectors/{id}/oauth/start", post(connectors::oauth_start::<A>))
+        .route("/api/connectors/{id}/oauth", delete(connectors::oauth_disconnect::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     // The connector engine, exposed to the agent as a Streamable-HTTP MCP

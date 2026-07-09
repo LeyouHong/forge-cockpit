@@ -1903,6 +1903,22 @@
         card.appendChild(save);
       }
 
+      // OAuth connectors: Connect (device flow) / Disconnect, instead of a token.
+      if (c.auth_type === 'oauth') {
+        const row = document.createElement('div'); row.style.cssText = 'margin-top:10px;display:flex;gap:8px;align-items:center';
+        if (c.oauth_connected) {
+          const ok = document.createElement('span'); ok.className = 'badge on'; ok.textContent = 'OAuth connected';
+          const dis = document.createElement('button'); dis.className = 'btn btn-sm btn-ghost'; dis.textContent = 'Disconnect';
+          dis.onclick = async () => { await api('/api/connectors/' + c.id + '/oauth', { method: 'DELETE' }); loadConnectors(); };
+          row.append(ok, dis);
+        } else {
+          const conn = document.createElement('button'); conn.className = 'btn btn-sm btn-primary'; conn.textContent = 'Connect with ' + c.name;
+          conn.onclick = () => connectorOAuth(c.id, c.name);
+          row.appendChild(conn);
+        }
+        card.appendChild(row);
+      }
+
       // Tools with an inline test-call.
       if (c.tools && c.tools.length) {
         const tools = document.createElement('div'); tools.className = 'cn-tools';
@@ -1910,6 +1926,36 @@
         card.appendChild(tools);
       }
       return card;
+    }
+
+    // Runs a connector's OAuth device flow, mirroring the AI-provider sign-in:
+    // stream the user code, show it, wait for the browser consent, then reload.
+    async function connectorOAuth(id, name) {
+      const res = await api('/api/connectors/' + id + '/oauth/start', { method: 'POST' });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); await confirmModal({ title: 'Cannot connect', body: e.error || 'Failed to start OAuth. Save the Client ID first.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split('\n\n'); buf = frames.pop();
+        for (const f of frames) {
+          const line = f.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (ev.type === 'code') {
+            if (ev.verification_uri) window.open(ev.verification_uri, '_blank');
+            confirmModal({ title: 'Connect ' + name, body: 'Open ' + ev.verification_uri + ' and enter code:\n\n  ' + ev.user_code + '\n\nWaiting for you to authorize…', confirmText: 'Working…', hideCancel: true, danger: false });
+          } else if (ev.type === 'done') {
+            $('modal-overlay').classList.remove('open');
+            await confirmModal({ title: 'Connected', body: name + ' is connected.', confirmText: 'OK', hideCancel: true, danger: false });
+          } else if (ev.type === 'error') {
+            $('modal-overlay').classList.remove('open');
+            await confirmModal({ title: 'Connection failed', body: String(ev.message || '').slice(0, 300), confirmText: 'OK', hideCancel: true, danger: false });
+          }
+        }
+      }
+      loadConnectors();
     }
 
     function connectorToolRow(c, t) {

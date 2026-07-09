@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::{Path as AxPath, State};
+use axum::response::sse::{Event as SseEvent, Sse};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -54,7 +56,7 @@ fn default_protocol() -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Auth {
-    /// `none` | `bearer` | `header` | `query` | `basic`.
+    /// `none` | `bearer` | `header` | `query` | `basic` | `oauth`.
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
@@ -69,6 +71,24 @@ pub(crate) struct Auth {
     pub username: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+
+    // ----- oauth (kind: oauth) -----
+    /// OAuth flow: `device` (only device is implemented for now).
+    #[serde(default)]
+    pub flow: Option<String>,
+    /// OAuth client id (may template `{field}` from config, e.g. a registered app id).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub device_authorize_url: Option<String>,
+    #[serde(default)]
+    pub token_url: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// How the obtained access token is presented on requests: `bearer` (default)
+    /// or `header` (with `header:` naming the header).
+    #[serde(rename = "use", default)]
+    pub use_as: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -187,6 +207,96 @@ fn connector_config(id: &str) -> BTreeMap<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// OAuth token storage (per connector, encrypted) + refresh
+// ---------------------------------------------------------------------------
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn oauth_store_read(id: &str) -> Option<Value> {
+    read_settings().get("oauth_tokens").and_then(|t| t.get(id)).cloned()
+}
+
+fn oauth_store_write(id: &str, access: &str, refresh: Option<&str>, expires_in: Option<u64>) {
+    let mut s = read_settings();
+    if !s.get("oauth_tokens").map(Value::is_object).unwrap_or(false) {
+        s["oauth_tokens"] = json!({});
+    }
+    let mut entry = json!({ "access_token": crate::secret::encrypt(access) });
+    if let Some(r) = refresh {
+        entry["refresh_token"] = json!(crate::secret::encrypt(r));
+    }
+    if let Some(e) = expires_in {
+        entry["expires_at"] = json!(now_secs() + e);
+    }
+    s["oauth_tokens"][id] = entry;
+    write_settings(&s);
+}
+
+fn oauth_clear(id: &str) {
+    let mut s = read_settings();
+    if let Some(Value::Object(m)) = s.get_mut("oauth_tokens") {
+        m.remove(id);
+    }
+    write_settings(&s);
+}
+
+fn oauth_connected(id: &str) -> bool {
+    oauth_store_read(id)
+        .and_then(|t| t.get("access_token").cloned())
+        .is_some()
+}
+
+/// A usable access token for the connector, refreshing if expired and a refresh
+/// token is available.
+async fn oauth_access_token(connector: &Connector) -> Option<String> {
+    let stored = oauth_store_read(&connector.id)?;
+    let access = stored
+        .get("access_token")
+        .and_then(Value::as_str)
+        .map(crate::secret::decrypt)?;
+    let expires_at = stored.get("expires_at").and_then(Value::as_u64);
+    if expires_at.map(|e| e > now_secs() + 30).unwrap_or(true) {
+        return Some(access); // not expired (or no expiry)
+    }
+    // Expired → refresh.
+    let refresh = stored
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .map(crate::secret::decrypt)?;
+    let auth = connector.auth.as_ref()?;
+    let token_url = auth.token_url.as_deref()?;
+    let vars = connector_config(&connector.id);
+    let client_id = render(auth.client_id.as_deref().unwrap_or(""), &vars);
+    let resp: Value = client()
+        .post(token_url)
+        .header("Accept", "application/json")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh.as_str()),
+            ("client_id", client_id.as_str()),
+        ])
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let new_access = resp.get("access_token").and_then(Value::as_str)?.to_string();
+    oauth_store_write(
+        &connector.id,
+        &new_access,
+        resp.get("refresh_token").and_then(Value::as_str),
+        resp.get("expires_in").and_then(Value::as_u64),
+    );
+    Some(new_access)
+}
+
+// ---------------------------------------------------------------------------
 // Template rendering — `{key}` is replaced from the vars map; unknown keys
 // render to empty so optional query params simply drop out.
 // ---------------------------------------------------------------------------
@@ -300,6 +410,22 @@ async fn dispatch(connector: &Connector, tool: &Tool, args: &Value) -> Result<Va
                 let pass = render(auth.password.as_deref().unwrap_or(""), &vars);
                 req = req.basic_auth(user, Some(pass));
             }
+            "oauth" => {
+                let token = oauth_access_token(connector).await.ok_or_else(|| {
+                    AppError::bad_request(format!(
+                        "connector '{}' is not connected — run its OAuth flow first",
+                        connector.id
+                    ))
+                })?;
+                match auth.use_as.as_deref().unwrap_or("bearer") {
+                    "header" => {
+                        let name =
+                            auth.header.clone().unwrap_or_else(|| "Authorization".to_string());
+                        req = req.header(name, token);
+                    }
+                    _ => req = req.header("Authorization", format!("Bearer {token}")),
+                }
+            }
             other => {
                 return Err(AppError::bad_request(format!("unsupported auth type '{other}'")));
             }
@@ -330,11 +456,16 @@ pub(crate) fn catalog_json() -> Value {
         .into_iter()
         .map(|c| {
             let cfg = connector_config(&c.id);
-            let configured = c
+            let auth_type = c.auth.as_ref().map(|a| a.kind.clone());
+            let is_oauth = auth_type.as_deref() == Some("oauth");
+            let connected = if is_oauth { oauth_connected(&c.id) } else { false };
+            let config_ok = c
                 .config
                 .iter()
                 .filter(|f| f.required)
                 .all(|f| cfg.get(&f.id).map(|s| !s.is_empty()).unwrap_or(false));
+            // An oauth connector also needs a token; others just need their config.
+            let configured = config_ok && (!is_oauth || connected);
             // Echo back saved *non-secret* values so the form can prefill;
             // secrets are never returned.
             let values: BTreeMap<&str, &str> = c
@@ -349,6 +480,8 @@ pub(crate) fn catalog_json() -> Value {
                 "description": c.description,
                 "protocol": c.protocol,
                 "configured": configured,
+                "auth_type": auth_type,
+                "oauth_connected": connected,
                 "config": c.config,
                 "values": values,
                 "tools": c.tools.iter().map(|t| json!({
@@ -537,6 +670,116 @@ pub(crate) async fn sync<A: API>(State(_): State<AppState<A>>) -> Result<Json<Va
         }
     }
     Ok(Json(json!({ "synced": synced, "errors": errors })))
+}
+
+// ---------------------------------------------------------------------------
+// OAuth device flow — POST /api/connectors/{id}/oauth/start (SSE), and
+// DELETE /api/connectors/{id}/oauth to disconnect.
+// ---------------------------------------------------------------------------
+
+fn sse(v: &Value) -> Result<SseEvent, std::convert::Infallible> {
+    Ok(SseEvent::default().json_data(v).unwrap_or_else(|_| SseEvent::default().data("{}")))
+}
+
+/// POST /api/connectors/{id}/oauth/start — runs the OAuth device flow, streaming
+/// the user code then the result. Mirrors the AI-provider device sign-in.
+pub(crate) async fn oauth_start<A: API + 'static>(
+    State(_): State<AppState<A>>,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let connector = match manifest(&id) {
+        Some(c) => c,
+        None => return AppError::not_found("no such connector").into_response(),
+    };
+    let auth = match &connector.auth {
+        Some(a) if a.kind == "oauth" => a.clone(),
+        _ => return AppError::bad_request("connector is not oauth").into_response(),
+    };
+    if auth.flow.as_deref() != Some("device") {
+        return AppError::bad_request("only the device flow is implemented").into_response();
+    }
+    let vars = connector_config(&id);
+    let client_id = render(auth.client_id.as_deref().unwrap_or(""), &vars);
+    if client_id.is_empty() {
+        return AppError::bad_request("client_id is not configured").into_response();
+    }
+    let (Some(device_url), Some(token_url)) =
+        (auth.device_authorize_url.clone(), auth.token_url.clone())
+    else {
+        return AppError::bad_request("manifest lacks device_authorize_url / token_url")
+            .into_response();
+    };
+    let scope = auth.scopes.join(" ");
+
+    let stream = async_stream::stream! {
+        let cl = client();
+        let dev: Value = match cl.post(&device_url).header("Accept", "application/json")
+            .form(&[("client_id", client_id.as_str()), ("scope", scope.as_str())])
+            .send().await
+        {
+            Ok(r) => r.json().await.unwrap_or_default(),
+            Err(e) => { yield sse(&json!({ "type": "error", "message": format!("device code request failed: {e}") })); return; }
+        };
+        let device_code = dev.get("device_code").and_then(Value::as_str).unwrap_or("").to_string();
+        if device_code.is_empty() {
+            let m = dev.get("error_description").or_else(|| dev.get("error")).and_then(Value::as_str).unwrap_or("no device_code returned");
+            yield sse(&json!({ "type": "error", "message": m }));
+            return;
+        }
+        let mut interval = dev.get("interval").and_then(Value::as_u64).unwrap_or(5).max(1);
+        let expires_in = dev.get("expires_in").and_then(Value::as_u64).unwrap_or(600);
+        yield sse(&json!({
+            "type": "code",
+            "user_code": dev.get("user_code").and_then(Value::as_str).unwrap_or(""),
+            "verification_uri": dev.get("verification_uri").and_then(Value::as_str).unwrap_or(""),
+            "expires_in": expires_in,
+        }));
+
+        let deadline = now_secs() + expires_in;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            if now_secs() > deadline {
+                yield sse(&json!({ "type": "error", "message": "device code expired" }));
+                return;
+            }
+            let tok: Value = match cl.post(&token_url).header("Accept", "application/json")
+                .form(&[
+                    ("client_id", client_id.as_str()),
+                    ("device_code", device_code.as_str()),
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ]).send().await
+            {
+                Ok(r) => r.json().await.unwrap_or_default(),
+                Err(e) => { yield sse(&json!({ "type": "error", "message": format!("token poll failed: {e}") })); return; }
+            };
+            if let Some(access) = tok.get("access_token").and_then(Value::as_str) {
+                oauth_store_write(
+                    &id,
+                    access,
+                    tok.get("refresh_token").and_then(Value::as_str),
+                    tok.get("expires_in").and_then(Value::as_u64),
+                );
+                yield sse(&json!({ "type": "done", "ok": true }));
+                return;
+            }
+            match tok.get("error").and_then(Value::as_str) {
+                Some("authorization_pending") => continue,
+                Some("slow_down") => { interval += 5; continue; }
+                Some(other) => { yield sse(&json!({ "type": "error", "message": other })); return; }
+                None => { yield sse(&json!({ "type": "error", "message": "unexpected token response" })); return; }
+            }
+        }
+    };
+    Sse::new(stream).into_response()
+}
+
+/// DELETE /api/connectors/{id}/oauth — forget the stored OAuth token.
+pub(crate) async fn oauth_disconnect<A: API>(
+    State(_): State<AppState<A>>,
+    AxPath(id): AxPath<String>,
+) -> Json<Value> {
+    oauth_clear(&id);
+    Json(json!({ "ok": true }))
 }
 
 #[cfg(test)]
