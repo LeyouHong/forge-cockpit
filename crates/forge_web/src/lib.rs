@@ -10,11 +10,8 @@
 //! itself) behind a per-run bearer token printed at startup.
 
 mod board;
-mod connectors;
-mod connectors_mcp;
 mod dto;
 mod live;
-mod secret;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -129,31 +126,11 @@ where
             put(board::update_todo::<A>).delete(board::delete_todo::<A>),
         )
         .route("/api/pipelines", get(board::running_pipelines::<A>))
-        .route("/api/connectors", get(connectors::list_connectors::<A>))
-        .route(
-            "/api/connectors/source",
-            get(connectors::get_source::<A>).put(connectors::set_source::<A>),
-        )
-        .route("/api/connectors/sync", post(connectors::sync::<A>))
-        .route("/api/connectors/{id}/config", put(connectors::set_config::<A>))
-        .route("/api/connectors/{id}/call", post(connectors::call_connector::<A>))
-        .route("/api/connectors/{id}/oauth/start", post(connectors::oauth_start::<A>))
-        .route("/api/connectors/{id}/oauth", delete(connectors::oauth_disconnect::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
-
-    // The connector engine, exposed to the agent as a Streamable-HTTP MCP
-    // endpoint at `/mcp` (auth-gated with the same bearer token). It's
-    // auto-registered into the MCP config below so the agent gets the tools.
-    let mcp_router = Router::new()
-        .nest_service("/mcp", connectors_mcp::service())
-        .layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
         .route("/", get(index::<A>))
-        // Public (browser carries no bearer token); the OAuth `state` is the guard.
-        .route("/oauth/callback", get(connectors::oauth_callback::<A>))
         .merge(api_routes)
-        .merge(mcp_router)
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -178,81 +155,8 @@ where
         });
     }
 
-    // Register the `/mcp` endpoint into Forge's MCP config so the agent picks up
-    // the connector tools. The url + token are per-run, so we overwrite the entry
-    // each startup once the server is accepting connections.
-    {
-        let state = state.clone();
-        let mcp_url = format!("http://{local}/mcp");
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(700)).await;
-            register_connectors_mcp(&state, &mcp_url).await;
-        });
-    }
-
-    // Serve until interrupted. On shutdown we remove the auto-registered
-    // `connectors` MCP entry so it doesn't linger with a dead per-run URL in the
-    // config between serve sessions. (Racing the signal rather than using
-    // graceful shutdown avoids hanging on long-lived SSE chat streams.)
-    tokio::select! {
-        r = axum::serve(listener, app) => { r?; }
-        _ = shutdown_signal() => { unregister_connectors_mcp(&state).await; }
-    }
+    axum::serve(listener, app).await?;
     Ok(())
-}
-
-/// Resolves when the process receives SIGINT (Ctrl-C) or, on Unix, SIGTERM.
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let term = async {
-        if let Ok(mut s) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            s.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let term = std::future::pending::<()>();
-    tokio::select! { _ = ctrl_c => {}, _ = term => {} }
-}
-
-/// Removes the auto-registered connectors MCP entry from the user config.
-async fn unregister_connectors_mcp<A: API>(state: &AppState<A>) {
-    let scope = Scope::User;
-    let _guard = state.config_lock.lock().await;
-    let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
-    if config
-        .mcp_servers
-        .remove(&ServerName::from("connectors".to_string()))
-        .is_some()
-    {
-        let _ = state.api.write_mcp_config(&scope, &config).await;
-    }
-}
-
-/// Registers (overwriting) the self-hosted connectors MCP endpoint in the
-/// user-scoped MCP config, then reloads so the running agent picks it up.
-async fn register_connectors_mcp<A: API>(state: &AppState<A>, url: &str) {
-    let scope = Scope::User;
-    let _guard = state.config_lock.lock().await;
-    let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
-    let mut http = McpHttpServer::default();
-    http.url = url.to_string();
-    http.headers
-        .insert("Authorization".to_string(), format!("Bearer {}", state.token));
-    http.oauth = McpOAuthSetting::Disabled;
-    config
-        .mcp_servers
-        .insert(ServerName::from("connectors".to_string()), McpServerConfig::Http(http));
-    if let Err(err) = state.api.write_mcp_config(&scope, &config).await {
-        tracing::warn!("could not register connectors MCP server: {err}");
-        return;
-    }
-    drop(_guard);
-    let _ = state.api.reload_mcp().await;
 }
 
 /// Middleware that enforces the bearer token on `/api/*` routes.
@@ -895,10 +799,6 @@ impl AppError {
 
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_REQUEST, message: message.into() }
-    }
-
-    pub(crate) fn message(&self) -> &str {
-        &self.message
     }
 }
 
