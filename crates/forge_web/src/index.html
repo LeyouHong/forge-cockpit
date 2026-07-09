@@ -352,6 +352,11 @@
     .kanban-overlay .conn-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
     .kanban-overlay .custom-mcp { margin-top: 16px; }
     /* connectors page */
+    .cn-syncbar { display: flex; gap: 8px; max-width: 820px; margin-bottom: 8px; }
+    .cn-syncbar input { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 12.5px; }
+    .cn-syncbar input:focus { outline: none; border-color: var(--accent-solid); }
+    .cn-syncmsg { max-width: 820px; font-size: 12px; color: var(--muted); margin-bottom: 12px; min-height: 0; }
+    .cn-syncmsg.err { color: var(--danger); }
     #connectors-list { display: flex; flex-direction: column; gap: 16px; max-width: 820px; }
     .cn-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); padding: 16px 18px; }
     .cn-head { display: flex; align-items: center; gap: 10px; }
@@ -602,6 +607,11 @@
     </div>
     <div class="kanban-scroll">
       <section class="kanban-section">
+        <div class="cn-syncbar">
+          <input id="connectors-source" placeholder="Remote manifest source — base URL serving index.json" />
+          <button class="btn btn-sm btn-primary" id="connectors-sync">Sync</button>
+        </div>
+        <div id="connectors-syncmsg" class="cn-syncmsg"></div>
         <div id="connectors-list"></div>
       </section>
     </div>
@@ -1831,12 +1841,35 @@
 
     async function loadConnectors() {
       const box = $('connectors-list'); box.innerHTML = '<div class="kb-loading" style="margin-top:8vh">Loading…</div>';
+      // Prefill the remote source (best-effort).
+      try { $('connectors-source').value = (await (await api('/api/connectors/source')).json()).url || ''; } catch (e) {}
       let d;
       try { d = await (await api('/api/connectors')).json(); } catch (e) { box.innerHTML = '<div class="kb-empty err">Failed to load connectors.</div>'; return; }
       box.innerHTML = '';
       if (!d.connectors.length) { box.innerHTML = '<div class="kb-empty">No connector manifests.</div>'; return; }
       for (const c of d.connectors) box.appendChild(connectorCard(c));
     }
+
+    $('connectors-sync').onclick = async () => {
+      const url = $('connectors-source').value.trim();
+      const msg = $('connectors-syncmsg'); msg.className = 'cn-syncmsg'; msg.textContent = 'Syncing…';
+      const btn = $('connectors-sync'); btn.disabled = true;
+      try {
+        await api('/api/connectors/source', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+        const res = await api('/api/connectors/sync', { method: 'POST' });
+        const j = await res.json();
+        if (!res.ok) { msg.className = 'cn-syncmsg err'; msg.textContent = j.error || 'Sync failed.'; }
+        else {
+          const parts = [];
+          if (j.synced && j.synced.length) parts.push('Synced: ' + j.synced.join(', '));
+          if (j.errors && j.errors.length) parts.push('Errors: ' + j.errors.join('; '));
+          msg.className = 'cn-syncmsg' + (j.errors && j.errors.length ? ' err' : '');
+          msg.textContent = parts.join(' · ') || 'Nothing to sync.';
+        }
+      } catch (e) { msg.className = 'cn-syncmsg err'; msg.textContent = 'Sync failed: ' + e.message; }
+      btn.disabled = false;
+      loadConnectors();
+    };
 
     function connectorCard(c) {
       const card = document.createElement('div'); card.className = 'cn-card';

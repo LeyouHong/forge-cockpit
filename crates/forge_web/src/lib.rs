@@ -129,6 +129,11 @@ where
         )
         .route("/api/pipelines", get(board::running_pipelines::<A>))
         .route("/api/connectors", get(connectors::list_connectors::<A>))
+        .route(
+            "/api/connectors/source",
+            get(connectors::get_source::<A>).put(connectors::set_source::<A>),
+        )
+        .route("/api/connectors/sync", post(connectors::sync::<A>))
         .route("/api/connectors/{id}/config", put(connectors::set_config::<A>))
         .route("/api/connectors/{id}/call", post(connectors::call_connector::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));

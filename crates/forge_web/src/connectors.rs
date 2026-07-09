@@ -122,11 +122,42 @@ const BUNDLED: &[&str] = &[
     include_str!("../connectors/gitlab.yaml"),
 ];
 
+/// Local cache dir for manifests synced from a remote source.
+fn cache_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".forge-web-connectors"))
+}
+
+/// All manifests: the bundled examples plus any synced into the cache dir. A
+/// synced manifest with the same id overrides a bundled one.
 fn manifests() -> Vec<Connector> {
-    BUNDLED
+    let mut by_id: BTreeMap<String, Connector> = BUNDLED
         .iter()
         .filter_map(|y| serde_yml::from_str::<Connector>(y).ok())
-        .collect()
+        .map(|c| (c.id.clone(), c))
+        .collect();
+    if let Some(dir) = cache_dir()
+        && let Ok(entries) = std::fs::read_dir(&dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("yaml")
+                && let Ok(text) = std::fs::read_to_string(&path)
+                && let Ok(c) = serde_yml::from_str::<Connector>(&text)
+            {
+                by_id.insert(c.id.clone(), c);
+            }
+        }
+    }
+    by_id.into_values().collect()
+}
+
+/// The configured remote manifest source (a base URL), if any.
+fn connector_source() -> Option<String> {
+    read_settings()
+        .get("connector_source")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn manifest(id: &str) -> Option<Connector> {
@@ -386,6 +417,107 @@ pub(crate) async fn call_connector<A: API>(
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(dispatch_by_name(&id, &body.tool, &body.args).await?))
+}
+
+// ---------------------------------------------------------------------------
+// Remote manifest sync — pull manifests from a configured source into the cache
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(crate) struct SourceBody {
+    url: Option<String>,
+}
+
+/// GET /api/connectors/source — the configured remote source (if any).
+pub(crate) async fn get_source<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    Json(json!({ "url": connector_source() }))
+}
+
+/// PUT /api/connectors/source — set (or clear) the remote source base URL.
+pub(crate) async fn set_source<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<SourceBody>,
+) -> Json<Value> {
+    let mut s = read_settings();
+    match body.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(u) => {
+            s["connector_source"] = json!(u);
+        }
+        None => {
+            if let Value::Object(m) = &mut s {
+                m.remove("connector_source");
+            }
+        }
+    }
+    write_settings(&s);
+    Json(json!({ "ok": true }))
+}
+
+/// Only allow a plain slug as a cache filename (defends against path traversal
+/// from a manifest's declared id).
+fn safe_slug(id: &str) -> Option<String> {
+    if !id.is_empty()
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+/// POST /api/connectors/sync — fetch `<source>/index.json` (a JSON array of
+/// connector ids, or `{ "connectors": [...] }`), download each `<source>/<id>.yaml`,
+/// validate it parses, and write it into the local cache dir.
+pub(crate) async fn sync<A: API>(State(_): State<AppState<A>>) -> Result<Json<Value>, AppError> {
+    let base = connector_source()
+        .ok_or_else(|| AppError::bad_request("no connector source configured"))?;
+    let base = base.trim_end_matches('/').to_string();
+    let cl = client();
+    let index: Value = cl
+        .get(format!("{base}/index.json"))
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("fetch index.json: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("parse index.json: {e}")))?;
+    let ids: Vec<String> = index
+        .as_array()
+        .or_else(|| index.get("connectors").and_then(Value::as_array))
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err(AppError::bad_request("index.json listed no connectors"));
+    }
+    let dir = cache_dir().ok_or_else(|| AppError::bad_request("no HOME for cache dir"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::bad_request(format!("cache dir: {e}")))?;
+
+    let mut synced = Vec::new();
+    let mut errors = Vec::new();
+    for id in ids {
+        let text = match cl.get(format!("{base}/{id}.yaml")).send().await {
+            Ok(r) => r.text().await.unwrap_or_default(),
+            Err(e) => {
+                errors.push(format!("{id}: fetch failed: {e}"));
+                continue;
+            }
+        };
+        let connector = match serde_yml::from_str::<Connector>(&text) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("{id}: invalid manifest: {e}"));
+                continue;
+            }
+        };
+        match safe_slug(&connector.id) {
+            Some(slug) if std::fs::write(dir.join(format!("{slug}.yaml")), &text).is_ok() => {
+                synced.push(connector.id);
+            }
+            Some(_) => errors.push(format!("{id}: write failed")),
+            None => errors.push(format!("{id}: unsafe connector id '{}'", connector.id)),
+        }
+    }
+    Ok(Json(json!({ "synced": synced, "errors": errors })))
 }
 
 #[cfg(test)]
