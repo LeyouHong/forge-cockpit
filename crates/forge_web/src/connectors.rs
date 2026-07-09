@@ -292,6 +292,14 @@ pub(crate) async fn list_connectors<A: API>(State(_): State<AppState<A>>) -> Jso
                 .iter()
                 .filter(|f| f.required)
                 .all(|f| cfg.get(&f.id).map(|s| !s.is_empty()).unwrap_or(false));
+            // Echo back saved *non-secret* values so the form can prefill;
+            // secrets are never returned.
+            let values: BTreeMap<&str, &str> = c
+                .config
+                .iter()
+                .filter(|f| !f.secret)
+                .filter_map(|f| cfg.get(&f.id).map(|v| (f.id.as_str(), v.as_str())))
+                .collect();
             json!({
                 "id": c.id,
                 "name": c.name,
@@ -299,6 +307,7 @@ pub(crate) async fn list_connectors<A: API>(State(_): State<AppState<A>>) -> Jso
                 "protocol": c.protocol,
                 "configured": configured,
                 "config": c.config,
+                "values": values,
                 "tools": c.tools.iter().map(|t| json!({
                     "name": t.name,
                     "description": t.description,

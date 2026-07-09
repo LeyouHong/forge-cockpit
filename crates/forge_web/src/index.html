@@ -351,6 +351,26 @@
     /* On the full-page overlays, integration cards & custom MCP servers lay out as a grid. */
     .kanban-overlay .conn-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
     .kanban-overlay .custom-mcp { margin-top: 16px; }
+    /* connectors page */
+    #connectors-list { display: flex; flex-direction: column; gap: 16px; max-width: 820px; }
+    .cn-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); padding: 16px 18px; }
+    .cn-head { display: flex; align-items: center; gap: 10px; }
+    .cn-name { font-weight: 600; font-size: 15px; flex: 1; }
+    .cn-desc { color: var(--faint); font-size: 12px; margin: 4px 0 12px; }
+    .cn-config { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .cn-config input, .cn-tool .t-run input { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 12.5px; }
+    .cn-config input:focus, .cn-tool .t-run input:focus { outline: none; border-color: var(--accent-solid); }
+    .cn-tools { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+    .cn-tool { padding: 9px 0; border-bottom: 1px solid var(--border); }
+    .cn-tool:last-child { border-bottom: none; }
+    .cn-tool > summary { cursor: pointer; user-select: none; list-style: none; display: flex; align-items: baseline; gap: 9px; }
+    .cn-tool > summary::-webkit-details-marker { display: none; }
+    .cn-tool .t-method { font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; flex: 0 0 auto; }
+    .cn-tool .t-name { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 13px; color: var(--accent); flex: 0 0 auto; }
+    .cn-tool .t-desc { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cn-tool .t-run { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .cn-tool .t-run input { flex: 1 1 150px; min-width: 0; }
+    .cn-result { margin-top: 9px; background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; }
     .stat-card { display: flex; flex-direction: column; background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
     .sc-head { display: flex; align-items: center; gap: 9px; }
     .sc-head .gh-logo { width: 20px; height: 20px; }
@@ -465,6 +485,7 @@
       <button class="icon-btn" id="tasks-toggle" title="Activity &amp; TODO — pipelines, tasks, recent runs">⏱</button>
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
+      <button class="icon-btn" id="connectors-open" title="Connectors (declarative platform manifests)">🔌</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -567,6 +588,21 @@
             <button class="btn btn-primary" id="mcp-add">Add</button>
           </div>
         </details>
+      </section>
+    </div>
+  </div>
+
+  <!-- Connectors (declarative platform manifests) -->
+  <div class="kanban-overlay" id="connectors-overlay">
+    <div class="kanban-head">
+      <span><b>🔌 Connectors</b> <span class="drawer-hint">declarative platform manifests — add a platform by writing YAML</span></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="connectors-refresh">Refresh</button>
+      <button class="icon-btn" id="connectors-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div id="connectors-list"></div>
       </section>
     </div>
   </div>
@@ -1786,6 +1822,94 @@
     $('integrations-open').onclick = openIntegrations;
     $('integrations-close').onclick = () => $('integrations-overlay').classList.remove('open');
     $('integrations-refresh').onclick = loadMcp;
+
+    /* ---------- connectors page (declarative manifests) ---------- */
+    function openConnectors() { $('connectors-overlay').classList.add('open'); loadConnectors(); }
+    $('connectors-open').onclick = openConnectors;
+    $('connectors-close').onclick = () => $('connectors-overlay').classList.remove('open');
+    $('connectors-refresh').onclick = loadConnectors;
+
+    async function loadConnectors() {
+      const box = $('connectors-list'); box.innerHTML = '<div class="kb-loading" style="margin-top:8vh">Loading…</div>';
+      let d;
+      try { d = await (await api('/api/connectors')).json(); } catch (e) { box.innerHTML = '<div class="kb-empty err">Failed to load connectors.</div>'; return; }
+      box.innerHTML = '';
+      if (!d.connectors.length) { box.innerHTML = '<div class="kb-empty">No connector manifests.</div>'; return; }
+      for (const c of d.connectors) box.appendChild(connectorCard(c));
+    }
+
+    function connectorCard(c) {
+      const card = document.createElement('div'); card.className = 'cn-card';
+      const head = document.createElement('div'); head.className = 'cn-head';
+      const nm = document.createElement('span'); nm.className = 'cn-name'; nm.textContent = c.name;
+      const badge = document.createElement('span'); badge.className = 'badge ' + (c.configured ? 'on' : 'off');
+      badge.textContent = c.configured ? 'configured' : 'needs config';
+      head.append(nm, badge); card.appendChild(head);
+      if (c.description) { const de = document.createElement('div'); de.className = 'cn-desc'; de.textContent = c.description; card.appendChild(de); }
+
+      // Config form (prefilled with saved non-secret values; secrets stay blank).
+      const inputs = {};
+      if (c.config && c.config.length) {
+        const cfg = document.createElement('div'); cfg.className = 'cn-config';
+        for (const f of c.config) {
+          const inp = document.createElement('input');
+          inp.placeholder = (f.label || f.id) + (f.required ? ' *' : '');
+          if (f.secret) inp.type = 'password';
+          if (!f.secret && c.values && c.values[f.id] != null) inp.value = c.values[f.id];
+          inputs[f.id] = inp; cfg.appendChild(inp);
+        }
+        card.appendChild(cfg);
+        const save = document.createElement('button'); save.className = 'btn btn-sm btn-primary'; save.textContent = 'Save config';
+        save.onclick = async () => {
+          const values = {}; for (const k in inputs) { const v = inputs[k].value.trim(); if (v) values[k] = v; }
+          save.disabled = true; save.textContent = 'Saving…';
+          const res = await api('/api/connectors/' + c.id + '/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
+          save.textContent = res.ok ? 'Saved ✓' : 'Failed';
+          setTimeout(loadConnectors, 900);
+        };
+        card.appendChild(save);
+      }
+
+      // Tools with an inline test-call.
+      if (c.tools && c.tools.length) {
+        const tools = document.createElement('div'); tools.className = 'cn-tools';
+        for (const t of c.tools) tools.appendChild(connectorToolRow(c, t));
+        card.appendChild(tools);
+      }
+      return card;
+    }
+
+    function connectorToolRow(c, t) {
+      const det = document.createElement('details'); det.className = 'cn-tool';
+      const sum = document.createElement('summary');
+      const method = document.createElement('span'); method.className = 't-method'; method.textContent = t.method;
+      const name = document.createElement('span'); name.className = 't-name'; name.textContent = t.name;
+      const desc = document.createElement('span'); desc.className = 't-desc'; desc.textContent = t.description || '';
+      sum.append(method, name, desc); det.appendChild(sum);
+
+      const run = document.createElement('div'); run.className = 't-run';
+      const argInputs = {};
+      for (const p of (t.params || [])) {
+        const inp = document.createElement('input');
+        inp.placeholder = p.id + (p.required ? ' *' : '') + (p.description ? ' — ' + p.description : '');
+        argInputs[p.id] = inp; run.appendChild(inp);
+      }
+      const btn = document.createElement('button'); btn.className = 'btn btn-sm btn-ghost'; btn.textContent = 'Run';
+      run.appendChild(btn); det.appendChild(run);
+      const result = document.createElement('div'); result.className = 'cn-result'; result.style.display = 'none';
+      det.appendChild(result);
+
+      btn.onclick = async () => {
+        const args = {}; for (const k in argInputs) { const v = argInputs[k].value.trim(); if (v) args[k] = v; }
+        btn.disabled = true; btn.textContent = 'Running…'; result.style.display = 'block'; result.textContent = '…';
+        try {
+          const res = await api('/api/connectors/' + c.id + '/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: t.name, args }) });
+          result.textContent = JSON.stringify(await res.json(), null, 2);
+        } catch (e) { result.textContent = 'Error: ' + e.message; }
+        btn.disabled = false; btn.textContent = 'Run';
+      };
+      return det;
+    }
 
     // Renders one framed stats card per connected platform, each with a small
     // row of KPI tiles fetched from its board endpoint.
