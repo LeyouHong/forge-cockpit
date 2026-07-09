@@ -1,0 +1,41 @@
+# Sentry API (SaaS) via a user auth token (bearer). Create one at
+# sentry.io/settings/account/api/auth-tokens with org/project/event scopes.
+# `org` is your organization slug. For self-hosted Sentry, change base_url.
+id: sentry
+name: Sentry
+protocol: http
+base_url: https://sentry.io/api/0
+description: Sentry API — projects and unresolved issues for an org (bearer token).
+auth:
+  type: bearer
+  token: "{token}"
+headers:
+  Accept: application/json
+config:
+  - id: token
+    label: User auth token
+    secret: true
+    required: true
+  - id: org
+    label: Organization slug
+    placeholder: your-org
+    required: true
+tools:
+  - name: list_projects
+    description: Projects in the organization.
+    method: GET
+    path: /organizations/{org}/projects/
+  - name: list_issues
+    description: Unresolved issues in the organization.
+    method: GET
+    path: /organizations/{org}/issues/
+    query:
+      query: is:unresolved
+      statsPeriod: 24h
+  - name: get_issue
+    description: Fetch one issue by its numeric id.
+    method: GET
+    path: /issues/{issue_id}/
+    params:
+      - id: issue_id
+        required: true

@@ -1,0 +1,59 @@
+# Jira Cloud REST API v3. Basic auth with your Atlassian account email + an API
+# token (id.atlassian.com/manage-profile/security/api-tokens). `site` is your
+# instance base URL, e.g. https://your-site.atlassian.net.
+id: jira
+name: Jira
+protocol: http
+base_url: "{site}/rest/api/3"
+description: Jira Cloud REST API — issue search, issues, projects (basic auth).
+auth:
+  type: basic
+  username: "{email}"
+  password: "{token}"
+headers:
+  Accept: application/json
+config:
+  - id: site
+    label: Site URL
+    placeholder: https://your-site.atlassian.net
+    required: true
+  - id: email
+    label: Atlassian account email
+    required: true
+  - id: token
+    label: API token
+    secret: true
+    required: true
+tools:
+  - name: my_open_issues
+    description: Unresolved issues assigned to me, most recently updated first.
+    method: GET
+    path: /search/jql
+    query:
+      jql: assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
+      maxResults: "25"
+  - name: search
+    description: Search issues with a JQL query.
+    method: GET
+    path: /search/jql
+    query:
+      jql: "{jql}"
+      maxResults: "25"
+    params:
+      - id: jql
+        required: true
+        description: 'e.g. project = ABC AND status = "In Progress"'
+  - name: get_issue
+    description: Fetch one issue by key.
+    method: GET
+    path: /issue/{key}
+    params:
+      - id: key
+        required: true
+        description: e.g. ABC-123
+  - name: list_projects
+    description: Projects visible to you.
+    method: GET
+    path: /project/search
+    query:
+      maxResults: "50"

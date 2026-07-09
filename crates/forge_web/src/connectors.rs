@@ -37,6 +37,10 @@ pub(crate) struct Connector {
     pub base_url: Option<String>,
     #[serde(default)]
     pub auth: Option<Auth>,
+    /// Default headers applied to every tool (e.g. an `Accept` header). Tool-level
+    /// headers are added on top.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     /// User-supplied config fields (host, token, …), referenced as `{id}`.
     #[serde(default)]
     pub config: Vec<ConfigField>,
@@ -120,6 +124,9 @@ pub(crate) struct Param {
 const BUNDLED: &[&str] = &[
     include_str!("../connectors/demo.yaml"),
     include_str!("../connectors/gitlab.yaml"),
+    include_str!("../connectors/github.yaml"),
+    include_str!("../connectors/jira.yaml"),
+    include_str!("../connectors/sentry.yaml"),
 ];
 
 /// Local cache dir for manifests synced from a remote source.
@@ -266,6 +273,9 @@ async fn dispatch(connector: &Connector, tool: &Tool, args: &Value) -> Result<Va
         if !val.is_empty() {
             req = req.query(&[(k.as_str(), val)]);
         }
+    }
+    for (k, v) in &connector.headers {
+        req = req.header(k, render(v, &vars));
     }
     for (k, v) in &tool.headers {
         req = req.header(k, render(v, &vars));
@@ -536,9 +546,9 @@ mod tests {
     #[test]
     fn bundled_manifests_parse() {
         let all = manifests();
-        assert_eq!(all.len(), 2, "both bundled manifests should deserialize");
-        assert!(all.iter().any(|c| c.id == "demo"));
-        assert!(all.iter().any(|c| c.id == "gitlab"));
+        for id in ["demo", "gitlab", "github", "jira", "sentry"] {
+            assert!(all.iter().any(|c| c.id == id), "bundled manifest '{id}' should deserialize");
+        }
     }
 
     #[test]

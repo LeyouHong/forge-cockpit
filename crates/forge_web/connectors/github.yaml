@@ -1,0 +1,67 @@
+# GitHub REST API v3 via a Personal Access Token (bearer). Pass owner/repo as
+# tool arguments. Create a token at github.com/settings → Personal access tokens.
+id: github
+name: GitHub
+protocol: http
+base_url: https://api.github.com
+description: GitHub REST API — issues, pull requests, repos, search (bearer PAT).
+auth:
+  type: bearer
+  token: "{token}"
+headers:
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: "2022-11-28"
+config:
+  - id: token
+    label: Personal access token
+    secret: true
+    required: true
+tools:
+  - name: list_my_issues
+    description: Open issues assigned to the authenticated user across all repos.
+    method: GET
+    path: /issues
+    query:
+      filter: assigned
+      state: open
+  - name: list_repo_issues
+    description: Open issues in a repository.
+    method: GET
+    path: /repos/{owner}/{repo}/issues
+    query:
+      state: open
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+  - name: list_repo_pulls
+    description: Open pull requests in a repository.
+    method: GET
+    path: /repos/{owner}/{repo}/pulls
+    query:
+      state: open
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+  - name: get_repo
+    description: Repository metadata (stars, default branch, etc.).
+    method: GET
+    path: /repos/{owner}/{repo}
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+  - name: search_issues
+    description: Search issues and pull requests with GitHub's query syntax.
+    method: GET
+    path: /search/issues
+    query:
+      q: "{q}"
+    params:
+      - id: q
+        required: true
+        description: 'e.g. "repo:owner/name is:open is:pr review-requested:@me"'
