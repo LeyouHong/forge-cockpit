@@ -1933,6 +1933,23 @@
     async function connectorOAuth(id, name) {
       const res = await api('/api/connectors/' + id + '/oauth/start', { method: 'POST' });
       if (!res.ok) { const e = await res.json().catch(() => ({})); await confirmModal({ title: 'Cannot connect', body: e.error || 'Failed to start OAuth. Save the Client ID first.', confirmText: 'OK', hideCancel: true, danger: false }); return; }
+      // Authorization-code flow: open the provider's page, then poll until the
+      // loopback callback stores the token.
+      if ((res.headers.get('content-type') || '').includes('application/json')) {
+        const j = await res.json();
+        if (j.authorize_url) window.open(j.authorize_url, '_blank');
+        let stop = false;
+        confirmModal({ title: 'Connect ' + name, body: 'A browser tab opened — authorize ' + name + ' there.\n\nThis updates automatically when you finish.', confirmText: 'Close', hideCancel: true, danger: false }).then(() => { stop = true; });
+        const deadline = Date.now() + 300000;
+        while (!stop && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          let d; try { d = await (await api('/api/connectors')).json(); } catch (e) { continue; }
+          const c = d.connectors.find((x) => x.id === id);
+          if (c && c.oauth_connected) { $('modal-overlay').classList.remove('open'); break; }
+        }
+        loadConnectors();
+        return;
+      }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       while (true) {
         const { value, done } = await reader.read();

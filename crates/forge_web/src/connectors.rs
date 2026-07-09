@@ -13,9 +13,10 @@
 use std::collections::BTreeMap;
 
 use axum::Json;
-use axum::extract::{Path as AxPath, State};
+use axum::extract::{Path as AxPath, Query, State};
 use axum::response::sse::{Event as SseEvent, Sse};
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -73,14 +74,25 @@ pub(crate) struct Auth {
     pub password: Option<String>,
 
     // ----- oauth (kind: oauth) -----
-    /// OAuth flow: `device` (only device is implemented for now).
+    /// OAuth flow: `device` or `code` (authorization code + PKCE).
     #[serde(default)]
     pub flow: Option<String>,
     /// OAuth client id (may template `{field}` from config, e.g. a registered app id).
     #[serde(default)]
     pub client_id: Option<String>,
+    /// OAuth client secret for confidential clients (Atlassian/Sentry). Public
+    /// clients (Azure desktop + PKCE) omit it. May template a secret config field.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Device-flow endpoint (flow: device).
     #[serde(default)]
     pub device_authorize_url: Option<String>,
+    /// Authorization endpoint (flow: code).
+    #[serde(default)]
+    pub authorize_url: Option<String>,
+    /// Extra static params for the authorize URL (e.g. `audience` for Atlassian).
+    #[serde(default)]
+    pub authorize_params: BTreeMap<String, String>,
     #[serde(default)]
     pub token_url: Option<String>,
     #[serde(default)]
@@ -147,6 +159,7 @@ const BUNDLED: &[&str] = &[
     include_str!("../connectors/github.yaml"),
     include_str!("../connectors/jira.yaml"),
     include_str!("../connectors/sentry.yaml"),
+    include_str!("../connectors/teams.yaml"),
 ];
 
 /// Local cache dir for manifests synced from a remote source.
@@ -294,6 +307,27 @@ async fn oauth_access_token(connector: &Connector) -> Option<String> {
         resp.get("expires_in").and_then(Value::as_u64),
     );
     Some(new_access)
+}
+
+// Authorization-code (PKCE) flows in progress, keyed by the `state` value. The
+// browser hits /oauth/callback (unauthenticated) with the code + state; we match
+// it here to finish the exchange server-side.
+struct PendingOAuth {
+    connector_id: String,
+    verifier: String,
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    created: u64,
+}
+
+static PENDING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, PendingOAuth>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +515,7 @@ pub(crate) fn catalog_json() -> Value {
                 "protocol": c.protocol,
                 "configured": configured,
                 "auth_type": auth_type,
+                "oauth_flow": c.auth.as_ref().and_then(|a| a.flow.clone()),
                 "oauth_connected": connected,
                 "config": c.config,
                 "values": values,
@@ -681,11 +716,14 @@ fn sse(v: &Value) -> Result<SseEvent, std::convert::Infallible> {
     Ok(SseEvent::default().json_data(v).unwrap_or_else(|_| SseEvent::default().data("{}")))
 }
 
-/// POST /api/connectors/{id}/oauth/start — runs the OAuth device flow, streaming
-/// the user code then the result. Mirrors the AI-provider device sign-in.
+/// POST /api/connectors/{id}/oauth/start — starts the connector's OAuth flow.
+/// For `device`, streams the user code + result over SSE. For `code`, returns
+/// `{ authorize_url }` for the browser to open; the exchange finishes at the
+/// loopback `/oauth/callback`.
 pub(crate) async fn oauth_start<A: API + 'static>(
     State(_): State<AppState<A>>,
     AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let connector = match manifest(&id) {
         Some(c) => c,
@@ -695,13 +733,72 @@ pub(crate) async fn oauth_start<A: API + 'static>(
         Some(a) if a.kind == "oauth" => a.clone(),
         _ => return AppError::bad_request("connector is not oauth").into_response(),
     };
-    if auth.flow.as_deref() != Some("device") {
-        return AppError::bad_request("only the device flow is implemented").into_response();
-    }
     let vars = connector_config(&id);
     let client_id = render(auth.client_id.as_deref().unwrap_or(""), &vars);
     if client_id.is_empty() {
         return AppError::bad_request("client_id is not configured").into_response();
+    }
+
+    // ----- authorization code + PKCE (loopback redirect) -----
+    if auth.flow.as_deref() == Some("code") {
+        let (Some(authorize_url), Some(token_url)) =
+            (auth.authorize_url.clone(), auth.token_url.clone())
+        else {
+            return AppError::bad_request("manifest lacks authorize_url / token_url")
+                .into_response();
+        };
+        let host = headers
+            .get("host")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("127.0.0.1");
+        // For a desktop shell this becomes a custom scheme (forge://oauth/callback);
+        // on the loopback web server it's the server's own /oauth/callback.
+        let redirect_uri = format!("http://{host}/oauth/callback");
+        let verifier = crate::secret::random_urlsafe(48);
+        let state = crate::secret::random_urlsafe(24);
+        let mut params: Vec<(String, String)> = vec![
+            ("response_type".into(), "code".into()),
+            ("client_id".into(), client_id.clone()),
+            ("redirect_uri".into(), redirect_uri.clone()),
+            ("scope".into(), auth.scopes.join(" ")),
+            ("state".into(), state.clone()),
+            ("code_challenge".into(), pkce_challenge(&verifier)),
+            ("code_challenge_method".into(), "S256".into()),
+        ];
+        for (k, v) in &auth.authorize_params {
+            params.push((k.clone(), render(v, &vars)));
+        }
+        let url = match reqwest::Url::parse(&authorize_url) {
+            Ok(mut u) => {
+                for (k, v) in &params {
+                    u.query_pairs_mut().append_pair(k, v);
+                }
+                u.to_string()
+            }
+            Err(_) => return AppError::bad_request("bad authorize_url").into_response(),
+        };
+        {
+            let mut pending = PENDING.lock().unwrap();
+            pending.retain(|_, v| now_secs().saturating_sub(v.created) < 900);
+            pending.insert(
+                state,
+                PendingOAuth {
+                    connector_id: id.clone(),
+                    verifier,
+                    token_url,
+                    client_id,
+                    client_secret: render(auth.client_secret.as_deref().unwrap_or(""), &vars),
+                    redirect_uri,
+                    created: now_secs(),
+                },
+            );
+        }
+        return Json(json!({ "flow": "code", "authorize_url": url })).into_response();
+    }
+
+    // ----- device flow -----
+    if auth.flow.as_deref() != Some("device") {
+        return AppError::bad_request("unsupported oauth flow").into_response();
     }
     let (Some(device_url), Some(token_url)) =
         (auth.device_authorize_url.clone(), auth.token_url.clone())
@@ -782,6 +879,84 @@ pub(crate) async fn oauth_disconnect<A: API>(
     Json(json!({ "ok": true }))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn done_page(msg: &str) -> Response {
+    Html(format!(
+        "<!doctype html><meta charset=utf-8><body style=\"font:15px -apple-system,system-ui,sans-serif;padding:48px;color:#222\">\
+         {msg}<p style=\"color:#888;margin-top:14px\">You can close this tab and return to Forge.</p></body>"
+    ))
+    .into_response()
+}
+
+/// GET /oauth/callback — the loopback redirect target for the code flow. This is
+/// public (the browser carries no bearer token); the `state` match is the CSRF
+/// guard. Finishes the code→token exchange server-side and stores the token.
+pub(crate) async fn oauth_callback<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<CallbackQuery>,
+) -> Response {
+    if let Some(err) = q.error {
+        return done_page(&format!("<h3>Authorization failed</h3><p>{}</p>", html_escape(&err)));
+    }
+    let (Some(code), Some(state)) = (q.code, q.state) else {
+        return done_page("<h3>Missing code or state</h3>");
+    };
+    let Some(p) = PENDING.lock().unwrap().remove(&state) else {
+        return done_page("<h3>Unknown or expired authorization request</h3>");
+    };
+    let mut form: Vec<(&str, &str)> = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("redirect_uri", p.redirect_uri.as_str()),
+        ("client_id", p.client_id.as_str()),
+        ("code_verifier", p.verifier.as_str()),
+    ];
+    if !p.client_secret.is_empty() {
+        form.push(("client_secret", p.client_secret.as_str()));
+    }
+    let resp: Value = match client()
+        .post(&p.token_url)
+        .header("Accept", "application/json")
+        .form(&form)
+        .send()
+        .await
+    {
+        Ok(r) => r.json().await.unwrap_or_default(),
+        Err(e) => {
+            return done_page(&format!("<h3>Token exchange failed</h3><p>{}</p>", html_escape(&e.to_string())));
+        }
+    };
+    match resp.get("access_token").and_then(Value::as_str) {
+        Some(access) => {
+            oauth_store_write(
+                &p.connector_id,
+                access,
+                resp.get("refresh_token").and_then(Value::as_str),
+                resp.get("expires_in").and_then(Value::as_u64),
+            );
+            done_page("<h3>✓ Connected</h3>")
+        }
+        None => {
+            let m = resp
+                .get("error_description")
+                .or_else(|| resp.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("no access_token in response");
+            done_page(&format!("<h3>Token exchange failed</h3><p>{}</p>", html_escape(m)))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,7 +964,7 @@ mod tests {
     #[test]
     fn bundled_manifests_parse() {
         let all = manifests();
-        for id in ["demo", "gitlab", "github", "jira", "sentry"] {
+        for id in ["demo", "gitlab", "github", "jira", "sentry", "teams"] {
             assert!(all.iter().any(|c| c.id == id), "bundled manifest '{id}' should deserialize");
         }
     }

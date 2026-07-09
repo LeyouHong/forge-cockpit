@@ -1,0 +1,40 @@
+# Microsoft Teams via Microsoft Graph, OAuth authorization code + PKCE.
+# Register an Azure AD app (Microsoft Entra) as a *public client* with a
+# "Mobile and desktop" redirect of http://localhost (loopback, any port) and
+# delegated Graph permissions; put its Application (client) ID below. No secret
+# is needed (public client + PKCE).
+id: teams
+name: Microsoft Teams
+protocol: http
+base_url: https://graph.microsoft.com/v1.0
+description: Microsoft Teams via Graph — chats, teams, channel messages (OAuth code + PKCE).
+auth:
+  type: oauth
+  flow: code
+  client_id: "{client_id}"
+  authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+  token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+  scopes: [Chat.Read, ChannelMessage.Read.All, Team.ReadBasic.All, offline_access]
+  use: bearer
+config:
+  - id: client_id
+    label: Azure app (public client) ID
+    required: true
+tools:
+  - name: my_chats
+    description: Your recent Teams chats.
+    method: GET
+    path: /me/chats
+  - name: my_joined_teams
+    description: Teams you're a member of.
+    method: GET
+    path: /me/joinedTeams
+  - name: channel_messages
+    description: Messages in a channel.
+    method: GET
+    path: /teams/{team_id}/channels/{channel_id}/messages
+    params:
+      - id: team_id
+        required: true
+      - id: channel_id
+        required: true

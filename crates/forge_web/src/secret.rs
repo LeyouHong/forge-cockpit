@@ -6,9 +6,18 @@
 //! treated as legacy plaintext and returned unchanged, so existing configs keep
 //! working and only newly-saved secrets are encrypted.
 
+use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
+
+/// A URL-safe, unpadded random string of `n` bytes of entropy — used for OAuth
+/// PKCE code verifiers and `state` values.
+pub(crate) fn random_urlsafe(n: usize) -> String {
+    let mut bytes = vec![0u8; n];
+    OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
 
 const PREFIX: &str = "enc:v1:";
 const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;

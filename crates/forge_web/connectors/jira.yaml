@@ -1,28 +1,38 @@
-# Jira Cloud REST API v3. Basic auth with your Atlassian account email + an API
-# token (id.atlassian.com/manage-profile/security/api-tokens). `site` is your
-# instance base URL, e.g. https://your-site.atlassian.net.
+# Jira Cloud via Atlassian OAuth 2.0 (3LO), authorization code flow.
+# Register an OAuth 2.0 (3LO) app at developer.atlassian.com with a callback of
+# http://localhost/oauth/callback and the Jira scopes below; it's a confidential
+# client, so paste the client secret too. `cloudid` comes from
+# https://api.atlassian.com/oauth/token/accessible-resources after connecting.
 id: jira
 name: Jira
 protocol: http
-base_url: "{site}/rest/api/3"
-description: Jira Cloud REST API — issue search, issues, projects (basic auth).
+base_url: https://api.atlassian.com/ex/jira/{cloudid}/rest/api/3
+description: Jira Cloud REST API via Atlassian OAuth 2.0 (3LO, authorization code).
 auth:
-  type: basic
-  username: "{email}"
-  password: "{token}"
+  type: oauth
+  flow: code
+  client_id: "{client_id}"
+  client_secret: "{client_secret}"
+  authorize_url: https://auth.atlassian.com/authorize
+  token_url: https://auth.atlassian.com/oauth/token
+  authorize_params:
+    audience: api.atlassian.com
+    prompt: consent
+  scopes: [read:jira-work, read:jira-user, offline_access]
+  use: bearer
 headers:
   Accept: application/json
 config:
-  - id: site
-    label: Site URL
-    placeholder: https://your-site.atlassian.net
+  - id: client_id
+    label: OAuth 2.0 (3LO) client id
     required: true
-  - id: email
-    label: Atlassian account email
-    required: true
-  - id: token
-    label: API token
+  - id: client_secret
+    label: Client secret
     secret: true
+    required: true
+  - id: cloudid
+    label: Cloud ID
+    placeholder: from /oauth/token/accessible-resources
     required: true
 tools:
   - name: my_open_issues
@@ -42,7 +52,6 @@ tools:
     params:
       - id: jql
         required: true
-        description: 'e.g. project = ABC AND status = "In Progress"'
   - name: get_issue
     description: Fetch one issue by key.
     method: GET
@@ -50,7 +59,6 @@ tools:
     params:
       - id: key
         required: true
-        description: e.g. ABC-123
   - name: list_projects
     description: Projects visible to you.
     method: GET

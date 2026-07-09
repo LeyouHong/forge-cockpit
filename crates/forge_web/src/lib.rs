@@ -150,6 +150,8 @@ where
 
     let app = Router::new()
         .route("/", get(index::<A>))
+        // Public (browser carries no bearer token); the OAuth `state` is the guard.
+        .route("/oauth/callback", get(connectors::oauth_callback::<A>))
         .merge(api_routes)
         .merge(mcp_router)
         .with_state(state.clone());
