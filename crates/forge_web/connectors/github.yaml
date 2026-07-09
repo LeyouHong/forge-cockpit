@@ -1,7 +1,6 @@
-# GitHub REST API v3 via OAuth (device flow) — click Connect, enter the code in
-# your browser, done. No PAT to paste. Register a GitHub OAuth App (with device
-# flow enabled) at github.com/settings/developers and put its Client ID below;
-# every user then just consents.
+# GitHub REST API v3 via OAuth (device flow) — just click Connect, authorize in
+# your browser, done. The client_id below is a public GitHub OAuth App id (with
+# device flow enabled); device flow needs no client secret.
 id: github
 name: GitHub
 protocol: http
@@ -10,7 +9,7 @@ description: GitHub REST API — issues, pull requests, repos, search (OAuth dev
 auth:
   type: oauth
   flow: device
-  client_id: "{client_id}"
+  client_id: Ov23lixdjD0dd78rPnN2
   device_authorize_url: https://github.com/login/device/code
   token_url: https://github.com/login/oauth/access_token
   scopes: [repo, read:org]
@@ -18,11 +17,6 @@ auth:
 headers:
   Accept: application/vnd.github+json
   X-GitHub-Api-Version: "2022-11-28"
-config:
-  - id: client_id
-    label: OAuth App Client ID
-    placeholder: Iv1.xxxxxxxxxxxxxxxx
-    required: true
 tools:
   - name: list_my_issues
     description: Open issues assigned to the authenticated user across all repos.

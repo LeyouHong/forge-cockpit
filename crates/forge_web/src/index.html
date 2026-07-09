@@ -1875,8 +1875,10 @@
       const card = document.createElement('div'); card.className = 'cn-card';
       const head = document.createElement('div'); head.className = 'cn-head';
       const nm = document.createElement('span'); nm.className = 'cn-name'; nm.textContent = c.name;
-      const badge = document.createElement('span'); badge.className = 'badge ' + (c.configured ? 'on' : 'off');
-      badge.textContent = c.configured ? 'configured' : 'needs config';
+      const isOauth = c.auth_type === 'oauth';
+      const on = isOauth ? c.oauth_connected : c.configured;
+      const badge = document.createElement('span'); badge.className = 'badge ' + (on ? 'on' : 'off');
+      badge.textContent = on ? (isOauth ? 'connected' : 'configured') : (isOauth ? 'not connected' : 'needs config');
       head.append(nm, badge); card.appendChild(head);
       if (c.description) { const de = document.createElement('div'); de.className = 'cn-desc'; de.textContent = c.description; card.appendChild(de); }
 
