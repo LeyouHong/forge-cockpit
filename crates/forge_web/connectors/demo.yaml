@@ -1,0 +1,25 @@
+# A no-auth public API, used to sanity-check the connector engine end-to-end.
+id: demo
+name: "Demo (JSONPlaceholder)"
+protocol: http
+base_url: https://jsonplaceholder.typicode.com
+description: A public no-auth REST API for verifying the declarative engine.
+tools:
+  - name: get_post
+    description: Fetch a single post by id.
+    method: GET
+    path: /posts/{id}
+    params:
+      - id: id
+        required: true
+        description: Post id (1-100).
+  - name: list_posts
+    description: List posts, optionally filtered by author user id.
+    method: GET
+    path: /posts
+    query:
+      userId: "{user}"
+    params:
+      - id: user
+        required: false
+        description: Optional author user id to filter by.

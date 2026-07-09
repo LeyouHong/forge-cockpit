@@ -10,6 +10,7 @@
 //! itself) behind a per-run bearer token printed at startup.
 
 mod board;
+mod connectors;
 mod dto;
 mod live;
 
@@ -126,6 +127,9 @@ where
             put(board::update_todo::<A>).delete(board::delete_todo::<A>),
         )
         .route("/api/pipelines", get(board::running_pipelines::<A>))
+        .route("/api/connectors", get(connectors::list_connectors::<A>))
+        .route("/api/connectors/{id}/config", put(connectors::set_config::<A>))
+        .route("/api/connectors/{id}/call", post(connectors::call_connector::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()

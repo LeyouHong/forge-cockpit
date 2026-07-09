@@ -28,14 +28,14 @@ fn settings_path() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".forge-web.json"))
 }
 
-fn read_settings() -> Value {
+pub(crate) fn read_settings() -> Value {
     settings_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}))
 }
 
-fn write_settings(v: &Value) {
+pub(crate) fn write_settings(v: &Value) {
     if let Some(p) = settings_path() {
         let _ = std::fs::write(p, serde_json::to_string_pretty(v).unwrap_or_default());
     }
@@ -316,7 +316,7 @@ async fn repo_root<A: API>(state: &AppState<A>) -> Option<std::path::PathBuf> {
     String::from_utf8(out.stdout).ok().map(|s| std::path::PathBuf::from(s.trim()))
 }
 
-fn client() -> reqwest::Client {
+pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder().user_agent("forge-web").build().unwrap_or_default()
 }
 
