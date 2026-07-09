@@ -281,8 +281,9 @@ async fn dispatch(connector: &Connector, tool: &Tool, args: &Value) -> Result<Va
 // HTTP endpoints
 // ---------------------------------------------------------------------------
 
-/// GET /api/connectors — the catalog + whether each is configured.
-pub(crate) async fn list_connectors<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+/// The connector catalog as JSON: every manifest, whether it's configured, and
+/// the tools it exposes. Shared by the HTTP endpoint and the MCP server.
+pub(crate) fn catalog_json() -> Value {
     let out: Vec<Value> = manifests()
         .into_iter()
         .map(|c| {
@@ -317,10 +318,29 @@ pub(crate) async fn list_connectors<A: API>(State(_): State<AppState<A>>) -> Jso
             })
         })
         .collect();
-    Json(json!({ "connectors": out }))
+    json!({ "connectors": out })
+}
+
+/// Looks up a connector + tool by name and dispatches. Shared by the HTTP
+/// endpoint and the MCP server.
+pub(crate) async fn dispatch_by_name(
+    connector_id: &str,
+    tool: &str,
+    args: &Value,
+) -> Result<Value, AppError> {
+    let connector = manifest(connector_id).ok_or_else(|| AppError::not_found("no such connector"))?;
+    let tool = connector.tools.iter().find(|t| t.name == tool).ok_or_else(|| {
+        AppError::not_found(format!("connector '{connector_id}' has no tool '{tool}'"))
+    })?;
+    dispatch(&connector, tool, args).await
 }
 
 use forge_api::API;
+
+/// GET /api/connectors — the catalog + whether each is configured.
+pub(crate) async fn list_connectors<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    Json(catalog_json())
+}
 
 #[derive(Deserialize)]
 pub(crate) struct ConfigBody {
@@ -365,14 +385,7 @@ pub(crate) async fn call_connector<A: API>(
     AxPath(id): AxPath<String>,
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, AppError> {
-    let connector = manifest(&id).ok_or_else(|| AppError::not_found("no such connector"))?;
-    let tool = connector
-        .tools
-        .iter()
-        .find(|t| t.name == body.tool)
-        .ok_or_else(|| AppError::not_found(format!("connector '{id}' has no tool '{}'", body.tool)))?;
-    let result = dispatch(&connector, tool, &body.args).await?;
-    Ok(Json(result))
+    Ok(Json(dispatch_by_name(&id, &body.tool, &body.args).await?))
 }
 
 #[cfg(test)]

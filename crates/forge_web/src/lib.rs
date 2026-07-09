@@ -11,6 +11,7 @@
 
 mod board;
 mod connectors;
+mod connectors_mcp;
 mod dto;
 mod live;
 
@@ -132,9 +133,17 @@ where
         .route("/api/connectors/{id}/call", post(connectors::call_connector::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
+    // The connector engine, exposed to the agent as a Streamable-HTTP MCP
+    // endpoint at `/mcp` (auth-gated with the same bearer token). It's
+    // auto-registered into the MCP config below so the agent gets the tools.
+    let mcp_router = Router::new()
+        .nest_service("/mcp", connectors_mcp::service())
+        .layer(from_fn_with_state(state.clone(), auth::<A>));
+
     let app = Router::new()
         .route("/", get(index::<A>))
         .merge(api_routes)
+        .merge(mcp_router)
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -159,8 +168,42 @@ where
         });
     }
 
+    // Register the `/mcp` endpoint into Forge's MCP config so the agent picks up
+    // the connector tools. The url + token are per-run, so we overwrite the entry
+    // each startup once the server is accepting connections.
+    {
+        let state = state.clone();
+        let mcp_url = format!("http://{local}/mcp");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            register_connectors_mcp(&state, &mcp_url).await;
+        });
+    }
+
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Registers (overwriting) the self-hosted connectors MCP endpoint in the
+/// user-scoped MCP config, then reloads so the running agent picks it up.
+async fn register_connectors_mcp<A: API>(state: &AppState<A>, url: &str) {
+    let scope = Scope::User;
+    let _guard = state.config_lock.lock().await;
+    let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
+    let mut http = McpHttpServer::default();
+    http.url = url.to_string();
+    http.headers
+        .insert("Authorization".to_string(), format!("Bearer {}", state.token));
+    http.oauth = McpOAuthSetting::Disabled;
+    config
+        .mcp_servers
+        .insert(ServerName::from("connectors".to_string()), McpServerConfig::Http(http));
+    if let Err(err) = state.api.write_mcp_config(&scope, &config).await {
+        tracing::warn!("could not register connectors MCP server: {err}");
+        return;
+    }
+    drop(_guard);
+    let _ = state.api.reload_mcp().await;
 }
 
 /// Middleware that enforces the bearer token on `/api/*` routes.
@@ -803,6 +846,10 @@ impl AppError {
 
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_REQUEST, message: message.into() }
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
     }
 }
 

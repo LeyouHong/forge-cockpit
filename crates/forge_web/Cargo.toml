@@ -20,6 +20,7 @@ open.workspace = true
 base64.workspace = true
 reqwest.workspace = true
 axum = "0.8"
+rmcp = { version = "1.0.0", features = ["server", "macros", "transport-streamable-http-server", "schemars"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
