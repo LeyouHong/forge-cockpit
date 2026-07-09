@@ -26,7 +26,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::sse::{Event as SseEvent, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use forge_api::API;
 use forge_domain::{
     AgentId, AuthContextRequest, AuthContextResponse, AuthMethod, ConfigOperation, Context,
@@ -48,6 +48,8 @@ pub(crate) struct AppState<A> {
     pub(crate) config_lock: Arc<tokio::sync::Mutex<()>>,
     /// Resumable chat turns, keyed by conversation id.
     pub(crate) turns: live::TurnRegistry,
+    /// Recently finished turns for the tasks panel (in-memory, per run).
+    pub(crate) history: live::TaskHistory,
 }
 
 // Manual `Clone` so we don't require `A: Clone` (only the `Arc`s are cloned).
@@ -58,6 +60,7 @@ impl<A> Clone for AppState<A> {
             token: self.token.clone(),
             config_lock: self.config_lock.clone(),
             turns: self.turns.clone(),
+            history: self.history.clone(),
         }
     }
 }
@@ -79,6 +82,7 @@ where
         token: Arc::new(token),
         config_lock: Arc::new(tokio::sync::Mutex::new(())),
         turns: Default::default(),
+        history: Default::default(),
     };
 
     // `/api/*` routes require the bearer token.
@@ -107,6 +111,7 @@ where
         .route("/api/chat", post(live::start_turn::<A>))
         .route("/api/chat/{conv}/live", get(live::turn_live::<A>))
         .route("/api/chat/{conv}/stop", post(live::turn_stop::<A>))
+        .route("/api/tasks", get(live::list_tasks::<A>))
         .route("/api/conversations/{id}/usage", get(live::get_usage::<A>))
         .route("/api/board/platforms", get(board::platforms::<A>))
         .route("/api/board/github", get(board::github_board::<A>))
@@ -115,6 +120,12 @@ where
         .route("/api/board/sentry", get(board::sentry_board::<A>))
         .route("/api/board/gcal", get(board::gcal_board::<A>))
         .route("/api/gcal", get(board::get_gcal::<A>).put(board::set_gcal::<A>))
+        .route("/api/todos", get(board::list_todos::<A>).post(board::add_todo::<A>))
+        .route(
+            "/api/todos/{id}",
+            put(board::update_todo::<A>).delete(board::delete_todo::<A>),
+        )
+        .route("/api/pipelines", get(board::running_pipelines::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
@@ -275,7 +286,7 @@ fn strip_task(s: &str) -> String {
 }
 
 /// Character-safe truncation (handles multi-byte text like CJK) with an ellipsis.
-fn truncate_chars(s: &str, max: usize) -> String {
+pub(crate) fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }

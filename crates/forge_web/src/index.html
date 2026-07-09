@@ -378,6 +378,66 @@
     .prov-section summary::before { content: '▸'; color: var(--faint); margin-right: 7px; font-size: 10px; transition: transform .12s ease; }
     .prov-section[open] summary::before { content: '▾'; }
     .prov-section summary:hover { color: var(--text); }
+
+    /* ---------- activity / todo panel (right rail) ---------- */
+    .tasks-panel {
+      width: 280px; flex: 0 0 280px; background: var(--sidebar);
+      border-left: 1px solid var(--border); display: flex; flex-direction: column;
+      overflow: hidden; transition: width .18s ease, flex-basis .18s ease;
+    }
+    /* Children keep their layout width so the slide clips instead of reflowing. */
+    .tasks-head, .panel-scroll { min-width: 280px; }
+    .tasks-panel.hidden { width: 0; flex-basis: 0; border-left-width: 0; box-shadow: none; }
+    .tasks-head {
+      display: flex; align-items: center; justify-content: flex-end;
+      height: 44px; flex: 0 0 44px; padding: 0 10px; border-bottom: 1px solid var(--border);
+    }
+    .panel-scroll { flex: 1; overflow-y: auto; }
+    .p-sec { border-bottom: 1px solid var(--border); }
+    .p-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; cursor: pointer; user-select: none; }
+    .p-head .tri { font-size: 9px; color: var(--muted); width: 10px; flex: 0 0 auto; transition: transform .12s ease; }
+    .p-sec.closed .tri { transform: rotate(-90deg); }
+    .p-head .p-title { font-weight: 700; font-size: 13px; letter-spacing: .05em; color: var(--text); }
+    .p-head .p-cnt { color: var(--muted); font-weight: 600; font-size: 13px; }
+    .p-sec.closed .p-body { display: none; }
+    #sec-todo .p-body { border-top: 1px solid var(--border); }
+    .act-sub { padding: 10px 16px 4px; font-size: 11.5px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .act-sub .cnt { color: var(--accent); font-weight: 600; }
+    .act-div { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 12px; }
+    .act-none { padding: 2px 16px 12px; color: var(--faint); font-style: italic; font-size: 13px; }
+    .run-item { padding: 6px 16px 9px; cursor: pointer; transition: background .12s ease; }
+    .run-item:hover { background: var(--hover); }
+    .run-item .r-top { display: flex; align-items: baseline; gap: 8px; }
+    .run-item .r-name { flex: 1; font-weight: 600; font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .run-item .r-status { flex: 0 0 auto; font-size: 12.5px; }
+    .r-status.running { color: var(--accent); }
+    .r-status.completed { color: #3fb950; }
+    .r-status.error { color: var(--danger); }
+    .r-status.stopped { color: var(--muted); }
+    .run-item .r-desc { color: var(--muted); font-size: 12.5px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* TODO section */
+    .todo-add-row { display: none; gap: 6px; padding: 8px 16px 10px; }
+    .todo-add-row.open { display: flex; }
+    .todo-add-row input { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 12.5px; }
+    .todo-add-row input:focus { outline: none; border-color: var(--accent-solid); }
+    .todo-empty { padding: 10px 16px 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .todo-item { display: flex; align-items: flex-start; gap: 9px; padding: 7px 16px; transition: background .12s ease; }
+    .todo-item:hover { background: var(--hover); }
+    .todo-item input[type="checkbox"] { margin: 3px 0 0; accent-color: var(--accent-solid); cursor: pointer; }
+    .todo-item .tx { flex: 1; font-size: 13px; color: var(--text); word-break: break-word; line-height: 1.45; }
+    .todo-item.done .tx { color: var(--faint); text-decoration: line-through; }
+    .todo-item .rm {
+      opacity: 0; flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent;
+      color: var(--faint); border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1;
+    }
+    .todo-item:hover .rm { opacity: 1; }
+    .todo-item .rm:hover { background: var(--hover); color: var(--danger); }
+    @media (max-width: 1100px) {
+      .tasks-panel {
+        position: fixed; right: 0; top: 0; bottom: 0; z-index: 85;
+        box-shadow: -6px 0 24px rgba(0,0,0,.3);
+      }
+    }
   </style>
 </head>
 <body>
@@ -394,6 +454,7 @@
       <div class="title" id="conv-title">Forge</div>
       <span class="usage-info" id="usage-info"></span>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
+      <button class="icon-btn" id="tasks-toggle" title="Activity &amp; TODO — pipelines, tasks, recent runs">⏱</button>
       <button class="icon-btn" id="kanban-open" title="Boards (GitHub / Jira / Sentry)">📋</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
@@ -411,6 +472,40 @@
       <input id="file-input" type="file" accept="image/*" multiple style="display:none" />
     </footer>
   </main>
+
+  <!-- Activity / TODO panel (running pipelines + tasks + recent runs + todos) -->
+  <aside class="tasks-panel hidden" id="tasks-panel">
+    <div class="tasks-head">
+      <button class="icon-btn" id="tasks-close" title="Collapse (reopen with ⏱ in the topbar)">›</button>
+    </div>
+    <div class="panel-scroll">
+      <section class="p-sec" id="sec-activity">
+        <div class="p-head"><span class="tri">▾</span><span class="p-title">ACTIVITY</span></div>
+        <div class="p-body">
+          <div class="act-sub">Running pipelines</div>
+          <div id="pipeline-list"><div class="act-none">none</div></div>
+          <div class="act-sub act-div">Running tasks <span class="cnt" id="running-count"></span></div>
+          <div id="running-list"><div class="act-none">none</div></div>
+          <div class="act-sub act-div">Recent runs</div>
+          <div id="recent-list"><div class="act-none">none</div></div>
+        </div>
+      </section>
+      <section class="p-sec" id="sec-todo">
+        <div class="p-head">
+          <span class="tri">▾</span><span class="p-title">TODO</span><span class="p-cnt" id="todo-count">0</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-sm btn-primary" id="todo-add-btn">+ Add</button>
+        </div>
+        <div class="p-body">
+          <div class="todo-add-row" id="todo-add-row">
+            <input id="todo-input" placeholder="New TODO…" />
+            <button class="btn btn-sm btn-primary" id="todo-save">Add</button>
+          </div>
+          <div id="todo-list"></div>
+        </div>
+      </section>
+    </div>
+  </aside>
 
   <div class="modal-overlay" id="modal-overlay">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -850,6 +945,18 @@
       const text = inputEl.value.trim();
       const images = pendingImages.slice();
       if ((!text && !images.length) || streaming) return;
+      // "add a todo: …" goes straight to the TODO list — no agent turn needed.
+      const todo = images.length ? null : tryTodoIntercept(text);
+      if (todo) {
+        inputEl.value = ''; autoGrow();
+        const first = messagesEl.querySelector('.empty'); if (first) first.remove();
+        addUser(text);
+        const ok = await addTodo(todo);
+        addAssistantBubble(ok ? '✓ Added to your TODO list: **' + todo.replace(/\*/g, '') + '**' : 'Could not save that TODO.');
+        scrollDown();
+        setTasksOpen(true);
+        return;
+      }
       ensureNotifyPermission();
       inputEl.value = ''; autoGrow(); clearAttachments();
       await runTurn(text, images);
@@ -875,6 +982,7 @@
         out.body.appendChild(retry);
         return;
       }
+      loadTasks();
       await attachLive(conversationId, { skipUser: true });
     }
 
@@ -920,6 +1028,7 @@
         if (conversationId === convId) { streaming = false; setStreamingUI(false); }
         if (sawComplete) notifyDone('Reply ready');
         loadConversations();
+        loadTasks();
       }
       return true;
     }
@@ -1446,6 +1555,168 @@
       await api('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
       loadProviders(); loadModels();
     }
+
+    /* ---------- activity + todo panel (right rail) ---------- */
+    const tasksPanel = $('tasks-panel');
+    function setTasksOpen(open) {
+      tasksPanel.classList.toggle('hidden', !open);
+      localStorage.setItem('forge-tasks-open', open ? '1' : '0');
+      if (open) { loadTasks(); loadPipelines(); loadTodos(); }
+    }
+    $('tasks-toggle').onclick = () => setTasksOpen(tasksPanel.classList.contains('hidden'));
+    $('tasks-close').onclick = () => setTasksOpen(false);
+
+    // Collapsible sections, persisted across reloads.
+    for (const [sec, key] of [['sec-activity', 'forge-sec-activity'], ['sec-todo', 'forge-sec-todo']]) {
+      const el = $(sec);
+      if (localStorage.getItem(key) === '1') el.classList.add('closed');
+      el.querySelector('.p-head').onclick = (e) => {
+        if (e.target.closest('button')) return; // the +Add button lives in the header
+        el.classList.toggle('closed');
+        localStorage.setItem(key, el.classList.contains('closed') ? '1' : '0');
+      };
+    }
+
+    function fmtDur(s) {
+      s = Math.max(0, Math.round(s));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      return m < 60 ? m + 'm ' + (s % 60) + 's' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function fmtClock(ms) {
+      const d = new Date(ms);
+      return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+    }
+    function runItem({ name, desc, status, statusText, title, onClick }) {
+      const item = document.createElement('div'); item.className = 'run-item';
+      const top = document.createElement('div'); top.className = 'r-top';
+      const nm = document.createElement('span'); nm.className = 'r-name'; nm.textContent = name;
+      const st = document.createElement('span'); st.className = 'r-status ' + status; st.textContent = statusText;
+      top.append(nm, st); item.appendChild(top);
+      if (desc) {
+        const d = document.createElement('div'); d.className = 'r-desc'; d.textContent = desc;
+        item.appendChild(d);
+      }
+      if (title) item.title = title;
+      if (onClick) item.onclick = onClick;
+      return item;
+    }
+    const noneEl = () => { const n = document.createElement('div'); n.className = 'act-none'; n.textContent = 'none'; return n; };
+    function convoTitle(id) { const c = convoCache.find((c) => c.id === id); return (c && c.title) || 'chat'; }
+
+    async function loadTasks() {
+      if (tasksPanel.classList.contains('hidden') || document.hidden) return;
+      let d;
+      try { d = await (await api('/api/tasks')).json(); } catch (e) { return; }
+      const run = $('running-list'); run.innerHTML = '';
+      $('running-count').textContent = d.running.length ? '(' + d.running.length + ')' : '';
+      if (!d.running.length) run.appendChild(noneEl());
+      for (const t of d.running) {
+        run.appendChild(runItem({
+          name: convoTitle(t.conversation_id), desc: t.prompt,
+          status: 'running', statusText: 'running',
+          title: 'started ' + fmtClock(t.started_at_ms) + ' · ' + fmtDur(t.elapsed_secs),
+          onClick: () => selectConversation(t.conversation_id, convoTitle(t.conversation_id)),
+        }));
+      }
+      const rec = $('recent-list'); rec.innerHTML = '';
+      if (!d.recent.length) rec.appendChild(noneEl());
+      for (const t of d.recent.slice(0, 8)) {
+        rec.appendChild(runItem({
+          name: convoTitle(t.conversation_id), desc: t.prompt,
+          status: t.status,
+          statusText: { completed: 'done', stopped: 'stopped', error: 'error' }[t.status] || t.status,
+          title: fmtClock(t.started_at_ms) + ' · ' + fmtDur(t.duration_secs),
+          onClick: () => selectConversation(t.conversation_id, convoTitle(t.conversation_id)),
+        }));
+      }
+    }
+
+    // Running pipelines = queued / in-progress GitHub Actions runs on this repo
+    // (reuses the GitHub connection). Polled slowly — it hits the GitHub API.
+    async function loadPipelines() {
+      if (tasksPanel.classList.contains('hidden') || document.hidden) return;
+      let d;
+      try { d = await (await api('/api/pipelines')).json(); } catch (e) { return; }
+      const box = $('pipeline-list'); box.innerHTML = '';
+      if (!d.pipelines.length) { box.appendChild(noneEl()); return; }
+      for (const p of d.pipelines) {
+        box.appendChild(runItem({
+          name: p.name, desc: p.branch,
+          status: 'running', statusText: p.status === 'queued' ? 'queued' : 'running',
+          onClick: p.url ? () => window.open(p.url, '_blank', 'noopener') : null,
+        }));
+      }
+    }
+
+    /* ----- TODOs ----- */
+    async function loadTodos() {
+      let d;
+      try { d = await (await api('/api/todos')).json(); } catch (e) { return; }
+      const open = d.todos.filter((t) => !t.done);
+      $('todo-count').textContent = open.length;
+      const list = $('todo-list'); list.innerHTML = '';
+      if (!d.todos.length) {
+        const e = document.createElement('div'); e.className = 'todo-empty';
+        e.textContent = 'No open TODOs. Add one above, or tell chat “add a todo: …”.';
+        list.appendChild(e); return;
+      }
+      // Open items first; completed ones stay visible, struck through, and can
+      // be reopened by unchecking. × deletes for real.
+      for (const t of [...open, ...d.todos.filter((x) => x.done)]) {
+        const item = document.createElement('div'); item.className = 'todo-item' + (t.done ? ' done' : '');
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!t.done;
+        cb.title = t.done ? 'Reopen' : 'Mark done';
+        cb.onchange = async () => {
+          await api('/api/todos/' + t.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: cb.checked }) });
+          loadTodos();
+        };
+        const tx = document.createElement('span'); tx.className = 'tx'; tx.textContent = t.text;
+        const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '×'; rm.title = 'Delete';
+        rm.onclick = async () => { await api('/api/todos/' + t.id, { method: 'DELETE' }); loadTodos(); };
+        item.append(cb, tx, rm);
+        list.appendChild(item);
+      }
+    }
+    async function addTodo(text) {
+      text = (text || '').trim(); if (!text) return false;
+      const res = await api('/api/todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      if (res.ok) loadTodos();
+      return res.ok;
+    }
+    // The header button flips to "Cancel" while the input row is open, so
+    // closing it again is obvious (Escape works too).
+    function setAddOpen(open) {
+      const row = $('todo-add-row'), btn = $('todo-add-btn');
+      row.classList.toggle('open', open);
+      btn.textContent = open ? 'Cancel' : '+ Add';
+      btn.classList.toggle('btn-primary', !open);
+      btn.classList.toggle('btn-ghost', open);
+      if (open) $('todo-input').focus();
+    }
+    $('todo-add-btn').onclick = () => {
+      $('sec-todo').classList.remove('closed');
+      setAddOpen(!$('todo-add-row').classList.contains('open'));
+    };
+    const submitTodoInput = async () => { if (await addTodo($('todo-input').value)) $('todo-input').value = ''; };
+    $('todo-save').onclick = submitTodoInput;
+    $('todo-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) submitTodoInput();
+      if (e.key === 'Escape') setAddOpen(false);
+    });
+    // Chat shortcut: "add a todo: …" / "todo: …" / "待办：…" goes straight to
+    // the list without waking the agent.
+    function tryTodoIntercept(text) {
+      const m = text.match(/^\s*(?:add\s+(?:a\s+)?todo|todo|(?:添加|加|新增)?\s*待办)\s*[:：]\s*(.+)$/i);
+      if (!m) return null;
+      return m[1].trim();
+    }
+
+    // Light polling keeps elapsed times and cross-tab runs fresh; skipped while hidden.
+    setInterval(loadTasks, 3000);
+    setInterval(loadPipelines, 30000);
+    setTasksOpen(localStorage.getItem('forge-tasks-open') === '1' ||
+      (localStorage.getItem('forge-tasks-open') == null && window.innerWidth > 1100));
 
     /* ---------- boards (kanban) ---------- */
     const KB_PLATFORMS = [

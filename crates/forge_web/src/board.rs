@@ -66,6 +66,131 @@ pub(crate) async fn set_gcal<A: API>(
     Json(json!({ "ok": true }))
 }
 
+// ---------------------------------------------------------------------------
+// TODOs — a small personal list for the activity panel, persisted in the same
+// settings file. Single-user local app, so plain read-modify-write is fine.
+// ---------------------------------------------------------------------------
+
+fn todos_from(s: &Value) -> Vec<Value> {
+    s.get("todos").and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// GET /api/todos — full list, newest last (insertion order).
+pub(crate) async fn list_todos<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    Json(json!({ "todos": todos_from(&read_settings()) }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TodoAdd {
+    text: String,
+}
+
+/// POST /api/todos — add one; returns the created todo.
+pub(crate) async fn add_todo<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TodoAdd>,
+) -> Result<Json<Value>, AppError> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(AppError::bad_request("todo text is empty"));
+    }
+    let mut s = read_settings();
+    let mut todos = todos_from(&s);
+    let todo = json!({
+        "id": forge_domain::ConversationId::generate().into_string(),
+        "text": text,
+        "done": false,
+        "created_at_ms": unix_ms(),
+    });
+    todos.push(todo.clone());
+    s["todos"] = Value::Array(todos);
+    write_settings(&s);
+    Ok(Json(todo))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TodoPatch {
+    done: Option<bool>,
+    text: Option<String>,
+}
+
+/// PUT /api/todos/{id} — set done and/or text.
+pub(crate) async fn update_todo<A: API>(
+    State(_): State<AppState<A>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<TodoPatch>,
+) -> Result<Json<Value>, AppError> {
+    let mut s = read_settings();
+    let mut todos = todos_from(&s);
+    let item = todos
+        .iter_mut()
+        .find(|t| t["id"].as_str() == Some(id.as_str()))
+        .ok_or_else(|| AppError::not_found("no such todo"))?;
+    if let Some(done) = body.done {
+        item["done"] = json!(done);
+    }
+    if let Some(text) = body.text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        item["text"] = json!(text);
+    }
+    let updated = item.clone();
+    s["todos"] = Value::Array(todos);
+    write_settings(&s);
+    Ok(Json(updated))
+}
+
+/// Marks the start of an injected TODO-context block within a user message.
+/// The block is only needed for the turn that produces it — once the model
+/// has replied, [`crate::live`] truncates any stored user message at this
+/// marker so it never lingers in history/export views.
+pub(crate) const TODOS_CONTEXT_MARKER: &str = "\n\n<forge_web_todos>";
+
+/// Renders the panel's TODO list as a context block appended to chat turns
+/// that mention todos. The agent's own `todo_read` tool is session-scoped and
+/// can't see this list, so we hand it over explicitly — including where it
+/// lives, so the agent can check items off with its file tools.
+pub(crate) fn todos_context() -> String {
+    let todos = todos_from(&read_settings());
+    if todos.is_empty() {
+        return String::new();
+    }
+    let path = settings_path().map(|p| p.display().to_string()).unwrap_or_default();
+    let mut s = format!(
+        "{TODOS_CONTEXT_MARKER}\nThe user's TODO list from the Forge web panel (this is separate \
+         from your session todos; it is stored under the \"todos\" key in {path} — if the user \
+         asks you to complete or check off an item, set its \"done\" field to true in that file):\n"
+    );
+    for t in &todos {
+        let done = t["done"].as_bool().unwrap_or(false);
+        s.push_str(&format!(
+            "- [{}] {}\n",
+            if done { "x" } else { " " },
+            t["text"].as_str().unwrap_or("")
+        ));
+    }
+    s.push_str("</forge_web_todos>");
+    s
+}
+
+/// DELETE /api/todos/{id}
+pub(crate) async fn delete_todo<A: API>(
+    State(_): State<AppState<A>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<Value> {
+    let mut s = read_settings();
+    let mut todos = todos_from(&s);
+    todos.retain(|t| t["id"].as_str() != Some(id.as_str()));
+    s["todos"] = Value::Array(todos);
+    write_settings(&s);
+    Json(json!({ "ok": true }))
+}
+
 /// Looks up a configured MCP server by name.
 async fn server<A: API>(state: &AppState<A>, name: &str) -> Option<McpServerConfig> {
     let cfg = state.api.read_mcp_config(None).await.ok()?;
@@ -93,20 +218,84 @@ fn stdio_env(server: &McpServerConfig, key: &str) -> Option<String> {
     None
 }
 
-fn origin_slug(git_root: &Path) -> Option<(String, String)> {
-    let url = String::from_utf8(
-        Command::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(git_root)
-            .output()
-            .ok()?
-            .stdout,
-    )
-    .ok()?;
+/// Parses `(owner, repo)` from a GitHub remote URL (https or `git@` ssh form).
+fn parse_github_slug(url: &str) -> Option<(String, String)> {
     let rest = url.trim().split("github.com").nth(1)?;
     let rest = rest.trim_start_matches([':', '/']).trim_end_matches(".git");
     let mut it = rest.splitn(2, '/');
     Some((it.next()?.to_string(), it.next()?.trim_end_matches('/').to_string()))
+}
+
+/// All GitHub remotes as `(remote_name, owner, repo)`, de-duplicated across the
+/// fetch/push pair that `git remote -v` prints for each remote.
+fn github_remotes(git_root: &Path) -> Vec<(String, String, String)> {
+    let output = match Command::new("git")
+        .args(["remote", "-v"])
+        .current_dir(git_root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(name), Some(url)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if !seen.insert(name.to_string()) {
+            continue; // second (push) line for a remote already recorded
+        }
+        if let Some((owner, repo)) = parse_github_slug(url) {
+            out.push((name.to_string(), owner, repo));
+        }
+    }
+    out
+}
+
+/// The login of the account a GitHub token belongs to (`GET /user`).
+async fn github_login(cl: &reqwest::Client, pat: &str) -> Option<String> {
+    let resp = cl
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {pat}"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .ok()?;
+    resp.json::<Value>()
+        .await
+        .ok()?
+        .get("login")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Resolves the `(owner, repo)` the GitHub boards should track.
+///
+/// A forked checkout usually leaves `origin` pointing at the *upstream* repo,
+/// with the user's own fork under a differently named remote — so blindly using
+/// `origin` shows someone else's issues/CI. Prefer the remote whose owner
+/// matches the token's account (your fork); fall back to `origin`, then the
+/// first GitHub remote.
+async fn resolve_repo(cl: &reqwest::Client, pat: &str, git_root: &Path) -> Option<(String, String)> {
+    let remotes = github_remotes(git_root);
+    if remotes.is_empty() {
+        return None;
+    }
+    if let Some(login) = github_login(cl, pat).await
+        && let Some((_, owner, repo)) = remotes
+            .iter()
+            .find(|(_, owner, _)| owner.eq_ignore_ascii_case(&login))
+    {
+        return Some((owner.clone(), repo.clone()));
+    }
+    remotes
+        .iter()
+        .find(|(name, _, _)| name == "origin")
+        .or_else(|| remotes.first())
+        .map(|(_, owner, repo)| (owner.clone(), repo.clone()))
 }
 
 async fn repo_root<A: API>(state: &AppState<A>) -> Option<std::path::PathBuf> {
@@ -165,10 +354,12 @@ pub(crate) async fn github_board<A: API>(
         .and_then(github_pat)
         .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
     let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
-    let (owner, repo) = origin_slug(&root).ok_or_else(|| AppError::bad_request("no github origin remote"))?;
+    let cl = client();
+    let (owner, repo) = resolve_repo(&cl, &pat, &root)
+        .await
+        .ok_or_else(|| AppError::bad_request("no github remote"))?;
 
     // Exact counts via the search API (no page cap), fetched concurrently.
-    let cl = client();
     let scope = format!("repo:{owner}/{repo}");
     let q_issues = format!("{scope} is:open is:issue");
     let q_prs = format!("{scope} is:open is:pr");
@@ -206,8 +397,10 @@ pub(crate) async fn gha_board<A: API>(
         .and_then(github_pat)
         .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
     let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
-    let (owner, repo) = origin_slug(&root).ok_or_else(|| AppError::bad_request("no github origin remote"))?;
     let cl = client();
+    let (owner, repo) = resolve_repo(&cl, &pat, &root)
+        .await
+        .ok_or_else(|| AppError::bad_request("no github remote"))?;
     let auth = format!("Bearer {pat}");
 
     // Default branch (fall back to "main").
@@ -283,6 +476,52 @@ pub(crate) async fn gha_board<A: API>(
             { "label": "Running", "value": running },
         ]
     })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/pipelines — CI runs currently queued / in progress, for the
+// activity panel. Empty list (not an error) when GitHub isn't connected or the
+// cwd isn't a GitHub repo, so the panel can just show "none".
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn running_pipelines<A: API>(State(state): State<AppState<A>>) -> Json<Value> {
+    let empty = || Json(json!({ "pipelines": [] }));
+    let Some(pat) = server(&state, "github").await.as_ref().and_then(github_pat) else {
+        return empty();
+    };
+    let Some(root) = repo_root(&state).await else { return empty() };
+    let cl = client();
+    let Some((owner, repo)) = resolve_repo(&cl, &pat, &root).await else { return empty() };
+
+    let runs: Value = match cl
+        .get(format!("https://api.github.com/repos/{owner}/{repo}/actions/runs"))
+        .query(&[("per_page", "50")])
+        .header("Authorization", format!("Bearer {pat}"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(r) => r.json().await.unwrap_or_else(|_| json!({})),
+        Err(_) => return empty(),
+    };
+
+    // In-progress runs are the newest, so one recent page is enough.
+    let mut out = Vec::new();
+    for r in runs["workflow_runs"].as_array().unwrap_or(&Vec::new()) {
+        if r["status"].as_str().unwrap_or("completed") == "completed" {
+            continue;
+        }
+        out.push(json!({
+            "name": r["name"].as_str().unwrap_or("workflow"),
+            "branch": r["head_branch"].as_str().unwrap_or(""),
+            "status": r["status"].as_str().unwrap_or(""),
+            "url": r["html_url"].as_str().unwrap_or(""),
+        }));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    Json(json!({ "pipelines": out }))
 }
 
 // ---------------------------------------------------------------------------
