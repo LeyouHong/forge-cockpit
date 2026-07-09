@@ -162,19 +162,27 @@ pub(crate) fn todos_context() -> String {
     }
     let path = settings_path().map(|p| p.display().to_string()).unwrap_or_default();
     let mut s = format!(
-        "{TODOS_CONTEXT_MARKER}\nThe user's TODO list from the Forge web panel (this is separate \
-         from your session todos; it is stored under the \"todos\" key in {path} — if the user \
-         asks you to complete or check off an item, set its \"done\" field to true in that file):\n"
+        "{TODOS_CONTEXT_MARKER}\nThe user's TODO list from the Forge web panel. It is stored as \
+         JSON under the \"todos\" key in {path}; each item is an object with \"id\", \"text\" and a \
+         boolean \"done\". Current items:\n"
     );
     for t in &todos {
         let done = t["done"].as_bool().unwrap_or(false);
         s.push_str(&format!(
-            "- [{}] {}\n",
-            if done { "x" } else { " " },
+            "- id={} done={} — {}\n",
+            t["id"].as_str().unwrap_or(""),
+            done,
             t["text"].as_str().unwrap_or("")
         ));
     }
-    s.push_str("</forge_web_todos>");
+    s.push_str(
+        "\nIMPORTANT: If the user asks you to execute / do / run / complete one of these items \
+         (e.g. \"执行todo\", \"完成这个待办\"), then after you finish the work you MUST mark it \
+         done: edit the JSON file above and set \"done\": true on the object with the matching \
+         \"id\", leaving every other field and item unchanged. This is what makes the panel show \
+         the item as completed — do it as your final step, and confirm it in your reply.\n\
+         </forge_web_todos>",
+    );
     s
 }
 

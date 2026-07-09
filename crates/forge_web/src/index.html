@@ -209,6 +209,14 @@
     .reasoning-wrap[open] > summary::after { content: 'hide'; color: var(--faint); font-size: 11px; }
     .reasoning-wrap:not([open]) > summary::after { content: 'show'; color: var(--faint); font-size: 11px; }
     .reasoning { color: var(--muted); font-size: 12.5px; border-left: 2px solid var(--border-strong); padding: 4px 0 1px 11px; margin: 6px 0 0; white-space: pre-wrap; }
+    /* Tool calls: collapsed by default into a quiet "N tool calls" toggle. */
+    .tools-wrap { margin: 2px 0 8px; }
+    .tools-wrap > summary { color: var(--faint); font-size: 12px; cursor: pointer; user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+    .tools-wrap > summary::-webkit-details-marker { display: none; }
+    .tools-wrap > summary::before { content: '🔧'; }
+    .tools-wrap[open] > summary::after { content: 'hide'; color: var(--faint); font-size: 11px; }
+    .tools-wrap:not([open]) > summary::after { content: 'show'; color: var(--faint); font-size: 11px; }
+    .tools-wrap .tools-body { margin-top: 6px; }
     .tool { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); border-radius: 7px; padding: 4px 10px; font-size: 12px; margin: 3px 5px 3px 0; font-family: "SF Mono", ui-monospace, Menlo, monospace; cursor: pointer; transition: border-color .12s ease; }
     .tool:hover { border-color: var(--border-strong); }
     .tool .k { color: var(--accent); }
@@ -336,7 +344,13 @@
     .kanban-overlay { position: fixed; inset: 0; z-index: 95; display: none; flex-direction: column; background: var(--bg); }
     .kanban-overlay.open { display: flex; animation: fade .12s ease; }
     .kanban-head { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-    .kanban-board { flex: 1; overflow-y: auto; padding: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-content: start; }
+    .kanban-scroll { flex: 1; overflow-y: auto; padding: 22px; }
+    .kanban-section { margin: 0 auto 30px; max-width: 1100px; }
+    .kanban-section > .drawer-h { margin: 0 0 14px; }
+    .kanban-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-content: start; }
+    /* On the full-page overlays, integration cards & custom MCP servers lay out as a grid. */
+    .kanban-overlay .conn-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+    .kanban-overlay .custom-mcp { margin-top: 16px; }
     .stat-card { display: flex; flex-direction: column; background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
     .sc-head { display: flex; align-items: center; gap: 9px; }
     .sc-head .gh-logo { width: 20px; height: 20px; }
@@ -372,12 +386,6 @@
     .custom-mcp { margin-top: 14px; }
     .custom-mcp summary { cursor: pointer; color: var(--muted); font-size: 12.5px; user-select: none; }
     .custom-mcp summary:hover { color: var(--text); }
-    #integrations { display: flex; flex-direction: column; gap: 8px; }
-    .prov-section summary { cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; }
-    .prov-section summary::-webkit-details-marker { display: none; }
-    .prov-section summary::before { content: '▸'; color: var(--faint); margin-right: 7px; font-size: 10px; transition: transform .12s ease; }
-    .prov-section[open] summary::before { content: '▾'; }
-    .prov-section summary:hover { color: var(--text); }
 
     /* ---------- activity / todo panel (right rail) ---------- */
     .tasks-panel {
@@ -455,9 +463,10 @@
       <span class="usage-info" id="usage-info"></span>
       <div class="field"><label for="model">Model</label><select id="model"></select></div>
       <button class="icon-btn" id="tasks-toggle" title="Activity &amp; TODO — pipelines, tasks, recent runs">⏱</button>
-      <button class="icon-btn" id="kanban-open" title="Boards (GitHub / Jira / Sentry)">📋</button>
+      <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
+      <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
-      <button class="icon-btn" id="settings" title="Connections & sign-in">⚙</button>
+      <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
     </div>
     <div id="messages"><div class="empty"><div class="big">⚒</div>Start a new conversation.</div></div>
@@ -520,46 +529,59 @@
   </div>
 
 
-  <!-- Boards (kanban) -->
+  <!-- Dashboard (boards only) -->
   <div class="kanban-overlay" id="kanban-overlay">
     <div class="kanban-head">
-      <span><b>📋 Boards</b> <span class="drawer-hint">overview of your connected platforms</span></span>
+      <span><b>📋 Dashboard</b> <span class="drawer-hint">stats from your connected platforms</span></span>
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="kanban-refresh">Refresh</button>
       <button class="icon-btn" id="kanban-close" title="Close">✕</button>
     </div>
-    <div class="kanban-board" id="kanban-board"></div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div class="kanban-board" id="kanban-board"></div>
+      </section>
+    </div>
   </div>
 
-  <!-- Settings / connections drawer -->
+  <!-- Integrations (its own page) -->
+  <div class="kanban-overlay" id="integrations-overlay">
+    <div class="kanban-head">
+      <span><b>🧩 Integrations</b> <span class="drawer-hint">give Forge external tools</span></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="integrations-refresh">Refresh</button>
+      <button class="icon-btn" id="integrations-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div id="integrations" class="conn-list"></div>
+        <div id="mcp-list" class="conn-list" style="margin-top:12px"></div>
+        <details class="custom-mcp">
+          <summary>Add a custom MCP server</summary>
+          <div class="add-row" style="margin-top:10px">
+            <input id="mcp-name" placeholder="name" />
+            <input id="mcp-url" placeholder="https://…/mcp/" />
+          </div>
+          <div class="add-row">
+            <input id="mcp-token" placeholder="token — optional (Bearer header)" />
+            <button class="btn btn-primary" id="mcp-add">Add</button>
+          </div>
+        </details>
+      </section>
+    </div>
+  </div>
+
+  <!-- AI providers / sign-in drawer -->
   <div class="drawer-overlay" id="drawer-overlay">
-    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Connections">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="AI providers">
       <header class="drawer-head">
-        <span>Connections &amp; sign-in</span>
+        <span>AI providers &amp; sign-in</span>
         <button class="icon-btn" id="drawer-close" title="Close">✕</button>
       </header>
       <div class="drawer-body">
         <section>
-          <h3 class="drawer-h">Integrations <span class="drawer-hint">give Forge external tools</span></h3>
-          <div id="integrations" class="conn-list"></div>
-          <div id="mcp-list" class="conn-list" style="margin-top:10px"></div>
-          <details class="custom-mcp">
-            <summary>Add a custom MCP server</summary>
-            <div class="add-row" style="margin-top:10px">
-              <input id="mcp-name" placeholder="name" />
-              <input id="mcp-url" placeholder="https://…/mcp/" />
-            </div>
-            <div class="add-row">
-              <input id="mcp-token" placeholder="token — optional (Bearer header)" />
-              <button class="btn btn-primary" id="mcp-add">Add</button>
-            </div>
-          </details>
-        </section>
-        <section>
-          <details class="prov-section">
-            <summary class="drawer-h" id="prov-summary">AI providers</summary>
-            <div id="prov-list" class="conn-list" style="margin-top:10px"></div>
-          </details>
+          <h3 class="drawer-h" id="prov-summary">AI providers</h3>
+          <div id="prov-list" class="conn-list" style="margin-top:10px"></div>
         </section>
       </div>
     </aside>
@@ -778,14 +800,25 @@
     // Builds the streaming elements (reasoning / tools / body) inside `parent`
     // and returns a context reused by handleEvent. `scrollEl` is what auto-scrolls.
     function makeStreamCtx(parent, scrollEl) {
-      const reasoning = document.createElement('details'); reasoning.className = 'reasoning-wrap'; reasoning.open = true; reasoning.style.display = 'none';
+      // Reasoning is collapsed by default (it's long and rarely wanted); click to expand.
+      const reasoning = document.createElement('details'); reasoning.className = 'reasoning-wrap'; reasoning.open = false; reasoning.style.display = 'none';
       const rsum = document.createElement('summary'); rsum.textContent = 'Reasoning';
       const reasoningBody = document.createElement('div'); reasoningBody.className = 'reasoning';
       reasoning.append(rsum, reasoningBody);
-      const tools = document.createElement('div');
+      // Tool calls are collapsed into a quiet "N tool calls" toggle instead of a long chip list.
+      const toolsWrap = document.createElement('details'); toolsWrap.className = 'tools-wrap'; toolsWrap.style.display = 'none';
+      const tsum = document.createElement('summary'); tsum.textContent = 'Tools';
+      const tools = document.createElement('div'); tools.className = 'tools-body';
+      toolsWrap.append(tsum, tools);
       const body = document.createElement('div'); body.className = 'msg assistant'; body.style.display = 'none';
-      parent.append(reasoning, tools, body);
-      const ctx = { reasoning, reasoningBody, tools, body, raw: '' };
+      parent.append(reasoning, toolsWrap, body);
+      const ctx = { reasoning, reasoningBody, toolsWrap, tools, toolCount: 0, body, raw: '' };
+      ctx.addTool = (chip) => {
+        ctx.tools.appendChild(chip);
+        ctx.toolCount++;
+        tsum.textContent = ctx.toolCount + ' tool call' + (ctx.toolCount > 1 ? 's' : '');
+        toolsWrap.style.display = '';
+      };
       ctx.scroll = () => { if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight; };
       return ctx;
     }
@@ -886,23 +919,38 @@
 
     function renderHistory(msgs) {
       let rendered = 0;
+      // Consecutive tool chips fold into one collapsed "N tool calls" group, so a
+      // reloaded conversation reads as clean as a freshly streamed one.
+      let group = null;
+      const flushGroup = () => { group = null; };
+      const addHistoryTool = (chip) => {
+        if (!group) {
+          const wrap = document.createElement('details'); wrap.className = 'tools-wrap';
+          const s = document.createElement('summary'); s.textContent = 'Tools';
+          const b = document.createElement('div'); b.className = 'tools-body';
+          wrap.append(s, b);
+          const row = document.createElement('div'); row.className = 'row'; row.appendChild(wrap);
+          messagesEl.appendChild(row);
+          group = { body: b, summary: s, count: 0 };
+        }
+        group.body.appendChild(chip);
+        group.count++;
+        group.summary.textContent = group.count + ' tool call' + (group.count > 1 ? 's' : '');
+      };
       for (const m of msgs) {
         if (m.kind === 'text') {
           if (m.role === 'system') continue;
-          if (m.role === 'user') addUser(m.content);
+          if (m.role === 'user') { flushGroup(); addUser(m.content); }
           else {
-            if (m.content && m.content.trim()) addAssistantBubble(m.content);
-            for (const tc of (m.tool_calls || [])) {
-              const row = document.createElement('div'); row.className = 'row';
-              row.appendChild(toolChip('⚙ ', tc, null)); messagesEl.appendChild(row);
-            }
+            if (m.content && m.content.trim()) { flushGroup(); addAssistantBubble(m.content); }
+            for (const tc of (m.tool_calls || [])) addHistoryTool(toolChip('⚙ ', tc, null));
           }
           rendered++;
         } else if (m.kind === 'tool') {
-          const row = document.createElement('div'); row.className = 'row';
-          row.appendChild(toolChip('▸ ', m.name, m.output)); messagesEl.appendChild(row);
+          addHistoryTool(toolChip('▸ ', m.name, m.output));
           rendered++;
         } else if (m.kind === 'image') {
+          flushGroup();
           const row = document.createElement('div'); row.className = 'row';
           row.appendChild(toolChip('🖼 ', 'image', null)); messagesEl.appendChild(row);
           rendered++;
@@ -1029,6 +1077,9 @@
         if (sawComplete) notifyDone('Reply ready');
         loadConversations();
         loadTasks();
+        // The agent may have checked off a TODO by editing the settings file
+        // during the turn — refresh the list so the panel reflects it.
+        loadTodos();
       }
       return true;
     }
@@ -1081,16 +1132,16 @@
         case 'reasoning':
           out.reasoning.style.display = ''; out.reasoningBody.textContent += ev.text; break;
         case 'tool_input':
-          out.tools.appendChild(toolChip('▸ ', ev.title, ev.subtitle)); break;
+          out.addTool(toolChip('▸ ', ev.title, ev.subtitle)); break;
         case 'tool_call_start':
           // args expandable; skip the placeholder empty-object payload
-          out.tools.appendChild(toolChip('⚙ ', ev.name, ev.arguments && ev.arguments !== '{}' ? ev.arguments : null)); break;
+          out.addTool(toolChip('⚙ ', ev.name, ev.arguments && ev.arguments !== '{}' ? ev.arguments : null)); break;
         case 'tool_call_end':
-          out.tools.appendChild(toolChip('✓ ', ev.name, ev.output || null)); break;
+          out.addTool(toolChip('✓ ', ev.name, ev.output || null)); break;
         case 'tool_output':
           break; // superseded by tool_call_end
         case 'retry':
-          out.tools.appendChild(toolChip('↻ ', ev.cause, null)); break;
+          out.addTool(toolChip('↻ ', ev.cause, null)); break;
         case 'interrupt':
           out.body.style.display = ''; out.body.classList.add('err');
           out.body.innerHTML += '<p class="err">[interrupted: ' + escapeHtml(ev.reason) + ']</p>'; break;
@@ -1247,7 +1298,7 @@
     });
 
     /* ---------- connections drawer (providers + MCP) ---------- */
-    function openSettings() { $('drawer-overlay').classList.add('open'); loadMcp(); loadProviders(); }
+    function openSettings() { $('drawer-overlay').classList.add('open'); loadProviders(); }
     function closeSettings() { $('drawer-overlay').classList.remove('open'); }
     $('settings').onclick = openSettings;
     $('drawer-close').onclick = closeSettings;
@@ -1593,7 +1644,7 @@
       const nm = document.createElement('span'); nm.className = 'r-name'; nm.textContent = name;
       const st = document.createElement('span'); st.className = 'r-status ' + status; st.textContent = statusText;
       top.append(nm, st); item.appendChild(top);
-      if (desc) {
+      if (desc && desc !== name) {
         const d = document.createElement('div'); d.className = 'r-desc'; d.textContent = desc;
         item.appendChild(d);
       }
@@ -1730,6 +1781,12 @@
     $('kanban-close').onclick = () => $('kanban-overlay').classList.remove('open');
     $('kanban-refresh').onclick = openKanban;
 
+    /* ---------- integrations page ---------- */
+    function openIntegrations() { $('integrations-overlay').classList.add('open'); loadMcp(); }
+    $('integrations-open').onclick = openIntegrations;
+    $('integrations-close').onclick = () => $('integrations-overlay').classList.remove('open');
+    $('integrations-refresh').onclick = loadMcp;
+
     // Renders one framed stats card per connected platform, each with a small
     // row of KPI tiles fetched from its board endpoint.
     async function openKanban() {
@@ -1737,7 +1794,7 @@
       const board = $('kanban-board'); board.innerHTML = '<div class="kb-loading">Loading…</div>';
       const avail = await (await api('/api/board/platforms')).json().catch(() => ({}));
       const connected = KB_PLATFORMS.filter((p) => avail[p.key]);
-      if (!connected.length) { board.innerHTML = '<div class="kb-empty">No boards yet — connect GitHub / Jira / Sentry in ⚙ Connections.</div>'; return; }
+      if (!connected.length) { board.innerHTML = '<div class="kb-empty">No boards yet — connect a platform on the 🧩 Integrations page.</div>'; return; }
       board.innerHTML = '';
       for (const p of connected) {
         const card = document.createElement('div'); card.className = 'stat-card'; card.id = 'sc-' + p.key;
