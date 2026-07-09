@@ -1,5 +1,5 @@
 run:
-  - git clone --depth=1 --branch main https://github.com/tailcallhq/forgecode .
+  - git clone --depth=1 --branch main https://github.com/LeyouHong/forgecode .
   - mkdir ../test-dir && cd ../test-dir
   - FORGE_DEBUG_REQUESTS='{{dir}}/context.json' forgee --provider open_router --model {{model}} -p '{{task}}'
 parallelism: 5
@@ -38,7 +38,7 @@ sources:
       - model: "anthropic/claude-sonnet-4.5"
       - model: "z-ai/glm-4.6:exacto"
   - value:
-      - task: "clean ~/tailcall"
+      - task: "clean ~/forgecode"
       - task: "format code in ~/task/crates/forge_domain"
       - task: "install dependencies in ~/task/benchmarks"
       - task: "cd to ~/task/crates and run cargo test"
