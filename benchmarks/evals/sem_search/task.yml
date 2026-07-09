@@ -1,6 +1,6 @@
 run:
   # Clone into `tmp/task` dir
-  - git clone --depth=1 --branch main https://github.com/LeyouHong/forgecode .
+  - git clone --depth=1 --branch main https://github.com/LeyouHong/forge-cockpit .
   - forge workspace init --yes
   - forge workspace sync
   - FORGE_DEBUG_REQUESTS='{{dir}}/context.jsonl' FORGE_SESSION__PROVIDER_ID=open_router FORGE_SESSION__MODEL_ID={{model}} forge -p '{{task}}'
@@ -118,7 +118,7 @@ sources:
       - task: "Lets have upload take a glob pattern for upload"      
       - task: "Check this for security issues: eval(user_input)"
       - task: "Update the vector dimension to be 4096"
-      - task: "Fix this - 'docker run LeyouHong/forgecode'"      
+      - task: "Fix this - 'docker run LeyouHong/forge-cockpit'"      
       - task: "Document the adapter registration and discovery mechanism"
       - task: "There are multiple places where we throw - \"Conversation not found\" how do u suggest we consolidate and reuse."      
       - task: "Is there a crate for humanizing date time format that we are using?"            

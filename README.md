@@ -3,10 +3,10 @@
 
 <p align="center"><code>curl -fsSL https://forgecode.dev/cli | sh</code></p>
 
-[![CI Status](https://img.shields.io/github/actions/workflow/status/LeyouHong/forgecode/ci.yml?style=for-the-badge)](https://github.com/LeyouHong/forgecode/actions)
-[![GitHub Release](https://img.shields.io/github/v/release/LeyouHong/forgecode?style=for-the-badge)](https://github.com/LeyouHong/forgecode/releases)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/LeyouHong/forge-cockpit/ci.yml?style=for-the-badge)](https://github.com/LeyouHong/forge-cockpit/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/LeyouHong/forge-cockpit?style=for-the-badge)](https://github.com/LeyouHong/forge-cockpit/releases)
 [![Discord](https://img.shields.io/discord/1044859667798568962?style=for-the-badge&cacheSeconds=120&logo=discord)](https://discord.gg/kRZBPpkgwq)
-[![CLA assistant](https://cla-assistant.io/readme/badge/LeyouHong/forgecode?style=for-the-badge)](https://cla-assistant.io/LeyouHong/forgecode)
+[![CLA assistant](https://cla-assistant.io/readme/badge/LeyouHong/forge-cockpit?style=for-the-badge)](https://cla-assistant.io/LeyouHong/forge-cockpit)
 
 ![Code-Forge Demo](https://assets.antinomy.ai/images/forge_demo_2x.gif)
 
@@ -1100,7 +1100,7 @@ MCP tools can be used as part of multi-agent workflows, allowing specialized age
 
 ## Documentation
 
-For comprehensive documentation on all features and capabilities, please visit the [documentation site](https://github.com/LeyouHong/forgecode/tree/main/docs).
+For comprehensive documentation on all features and capabilities, please visit the [documentation site](https://github.com/LeyouHong/forge-cockpit/tree/main/docs).
 
 ---
 
@@ -1111,7 +1111,7 @@ For comprehensive documentation on all features and capabilities, please visit t
 curl -fsSL https://forgecode.dev/cli | sh
 
 # Package managers
-nix run github:LeyouHong/forgecode # for latest dev branch
+nix run github:LeyouHong/forge-cockpit # for latest dev branch
 ```
 
 ---

@@ -1,4 +1,4 @@
-# Continuous integration for LeyouHong/forgecode.
+# Continuous integration for LeyouHong/forge-cockpit.
 #
 # Slimmed from the upstream multi-job pipeline down to build + test only. The
 # release / cross-target / eval / telemetry jobs were removed because they need
