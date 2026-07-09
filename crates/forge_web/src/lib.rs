@@ -186,8 +186,47 @@ where
         });
     }
 
-    axum::serve(listener, app).await?;
+    // Serve until interrupted. On shutdown we remove the auto-registered
+    // `connectors` MCP entry so it doesn't linger with a dead per-run URL in the
+    // config between serve sessions. (Racing the signal rather than using
+    // graceful shutdown avoids hanging on long-lived SSE chat streams.)
+    tokio::select! {
+        r = axum::serve(listener, app) => { r?; }
+        _ = shutdown_signal() => { unregister_connectors_mcp(&state).await; }
+    }
     Ok(())
+}
+
+/// Resolves when the process receives SIGINT (Ctrl-C) or, on Unix, SIGTERM.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        if let Ok(mut s) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            s.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! { _ = ctrl_c => {}, _ = term => {} }
+}
+
+/// Removes the auto-registered connectors MCP entry from the user config.
+async fn unregister_connectors_mcp<A: API>(state: &AppState<A>) {
+    let scope = Scope::User;
+    let _guard = state.config_lock.lock().await;
+    let mut config = state.api.read_mcp_config(Some(&scope)).await.unwrap_or_default();
+    if config
+        .mcp_servers
+        .remove(&ServerName::from("connectors".to_string()))
+        .is_some()
+    {
+        let _ = state.api.write_mcp_config(&scope, &config).await;
+    }
 }
 
 /// Registers (overwriting) the self-hosted connectors MCP endpoint in the
