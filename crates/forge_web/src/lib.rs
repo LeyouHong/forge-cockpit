@@ -14,6 +14,7 @@ mod connectors;
 mod connectors_mcp;
 mod dto;
 mod live;
+mod secret;
 
 use std::collections::HashMap;
 use std::convert::Infallible;

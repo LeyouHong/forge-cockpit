@@ -164,7 +164,8 @@ fn manifest(id: &str) -> Option<Connector> {
     manifests().into_iter().find(|c| c.id == id)
 }
 
-/// Per-connector config the user has saved, `{ "<field>": "<value>" }`.
+/// Per-connector config the user has saved, `{ "<field>": "<value>" }`. Secret
+/// values are stored encrypted; decrypting here is a no-op on plaintext.
 fn connector_config(id: &str) -> BTreeMap<String, String> {
     read_settings()
         .get("connectors")
@@ -172,7 +173,7 @@ fn connector_config(id: &str) -> BTreeMap<String, String> {
         .and_then(Value::as_object)
         .map(|m| {
             m.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), crate::secret::decrypt(s))))
                 .collect()
         })
         .unwrap_or_default()
@@ -387,6 +388,8 @@ pub(crate) async fn set_config<A: API>(
     let connector = manifest(&id).ok_or_else(|| AppError::not_found("no such connector"))?;
     let allowed: std::collections::HashSet<&str> =
         connector.config.iter().map(|f| f.id.as_str()).collect();
+    let secret_fields: std::collections::HashSet<&str> =
+        connector.config.iter().filter(|f| f.secret).map(|f| f.id.as_str()).collect();
     let mut s = read_settings();
     if !s.get("connectors").map(Value::is_object).unwrap_or(false) {
         s["connectors"] = json!({});
@@ -395,7 +398,13 @@ pub(crate) async fn set_config<A: API>(
     let mut entry = Value::Object(entry);
     for (k, v) in body.values {
         if allowed.contains(k.as_str()) {
-            entry[k] = json!(v);
+            // Secret fields are encrypted at rest; others stay plaintext.
+            let stored = if secret_fields.contains(k.as_str()) {
+                crate::secret::encrypt(&v)
+            } else {
+                v
+            };
+            entry[k] = json!(stored);
         }
     }
     s["connectors"][&id] = entry;
