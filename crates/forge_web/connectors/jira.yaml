@@ -18,7 +18,7 @@ auth:
   authorize_params:
     audience: api.atlassian.com
     prompt: consent
-  scopes: [read:jira-work, read:jira-user, offline_access]
+  scopes: [read:jira-work, read:jira-user, write:jira-work, offline_access]
   use: bearer
 headers:
   Accept: application/json
@@ -65,3 +65,54 @@ tools:
     path: /project/search
     query:
       maxResults: "50"
+  # --- write tools (need the write:jira-work scope above) ---
+  - name: add_comment
+    description: Add a comment to an issue.
+    method: POST
+    path: /issue/{key}/comment
+    body:
+      body:
+        type: doc
+        version: 1
+        content:
+          - type: paragraph
+            content:
+              - type: text
+                text: "{text}"
+    params:
+      - id: key
+        required: true
+      - id: text
+        required: true
+  - name: transition_issue
+    description: Move an issue to another status by transition id (see get_issue transitions).
+    method: POST
+    path: /issue/{key}/transitions
+    body:
+      transition:
+        id: "{transition_id}"
+    params:
+      - id: key
+        required: true
+      - id: transition_id
+        required: true
+  - name: create_issue
+    description: Create an issue in a project.
+    method: POST
+    path: /issue
+    body:
+      fields:
+        project:
+          key: "{project}"
+        issuetype:
+          name: "{issuetype}"
+        summary: "{summary}"
+    params:
+      - id: project
+        required: true
+        description: Project key, e.g. ABC
+      - id: issuetype
+        required: true
+        description: e.g. Task, Bug
+      - id: summary
+        required: true

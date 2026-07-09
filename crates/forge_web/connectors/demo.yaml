@@ -23,3 +23,18 @@ tools:
       - id: user
         required: false
         description: Optional author user id to filter by.
+  - name: create_post
+    description: Create a post (write demo — the API echoes it back with an id).
+    method: POST
+    path: /posts
+    body:
+      title: "{title}"
+      body: "{body}"
+      userId: "{user}"
+    params:
+      - id: title
+        required: true
+      - id: body
+        required: true
+      - id: user
+        required: false

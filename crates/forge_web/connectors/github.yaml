@@ -72,3 +72,48 @@ tools:
       - id: q
         required: true
         description: 'e.g. "repo:owner/name is:open is:pr review-requested:@me"'
+  # --- write tools (the `repo` scope above already grants write) ---
+  - name: create_issue
+    description: Open a new issue in a repository.
+    method: POST
+    path: /repos/{owner}/{repo}/issues
+    body:
+      title: "{title}"
+      body: "{body}"
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+      - id: title
+        required: true
+      - id: body
+        required: false
+  - name: comment_issue
+    description: Add a comment to an issue or pull request.
+    method: POST
+    path: /repos/{owner}/{repo}/issues/{number}/comments
+    body:
+      body: "{body}"
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+      - id: number
+        required: true
+      - id: body
+        required: true
+  - name: close_issue
+    description: Close an issue.
+    method: PATCH
+    path: /repos/{owner}/{repo}/issues/{number}
+    body:
+      state: closed
+    params:
+      - id: owner
+        required: true
+      - id: repo
+        required: true
+      - id: number
+        required: true

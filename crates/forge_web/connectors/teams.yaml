@@ -14,7 +14,7 @@ auth:
   client_id: "{client_id}"
   authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
   token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
-  scopes: [Chat.Read, ChannelMessage.Read.All, Team.ReadBasic.All, offline_access]
+  scopes: [Chat.Read, Chat.ReadWrite, ChannelMessage.Read.All, ChannelMessage.Send, Team.ReadBasic.All, offline_access]
   use: bearer
 config:
   - id: client_id
@@ -37,4 +37,31 @@ tools:
       - id: team_id
         required: true
       - id: channel_id
+        required: true
+  # --- write tools (need the ChannelMessage.Send / Chat.ReadWrite scopes above) ---
+  - name: send_channel_message
+    description: Post a message to a channel.
+    method: POST
+    path: /teams/{team_id}/channels/{channel_id}/messages
+    body:
+      body:
+        content: "{message}"
+    params:
+      - id: team_id
+        required: true
+      - id: channel_id
+        required: true
+      - id: message
+        required: true
+  - name: send_chat_message
+    description: Send a message in a 1:1 or group chat.
+    method: POST
+    path: /chats/{chat_id}/messages
+    body:
+      body:
+        content: "{message}"
+    params:
+      - id: chat_id
+        required: true
+      - id: message
         required: true
