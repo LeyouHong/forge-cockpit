@@ -1,5 +1,5 @@
 <h1 align="center">⚒️ Forge: AI-Enhanced Terminal Development Environment</h1>
-<p align="center">A comprehensive coding agent that integrates AI capabilities with your development environment</p>
+<p align="center">A comprehensive coding agent that integrates AI capabilities with your development environment — in your terminal <em>and</em> a browser <strong>cockpit</strong> with dashboards and one-click integrations</p>
 
 <p align="center"><code>curl -fsSL https://forgecode.dev/cli | sh</code></p>
 
@@ -22,6 +22,7 @@
   - [Interactive Mode (TUI)](#interactive-mode-tui)
   - [One-Shot CLI Mode](#one-shot-cli-mode)
   - [ZSH Plugin Mode (`:` prefix)](#zsh-plugin-mode--prefix)
+- [Web Cockpit (`forge serve`)](#web-cockpit-forge-serve)
 - [ZSH Plugin: The `:` Prefix System](#zsh-plugin-the--prefix-system)
   - [Agents](#agents)
   - [Sending Prompts](#sending-prompts)
@@ -223,6 +224,61 @@ Install the ZSH plugin once with `forge setup`, then use `:` commands directly a
 ```
 
 See the full [ZSH Plugin reference below](#zsh-plugin-the--prefix-system) for all commands and aliases.
+
+> Prefer a browser? There's also a fourth way to drive the same agent — the **[Web Cockpit](#web-cockpit-forge-serve)** (`forge serve`), with dashboards and one-click integrations.
+
+---
+
+## Web Cockpit (`forge serve`)
+
+Beyond the terminal, Forge ships a local **browser cockpit** — the same agent driven from a web UI, plus read-only dashboards and one-click integrations. This is what gives *forge-cockpit* its name.
+
+```bash
+forge serve                    # start the cockpit, opens your browser
+forge serve --port 8080        # pick a port
+forge serve --no-open          # don't auto-open the browser
+```
+
+It prints a loopback URL carrying a per-run token:
+
+```
+Forge web UI ready. Open:
+  http://127.0.0.1:8080/?token=<uuid>
+```
+
+> **Security:** the server binds to `127.0.0.1` and every `/api/*` route is gated by that random, per-run token. Anyone with the URL can run commands and edit files as you — keep it private; it's valid only for that session.
+
+**What's inside:**
+
+- **💬 Chat** — the full agent in a browser: streaming responses, collapsible reasoning / tool-call chips, image paste. Turns are **resumable**, so refreshing the page mid-run re-attaches to the agent's progress instead of losing it.
+
+- **📋 Dashboard** — read-only KPI boards over your connected platforms, fetched directly from each platform's API (no agent round-trip):
+
+  | Platform | At a glance |
+  |---|---|
+  | **GitHub** | open issues / PRs / assigned-to-me / review-requested — *repo is pickable* |
+  | **GitHub Actions** | latest run status on the default branch |
+  | **Jira** | To Do / In Progress / Done / assigned-to-me — *project is pickable* |
+  | **Sentry** | unresolved errors / warnings / new in 24h |
+  | **Google Calendar** | today / this week / next 7 days |
+  | **Slack** | channels / DMs |
+  | **Gmail** | unread / inbox total |
+
+- **🧩 Integrations** — one-click connect to MCP servers so the agent can *act* on those platforms (read **and** write). Built-in cards:
+
+  | Integration | Credential |
+  |---|---|
+  | **GitHub** | Personal Access Token |
+  | **Jira** | site URL + email + API token (runs `mcp-atlassian`) |
+  | **Sentry** | user auth token |
+  | **Slack** | Bot User OAuth Token (`xoxb-…`), with an optional "enable posting" toggle |
+  | **Gmail** | address + [App Password](https://myaccount.google.com/apppasswords) (IMAP/SMTP; 2-Step Verification required) |
+  | **Google Calendar** | private iCal URL (read-only) |
+  | *Custom* | any stdio (`command` / `args` / `env`) or HTTP MCP server |
+
+  Connecting writes an entry to `~/forge/.mcp.json` and reloads MCP live — the agent immediately gains that platform's tools (e.g. reading and sending Slack messages or email).
+
+- **⏱ Activity & TODO** — running pipelines/turns, recent runs, and a small personal TODO list the agent can pick up and complete.
 
 ---
 
