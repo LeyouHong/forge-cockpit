@@ -1,6 +1,8 @@
 name: release
 
-# Publishes forge-cockpit to npm when you push a version tag (e.g. v0.1.0).
+# Publishes forge-cockpit to npm when you push a release tag (e.g. release-v0.1.0).
+# A dedicated `release-v*` prefix is used so it never collides with the many
+# upstream `v*` tags inherited by this fork.
 # Each platform is built on a native runner (no cross-compilation toolchains),
 # then packed into a platform package; the launcher is published last.
 #
@@ -9,7 +11,7 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      - "release-v*"
   workflow_dispatch:
     inputs:
       version:
@@ -60,7 +62,7 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#release-v}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Pack platform package
@@ -103,7 +105,7 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#release-v}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish platform packages
