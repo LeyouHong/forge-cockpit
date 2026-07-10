@@ -118,8 +118,16 @@ jobs:
       - name: Publish launcher (forge-cockpit)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VER: ${{ steps.ver.outputs.version }}
         run: |
-          # Keep launcher version in lockstep with the tag.
-          npm version --no-git-tag-version --allow-same-version "${{ steps.ver.outputs.version }}" \
-            --prefix npm/forge-cockpit
-          npm publish npm/forge-cockpit --access public
+          # Pin the launcher AND every platform optionalDependency to the release
+          # version, so `npm version` alone can't leave the deps stale.
+          node -e '
+            const fs = require("fs"), p = "npm/forge-cockpit/package.json";
+            const v = process.env.VER;
+            const j = JSON.parse(fs.readFileSync(p, "utf8"));
+            j.version = v;
+            for (const k of Object.keys(j.optionalDependencies || {})) j.optionalDependencies[k] = v;
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          '
+          npm publish ./npm/forge-cockpit --access public

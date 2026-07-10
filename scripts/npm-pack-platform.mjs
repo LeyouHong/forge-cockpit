@@ -38,7 +38,7 @@ const pkg = {
   version,
   description: `forge-cockpit binary for ${os}-${cpu}`,
   license: 'Apache-2.0',
-  repository: { type: 'git', url: 'github:LeyouHong/forge-cockpit' },
+  repository: { type: 'git', url: 'git+https://github.com/LeyouHong/forge-cockpit.git' },
   os: [os],
   cpu: [cpu],
   // No `bin` field: the launcher resolves bin/<exe> directly via require.resolve.
