@@ -89,7 +89,10 @@ impl ProviderId {
     /// This includes all providers defined as constants in this implementation.
     pub fn built_in_providers() -> &'static [ProviderId] {
         &[
-            ProviderId::FORGE,
+            // NOTE: the hosted Forge (forgecode) aggregator is intentionally not
+            // offered as a login option in this fork — bring your own provider key.
+            // `FORGE_SERVICES` below is kept: it powers internal semantic-search
+            // embeddings, not user model access.
             ProviderId::OPENAI,
             ProviderId::OPEN_ROUTER,
             ProviderId::REQUESTY,
