@@ -1886,6 +1886,26 @@
         for (const r of (d.repos || [])) { if (r !== current) add(r, r, false); }
       }).catch(() => {});
     }
+    // Jira card: pick which project the board scopes to (or all projects).
+    function makeJiraPicker(card, current) {
+      const sub = card.querySelector('.sc-sub'); sub.textContent = '';
+      const sel = document.createElement('select'); sel.className = 'repo-select';
+      const add = (val, label, selected) => { const o = document.createElement('option'); o.value = val; o.textContent = label; if (selected) o.selected = true; sel.appendChild(o); };
+      add('__all__', 'All projects', !current);
+      if (current) add(current, current, true);
+      sub.appendChild(sel);
+      const suf = document.createElement('span'); suf.textContent = ' · last 30d'; sub.appendChild(suf);
+      sel.onmousedown = (e) => e.stopPropagation();
+      sel.onchange = async () => {
+        const v = sel.value === '__all__' ? '' : sel.value;
+        sel.disabled = true;
+        await api('/api/jira/project', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: v }) });
+        loadStats({ key: 'jira' });
+      };
+      api('/api/jira/projects').then((r) => r.json()).then((d) => {
+        for (const pr of (d.projects || [])) { if (pr.key !== current) add(pr.key, pr.key + ' — ' + pr.name, false); }
+      }).catch(() => {});
+    }
     async function loadStats(p) {
       const card = $('sc-' + p.key); if (!card) return;
       const tiles = card.querySelector('.sc-tiles');
@@ -1895,6 +1915,7 @@
       card.querySelector('.sc-sub').textContent = d.subtitle || '';
       if (d.url) { const h = card.querySelector('.sc-head'); h.setAttribute('role', 'link'); h.onclick = () => window.open(d.url, '_blank', 'noopener'); }
       if (p.key === 'github' && d.repo) makeRepoPicker(card, d.repo);
+      if (p.key === 'jira') makeJiraPicker(card, d.project || '');
       tiles.innerHTML = '';
       for (const st of (d.stats || [])) {
         const t = document.createElement(st.url ? 'a' : 'div'); t.className = 'stat-tile';

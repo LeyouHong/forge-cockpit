@@ -123,6 +123,8 @@ where
         .route("/api/board/gmail", get(board::gmail_board::<A>))
         .route("/api/github/repos", get(board::github_repos::<A>))
         .route("/api/github/repo", put(board::set_github_repo::<A>))
+        .route("/api/jira/projects", get(board::jira_projects::<A>))
+        .route("/api/jira/project", put(board::set_jira_project::<A>))
         .route("/api/gcal", get(board::get_gcal::<A>).put(board::set_gcal::<A>))
         .route("/api/todos", get(board::list_todos::<A>).post(board::add_todo::<A>))
         .route(

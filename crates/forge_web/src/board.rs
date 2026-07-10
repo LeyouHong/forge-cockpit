@@ -721,12 +721,21 @@ pub(crate) async fn jira_board<A: API>(
     let base = url.trim_end_matches('/');
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
 
+    // Optional project scope (like the GitHub repo pin). When set, every JQL is
+    // prefixed with `project = "KEY" AND`.
+    let project = read_settings()
+        .get("jira_project")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    let proj_clause = project.as_ref().map(|p| format!("project = \"{p}\" AND ")).unwrap_or_default();
+
     let cl = client();
     // Jira Cloud requires the (newer) /search/jql endpoint with a *bounded* JQL.
-    let jql = "updated >= -30d ORDER BY updated DESC";
+    let jql = format!("{proj_clause}updated >= -30d ORDER BY updated DESC");
     let resp = cl
         .get(format!("{base}/rest/api/3/search/jql"))
-        .query(&[("jql", jql), ("maxResults", "50"), ("fields", "summary,status")])
+        .query(&[("jql", jql.as_str()), ("maxResults", "50"), ("fields", "summary,status")])
         .header("Authorization", format!("Basic {auth}"))
         .header("Accept", "application/json")
         .send()
@@ -752,7 +761,7 @@ pub(crate) async fn jira_board<A: API>(
         .header("Authorization", format!("Basic {auth}"))
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .json(&json!({ "jql": "assignee = currentUser() AND statusCategory != Done" }))
+        .json(&json!({ "jql": format!("{proj_clause}assignee = currentUser() AND statusCategory != Done") }))
         .send()
         .await
         .ok();
@@ -763,7 +772,8 @@ pub(crate) async fn jira_board<A: API>(
 
     Ok(Json(json!({
         "url": format!("{base}/issues"),
-        "subtitle": "last 30 days",
+        "subtitle": match &project { Some(p) => format!("{p} · last 30d"), None => "all projects · last 30d".to_string() },
+        "project": project.unwrap_or_default(),
         "stats": [
             { "label": "To Do", "value": todo },
             { "label": "In Progress", "value": prog },
@@ -771,6 +781,61 @@ pub(crate) async fn jira_board<A: API>(
             { "label": "Assigned to me", "value": mine },
         ]
     })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct JiraProjectBody {
+    project: Option<String>,
+}
+
+/// PUT /api/jira/project — set (or clear with empty) the pinned project scope.
+pub(crate) async fn set_jira_project<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<JiraProjectBody>,
+) -> Json<Value> {
+    let mut s = read_settings();
+    match body.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => { s["jira_project"] = json!(p); }
+        None => { if let Value::Object(m) = &mut s { m.remove("jira_project"); } }
+    }
+    write_settings(&s);
+    Json(json!({ "ok": true }))
+}
+
+/// GET /api/jira/projects — projects on the site, for the picker.
+pub(crate) async fn jira_projects<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let srv = server(&state, "jira").await.ok_or_else(|| AppError::bad_request("Jira not connected"))?;
+    let url = stdio_env(&srv, "JIRA_URL").ok_or_else(|| AppError::bad_request("no JIRA_URL"))?;
+    let email = stdio_env(&srv, "JIRA_USERNAME").unwrap_or_default();
+    let token = stdio_env(&srv, "JIRA_API_TOKEN").unwrap_or_default();
+    let base = url.trim_end_matches('/');
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
+    let cl = client();
+    let v: Value = cl
+        .get(format!("{base}/rest/api/3/project/search"))
+        .query(&[("maxResults", "100"), ("orderBy", "lastIssueUpdatedTime")])
+        .header("Authorization", format!("Basic {auth}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("jira: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("jira: {e}")))?;
+    let projects: Vec<Value> = v["values"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| {
+                    let key = p["key"].as_str()?;
+                    Some(json!({ "key": key, "name": p["name"].as_str().unwrap_or(key) }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Json(json!({ "projects": projects })))
 }
 
 // ---------------------------------------------------------------------------
