@@ -1,9 +1,13 @@
 # forge-cockpit
 
 An AI coding agent with a **browser cockpit** — the same agent you drive from the
-terminal, plus read-only platform dashboards and one-click MCP integrations
-(GitHub · Jira · Sentry · Slack · Gmail · Google Calendar). A fork of
-[Forge](https://forgecode.dev), Apache-2.0.
+terminal, plus platform dashboards and one-click integrations
+(GitHub · Jira · Sentry · Slack · Gmail · Google Calendar). **Bring your own model
+API key.** A fork of [Forge](https://github.com/antinomyhq/forge), Apache-2.0.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/cockpit.png" alt="forge-cockpit web UI" width="820">
+</p>
 
 ## Install
 
@@ -13,26 +17,47 @@ npm install -g forge-cockpit
 npx forge-cockpit --help
 ```
 
-On install, the right prebuilt binary for your platform (macOS arm64, Linux
-x64/arm64, Windows x64) is downloaded from the matching GitHub Release —
-nothing is compiled on your machine. (Install with scripts enabled, i.e. not
-`--ignore-scripts`.)
+On install, the prebuilt binary for your platform (macOS arm64, Linux x64/arm64,
+Windows x64) is downloaded from the matching GitHub Release — nothing is compiled
+on your machine. (Install with scripts enabled, i.e. not `--ignore-scripts`.)
 
 ## Bring your own key
 
-forge-cockpit does **not** ship or default to any hosted account. On first run,
-log in with **your own** model provider key:
+No hosted account is bundled or required. On first run, log in with **your own**
+model provider key:
 
 ```bash
 forge-cockpit provider login     # pick OpenAI / Anthropic / OpenRouter / …
-forge-cockpit                    # start the interactive agent
-forge-cockpit serve              # start the browser cockpit
+forge-cockpit                    # interactive agent in your terminal
+forge-cockpit serve              # open the browser cockpit
 ```
+
+## The cockpit
+
+`forge-cockpit serve` opens a local browser UI (bound to `127.0.0.1`, gated by a
+per-run token):
+
+- **💬 Chat** — the full agent: streaming responses, tool-call chips, resumable
+  turns (refresh mid-run without losing progress).
+- **📋 Dashboard** — read-only boards over your connected platforms.
+- **🧩 Integrations** — one-click connect to MCP servers (read **and** write).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/dashboard.png" alt="Dashboard" width="820">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/integrations.png" alt="Integrations" width="820">
+</p>
+
+## Docs & source
+
+Full documentation, architecture, and build-from-source instructions:
+**https://github.com/LeyouHong/forge-cockpit**
 
 ## Notes
 
 - **Linux:** the binary dynamically links OpenSSL (`libssl`) for IMAP email
-  support. It's present on virtually all modern distros; install `libssl3` if
-  missing.
-- License: Apache-2.0. This is a community fork; "Forge" and "forgecode" are
-  trademarks of their respective owners and are not affiliated with this package.
+  support; present on virtually all distros (`libssl3` if missing).
+- **Intel Mac (x64):** no prebuilt binary yet — build from source.
+- License: Apache-2.0. A community fork; "Forge" and "forgecode" are trademarks
+  of their respective owners, and this package is not affiliated with them.
