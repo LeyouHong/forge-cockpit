@@ -1,0 +1,125 @@
+name: release
+
+# Publishes forge-cockpit to npm when you push a version tag (e.g. v0.1.0).
+# Each platform is built on a native runner (no cross-compilation toolchains),
+# then packed into a platform package; the launcher is published last.
+#
+# Requires repo secret NPM_TOKEN (an npm automation token with publish rights).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without leading v), e.g. 0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.pkg }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,        target: aarch64-apple-darwin,       pkg: darwin-arm64, npm_os: darwin, npm_cpu: arm64 }
+          - { os: macos-14,        target: x86_64-apple-darwin,        pkg: darwin-x64,   npm_os: darwin, npm_cpu: x64 }
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,   pkg: linux-x64,    npm_os: linux,  npm_cpu: x64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, pkg: linux-arm64,  npm_os: linux,  npm_cpu: arm64 }
+          - { os: windows-latest,  target: x86_64-pc-windows-msvc,     pkg: win32-x64,    npm_os: win32,  npm_cpu: x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Linux uses native-tls (for the Gmail IMAP board) -> needs OpenSSL to build.
+      - name: Install OpenSSL (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build release binary
+        run: cargo build --release -p forge_main --target ${{ matrix.target }}
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack platform package
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/forge"
+          [ "${{ matrix.npm_os }}" = "win32" ] && BIN="${BIN}.exe"
+          node scripts/npm-pack-platform.mjs \
+            "${{ matrix.pkg }}" "${{ matrix.npm_os }}" "${{ matrix.npm_cpu }}" \
+            "$BIN" "${{ steps.ver.outputs.version }}" npm/dist
+
+      - name: Upload packed package
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.pkg }}
+          path: npm/dist/
+
+  publish:
+    name: publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: npm/dist
+          merge-multiple: true
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for dir in npm/dist/forge-cockpit-*/; do
+            echo "publishing $dir"
+            npm publish "$dir" --access public
+          done
+
+      - name: Publish launcher (forge-cockpit)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Keep launcher version in lockstep with the tag.
+          npm version --no-git-tag-version --allow-same-version "${{ steps.ver.outputs.version }}" \
+            --prefix npm/forge-cockpit
+          npm publish npm/forge-cockpit --access public

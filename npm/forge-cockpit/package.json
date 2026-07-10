@@ -1,0 +1,26 @@
+{
+  "name": "forge-cockpit",
+  "version": "0.1.0",
+  "description": "Forge Cockpit — an AI coding agent with a browser cockpit (dashboards + one-click integrations). Bring your own model API key. A fork of Forge (Apache-2.0).",
+  "keywords": ["ai", "agent", "coding-agent", "cli", "mcp", "dashboard", "forge"],
+  "homepage": "https://github.com/LeyouHong/forge-cockpit#readme",
+  "repository": { "type": "git", "url": "github:LeyouHong/forge-cockpit" },
+  "license": "Apache-2.0",
+  "bin": {
+    "forge-cockpit": "bin/forge-cockpit.js"
+  },
+  "files": [
+    "bin/forge-cockpit.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "forge-cockpit-darwin-arm64": "0.1.0",
+    "forge-cockpit-darwin-x64": "0.1.0",
+    "forge-cockpit-linux-x64": "0.1.0",
+    "forge-cockpit-linux-arm64": "0.1.0",
+    "forge-cockpit-win32-x64": "0.1.0"
+  }
+}

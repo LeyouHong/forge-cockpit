@@ -51,3 +51,7 @@ scripts/__pycache__/
 
 # Local generated docs (not committed)
 forge-framework-guide.pdf
+
+# npm packaging build output
+npm/dist/
+npm/**/node_modules/
