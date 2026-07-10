@@ -350,8 +350,45 @@ pub(crate) async fn platforms<A: API>(State(state): State<AppState<A>>) -> Json<
     let sentry = server(&state, "sentry").await.as_ref().and_then(|s| stdio_env(s, "SENTRY_ACCESS_TOKEN")).is_some();
     let gcal = read_settings().get("gcal_ics").and_then(|v| v.as_str()).is_some();
     let slack = server(&state, "slack").await.as_ref().and_then(slack_token).is_some();
+    let gmail = server(&state, "gmail").await.as_ref().and_then(|s| stdio_env(s, "EMAIL_USER")).is_some();
     // GitHub Actions reuses the GitHub connection.
-    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack }))
+    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack, "gmail": gmail }))
+}
+
+/// GET /api/board/gmail — inbox stats over IMAP using the app password from the
+/// connected mail MCP server. IMAP is blocking, so it runs on a blocking thread.
+pub(crate) async fn gmail_board<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let srv = server(&state, "gmail").await.ok_or_else(|| AppError::bad_request("Gmail not connected"))?;
+    let host = stdio_env(&srv, "IMAP_HOST").unwrap_or_else(|| "imap.gmail.com".to_string());
+    let port: u16 = stdio_env(&srv, "IMAP_PORT").and_then(|p| p.parse().ok()).unwrap_or(993);
+    let user = stdio_env(&srv, "EMAIL_USER").ok_or_else(|| AppError::bad_request("no Gmail user"))?;
+    let pass = stdio_env(&srv, "EMAIL_PASS").ok_or_else(|| AppError::bad_request("no Gmail password"))?;
+    let addr = user.clone();
+
+    let (unread, total) = tokio::task::spawn_blocking(move || -> Result<(usize, usize), String> {
+        let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+        let client = imap::connect((host.as_str(), port), host.as_str(), &tls).map_err(|e| e.to_string())?;
+        let mut session = client.login(&user, &pass).map_err(|(e, _)| e.to_string())?;
+        let mailbox = session.select("INBOX").map_err(|e| e.to_string())?;
+        let total = mailbox.exists as usize;
+        let unread = session.search("UNSEEN").map(|s| s.len()).unwrap_or(0);
+        let _ = session.logout();
+        Ok((unread, total))
+    })
+    .await
+    .map_err(|e| AppError::bad_request(format!("gmail: {e}")))?
+    .map_err(|e| AppError::bad_request(format!("gmail: {e}")))?;
+
+    Ok(Json(json!({
+        "url": "https://mail.google.com/mail/u/0/#inbox",
+        "subtitle": addr,
+        "stats": [
+            { "label": "Unread", "value": unread },
+            { "label": "Inbox", "value": total },
+        ]
+    })))
 }
 
 /// GET /api/board/slack — workspace stats via the Slack Web API using the bot

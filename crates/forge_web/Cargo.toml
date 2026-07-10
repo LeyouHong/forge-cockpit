@@ -19,6 +19,8 @@ open.workspace = true
 base64.workspace = true
 reqwest.workspace = true
 axum = "0.8"
+imap = "2.4"
+native-tls = "0.2"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
