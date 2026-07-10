@@ -62,7 +62,19 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
 
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#release-v}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release binary
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
         run: cargo build --release -p forge_main --target ${{ matrix.target }}
 
       - name: Stage binary as a release asset
