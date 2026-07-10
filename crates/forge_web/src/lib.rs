@@ -119,6 +119,7 @@ where
         .route("/api/board/jira", get(board::jira_board::<A>))
         .route("/api/board/sentry", get(board::sentry_board::<A>))
         .route("/api/board/gcal", get(board::gcal_board::<A>))
+        .route("/api/board/slack", get(board::slack_board::<A>))
         .route("/api/gcal", get(board::get_gcal::<A>).put(board::set_gcal::<A>))
         .route("/api/todos", get(board::list_todos::<A>).post(board::add_todo::<A>))
         .route(

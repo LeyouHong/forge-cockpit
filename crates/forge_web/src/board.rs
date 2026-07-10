@@ -340,13 +340,82 @@ async fn gh_count(cl: &reqwest::Client, pat: &str, q: &str) -> i64 {
 // GET /api/board/platforms — which boards are available
 // ---------------------------------------------------------------------------
 
+fn slack_token(server: &McpServerConfig) -> Option<String> {
+    stdio_env(server, "SLACK_MCP_XOXB_TOKEN").or_else(|| stdio_env(server, "SLACK_MCP_XOXP_TOKEN"))
+}
+
 pub(crate) async fn platforms<A: API>(State(state): State<AppState<A>>) -> Json<Value> {
     let gh = server(&state, "github").await.as_ref().and_then(github_pat).is_some();
     let jira = server(&state, "jira").await.as_ref().and_then(|s| stdio_env(s, "JIRA_URL")).is_some();
     let sentry = server(&state, "sentry").await.as_ref().and_then(|s| stdio_env(s, "SENTRY_ACCESS_TOKEN")).is_some();
     let gcal = read_settings().get("gcal_ics").and_then(|v| v.as_str()).is_some();
+    let slack = server(&state, "slack").await.as_ref().and_then(slack_token).is_some();
     // GitHub Actions reuses the GitHub connection.
-    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal }))
+    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack }))
+}
+
+/// GET /api/board/slack — workspace stats via the Slack Web API using the bot
+/// (or user) token from the connected MCP server.
+pub(crate) async fn slack_board<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let srv = server(&state, "slack").await.ok_or_else(|| AppError::bad_request("Slack not connected"))?;
+    let token = slack_token(&srv).ok_or_else(|| AppError::bad_request("no Slack token"))?;
+    let cl = client();
+    let bearer = format!("Bearer {token}");
+
+    let auth: Value = cl
+        .get("https://slack.com/api/auth.test")
+        .header("Authorization", &bearer)
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("slack: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("slack: {e}")))?;
+    if !auth["ok"].as_bool().unwrap_or(false) {
+        return Err(AppError::bad_request(format!(
+            "slack: {}",
+            auth["error"].as_str().unwrap_or("auth failed")
+        )));
+    }
+    let team = auth["team"].as_str().unwrap_or("Slack").to_string();
+    let url = auth["url"].as_str().unwrap_or("https://slack.com").to_string();
+
+    // Conversations the bot/user belongs to, bucketed into channels vs DMs.
+    let convs: Value = cl
+        .get("https://slack.com/api/users.conversations")
+        .query(&[
+            ("types", "public_channel,private_channel,mpim,im"),
+            ("exclude_archived", "true"),
+            ("limit", "1000"),
+        ])
+        .header("Authorization", &bearer)
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("slack: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("slack: {e}")))?;
+    let (mut channels, mut dms) = (0, 0);
+    if let Some(list) = convs["channels"].as_array() {
+        for c in list {
+            if c["is_im"].as_bool().unwrap_or(false) {
+                dms += 1;
+            } else {
+                channels += 1;
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "url": url,
+        "subtitle": format!("workspace: {team}"),
+        "stats": [
+            { "label": "Channels", "value": channels },
+            { "label": "DMs", "value": dms },
+        ]
+    })))
 }
 
 // ---------------------------------------------------------------------------
