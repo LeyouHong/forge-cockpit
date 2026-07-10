@@ -53,7 +53,7 @@ The underlying agent engine, tools, and provider support are inherited from Forg
 npm install -g forge-cockpit     # or run once with: npx forge-cockpit
 ```
 
-The right prebuilt binary for your platform (macOS / Linux / Windows, x64 / arm64) is pulled in automatically — nothing is compiled on your machine. Prefer building yourself? See [Build from source](#build-from-source).
+On install, the right prebuilt binary for your platform (macOS arm64, Linux x64/arm64, Windows x64) is downloaded from the matching GitHub Release — nothing is compiled on your machine. Prefer building yourself, or on an Intel Mac? See [Build from source](#build-from-source).
 
 > On Linux the binary dynamically links OpenSSL (`libssl`) for IMAP email support; install `libssl3` if it's missing (present on virtually all modern distros).
 

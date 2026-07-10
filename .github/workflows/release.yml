@@ -1,11 +1,12 @@
 name: release
 
-# Publishes forge-cockpit to npm when you push a release tag (e.g. release-v0.1.0).
-# A dedicated `release-v*` prefix is used so it never collides with the many
-# upstream `v*` tags inherited by this fork.
-# Each platform is built on a native runner (no cross-compilation toolchains),
-# then packed into a platform package; the launcher is published last.
+# Single-package distribution. On a `release-v*` tag:
+#   1. build the `forge` binary for each platform (native runners, no cross)
+#   2. attach the binaries to a GitHub Release
+#   3. publish ONE npm package (`forge-cockpit`) whose postinstall downloads the
+#      matching binary from that release.
 #
+# The `release-v*` prefix avoids the many upstream `v*` tags this fork inherited.
 # Requires repo secret NPM_TOKEN (an npm automation token with publish rights).
 
 on:
@@ -15,11 +16,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (without leading v), e.g. 0.1.0"
+        description: "Version to publish (without leading v), e.g. 0.1.2"
         required: true
 
 permissions:
-  contents: read
+  contents: write # needed to create the GitHub Release
 
 jobs:
   build:
@@ -28,10 +29,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,        target: aarch64-apple-darwin,       pkg: darwin-arm64, npm_os: darwin, npm_cpu: arm64 }
-          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,   pkg: linux-x64,    npm_os: linux,  npm_cpu: x64 }
+          - { os: macos-14,         target: aarch64-apple-darwin,      pkg: darwin-arm64, npm_os: darwin, npm_cpu: arm64 }
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  pkg: linux-x64,    npm_os: linux,  npm_cpu: x64 }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, pkg: linux-arm64,  npm_os: linux,  npm_cpu: arm64 }
-          - { os: windows-latest,  target: x86_64-pc-windows-msvc,     pkg: win32-x64,    npm_os: win32,  npm_cpu: x64 }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    pkg: win32-x64,    npm_os: win32,  npm_cpu: x64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +47,6 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Linux uses native-tls (for the Gmail IMAP board) -> needs OpenSSL to build.
       - name: Install OpenSSL (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
@@ -57,7 +57,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # aws-lc-sys (pulled in via the AWS Bedrock provider) needs nasm on Windows.
+      # aws-lc-sys (via the AWS Bedrock provider) needs nasm on Windows.
       - name: Install nasm (windows)
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
@@ -65,33 +65,24 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p forge_main --target ${{ matrix.target }}
 
-      - name: Resolve version
-        id: ver
+      - name: Stage binary as a release asset
         shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+          if [ "${{ matrix.npm_os }}" = "win32" ]; then
+            cp "target/${{ matrix.target }}/release/forge.exe" "dist/forge-cockpit-${{ matrix.pkg }}.exe"
           else
-            echo "version=${GITHUB_REF_NAME#release-v}" >> "$GITHUB_OUTPUT"
+            cp "target/${{ matrix.target }}/release/forge" "dist/forge-cockpit-${{ matrix.pkg }}"
           fi
 
-      - name: Pack platform package
-        shell: bash
-        run: |
-          BIN="target/${{ matrix.target }}/release/forge"
-          [ "${{ matrix.npm_os }}" = "win32" ] && BIN="${BIN}.exe"
-          node scripts/npm-pack-platform.mjs \
-            "${{ matrix.pkg }}" "${{ matrix.npm_os }}" "${{ matrix.npm_cpu }}" \
-            "$BIN" "${{ steps.ver.outputs.version }}" npm/dist
-
-      - name: Upload packed package
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pkg-${{ matrix.pkg }}
-          path: npm/dist/
+          name: bin-${{ matrix.pkg }}
+          path: dist/*
 
-  publish:
-    name: publish to npm
+  release:
+    name: release + publish
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -101,51 +92,47 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Download platform packages
+      - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: pkg-*
-          path: npm/dist
+          pattern: bin-*
+          path: dist
           merge-multiple: true
 
-      - name: Resolve version
+      - name: Resolve version + tag
         id: ver
         shell: bash
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            V="${{ github.event.inputs.version }}"
           else
-            echo "version=${GITHUB_REF_NAME#release-v}" >> "$GITHUB_OUTPUT"
+            V="${GITHUB_REF_NAME#release-v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=release-v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "forge-cockpit ${{ steps.ver.outputs.version }}" \
+              --notes "Prebuilt binaries for \`forge-cockpit\`. Install with \`npm i -g forge-cockpit\`."
           fi
 
-      - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          # Space out publishes: bursts of similarly-named packages trip npm's
-          # spam detection (403). A pause between each avoids it.
-          first=1
-          for dir in npm/dist/forge-cockpit-*/; do
-            [ "$first" = 1 ] || sleep 40
-            first=0
-            echo "publishing $dir"
-            npm publish "$dir" --access public
-          done
-
-      - name: Publish launcher (forge-cockpit)
+      - name: Publish npm package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VER: ${{ steps.ver.outputs.version }}
         run: |
-          sleep 40   # keep clear of npm's anti-spam velocity check
-          # Pin the launcher AND every platform optionalDependency to the release
-          # version, so `npm version` alone can't leave the deps stale.
           node -e '
             const fs = require("fs"), p = "npm/forge-cockpit/package.json";
-            const v = process.env.VER;
             const j = JSON.parse(fs.readFileSync(p, "utf8"));
-            j.version = v;
-            for (const k of Object.keys(j.optionalDependencies || {})) j.optionalDependencies[k] = v;
+            j.version = process.env.VER;
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
           '
           npm publish ./npm/forge-cockpit --access public
