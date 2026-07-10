@@ -306,6 +306,76 @@ async fn resolve_repo(cl: &reqwest::Client, pat: &str, git_root: &Path) -> Optio
         .map(|(_, owner, repo)| (owner.clone(), repo.clone()))
 }
 
+/// The repo the GitHub boards should show: an explicit `github_repo` override
+/// from settings ("owner/name") if set, otherwise auto-detected from the git
+/// remotes of the directory `forge serve` runs in.
+async fn selected_repo<A: API>(
+    state: &AppState<A>,
+    cl: &reqwest::Client,
+    pat: &str,
+) -> Option<(String, String)> {
+    if let Some(full) = read_settings().get("github_repo").and_then(|v| v.as_str())
+        && let Some((owner, repo)) = full.split_once('/')
+        && !owner.is_empty()
+        && !repo.is_empty()
+    {
+        return Some((owner.to_string(), repo.to_string()));
+    }
+    let root = repo_root(state).await?;
+    resolve_repo(cl, pat, &root).await
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RepoBody {
+    repo: Option<String>,
+}
+
+/// PUT /api/github/repo — set (or clear with empty) the pinned repo override.
+pub(crate) async fn set_github_repo<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<RepoBody>,
+) -> Json<Value> {
+    let mut s = read_settings();
+    match body.repo.as_deref().map(str::trim).filter(|r| r.contains('/') && !r.is_empty()) {
+        Some(r) => { s["github_repo"] = json!(r); }
+        None => { if let Value::Object(m) = &mut s { m.remove("github_repo"); } }
+    }
+    write_settings(&s);
+    Json(json!({ "ok": true }))
+}
+
+/// GET /api/github/repos — the repos the token can see, for the picker.
+pub(crate) async fn github_repos<A: API>(
+    State(state): State<AppState<A>>,
+) -> Result<Json<Value>, AppError> {
+    let pat = server(&state, "github")
+        .await
+        .as_ref()
+        .and_then(github_pat)
+        .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
+    let cl = client();
+    let v: Value = cl
+        .get("https://api.github.com/user/repos")
+        .query(&[
+            ("per_page", "100"),
+            ("sort", "pushed"),
+            ("affiliation", "owner,collaborator,organization_member"),
+        ])
+        .header("Authorization", format!("Bearer {pat}"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| AppError::bad_request(format!("github: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::bad_request(format!("github: {e}")))?;
+    let repos: Vec<String> = v
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| r["full_name"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Ok(Json(json!({ "repos": repos })))
+}
+
 async fn repo_root<A: API>(state: &AppState<A>) -> Option<std::path::PathBuf> {
     let cwd = state.api.environment().cwd;
     let out = Command::new("git")
@@ -467,11 +537,10 @@ pub(crate) async fn github_board<A: API>(
         .as_ref()
         .and_then(github_pat)
         .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
-    let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
     let cl = client();
-    let (owner, repo) = resolve_repo(&cl, &pat, &root)
+    let (owner, repo) = selected_repo(&state, &cl, &pat)
         .await
-        .ok_or_else(|| AppError::bad_request("no github remote"))?;
+        .ok_or_else(|| AppError::bad_request("no repo — pick one or run inside a git repo"))?;
 
     // Exact counts via the search API (no page cap), fetched concurrently.
     let scope = format!("repo:{owner}/{repo}");
@@ -489,6 +558,7 @@ pub(crate) async fn github_board<A: API>(
     Ok(Json(json!({
         "url": base,
         "subtitle": format!("{owner}/{repo}"),
+        "repo": format!("{owner}/{repo}"),
         "stats": [
             { "label": "Open issues", "value": issues, "url": format!("{base}/issues") },
             { "label": "Open PRs", "value": prs, "url": format!("{base}/pulls") },
@@ -510,11 +580,10 @@ pub(crate) async fn gha_board<A: API>(
         .as_ref()
         .and_then(github_pat)
         .ok_or_else(|| AppError::bad_request("GitHub not connected"))?;
-    let root = repo_root(&state).await.ok_or_else(|| AppError::bad_request("not a git repo"))?;
     let cl = client();
-    let (owner, repo) = resolve_repo(&cl, &pat, &root)
+    let (owner, repo) = selected_repo(&state, &cl, &pat)
         .await
-        .ok_or_else(|| AppError::bad_request("no github remote"))?;
+        .ok_or_else(|| AppError::bad_request("no repo — pick one or run inside a git repo"))?;
     let auth = format!("Bearer {pat}");
 
     // Default branch (fall back to "main").
