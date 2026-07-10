@@ -13,7 +13,6 @@ const { spawnSync } = require('node:child_process');
 // host key -> platform package name
 const PLATFORM_PACKAGES = {
   'darwin arm64': 'forge-cockpit-darwin-arm64',
-  'darwin x64': 'forge-cockpit-darwin-x64',
   'linux x64': 'forge-cockpit-linux-x64',
   'linux arm64': 'forge-cockpit-linux-arm64',
   'win32 x64': 'forge-cockpit-win32-x64',
