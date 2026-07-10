@@ -52,6 +52,17 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
+      # forge_repo's build script (prost-build) needs the protobuf compiler.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # aws-lc-sys (pulled in via the AWS Bedrock provider) needs nasm on Windows.
+      - name: Install nasm (windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
       - name: Build release binary
         run: cargo build --release -p forge_main --target ${{ matrix.target }}
 
