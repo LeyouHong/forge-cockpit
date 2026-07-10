@@ -122,7 +122,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # Space out publishes: bursts of similarly-named packages trip npm's
+          # spam detection (403). A pause between each avoids it.
+          first=1
           for dir in npm/dist/forge-cockpit-*/; do
+            [ "$first" = 1 ] || sleep 40
+            first=0
             echo "publishing $dir"
             npm publish "$dir" --access public
           done
@@ -132,6 +137,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VER: ${{ steps.ver.outputs.version }}
         run: |
+          sleep 40   # keep clear of npm's anti-spam velocity check
           # Pin the launcher AND every platform optionalDependency to the release
           # version, so `npm version` alone can't leave the deps stale.
           node -e '
