@@ -625,6 +625,29 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+/// List persisted pipeline runs under `<workspace>/pipelines/`, newest first.
+/// A pure read for dashboards / monitoring.
+pub fn list_pipelines(workspace: &Path) -> Vec<Pipeline> {
+    let dir = workspace.join("pipelines");
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("yml") {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if let Ok(pl) = serde_yml::from_str::<Pipeline>(&text) {
+                out.push(pl);
+            }
+        }
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out
+}
+
 fn persist(pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig) {
     let p = pipeline.lock().unwrap();
     let dir = cfg.workspace.join("pipelines");

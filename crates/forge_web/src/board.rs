@@ -150,6 +150,48 @@ pub(crate) async fn workspace_board<A: API>(State(_): State<AppState<A>>) -> Jso
     }))
 }
 
+/// GET /api/board/pipelines — recent workflow (DAG) runs and their per-node
+/// state, read from `<workspace>/pipelines/`. Shares the workspace dir with the
+/// Workspace Team board. Pure read.
+pub(crate) async fn pipelines_board<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    let root = workspace_root();
+    let runs = forge_workspace::pipeline::list_pipelines(&root);
+    let count = |want: &str| {
+        runs.iter().filter(|p| format!("{:?}", p.status).to_lowercase() == want).count()
+    };
+    let stats = json!([
+        { "label": "Running", "value": count("running") },
+        { "label": "Done", "value": count("done") },
+        { "label": "Failed", "value": count("failed") },
+    ]);
+    let runs_json: Vec<Value> = runs
+        .iter()
+        .take(8)
+        .map(|p| {
+            let nodes: Vec<Value> = p
+                .node_order
+                .iter()
+                .filter_map(|id| p.nodes.get(id).map(|st| (id, st)))
+                .map(|(id, st)| json!({ "id": id, "status": format!("{:?}", st.status).to_lowercase() }))
+                .collect();
+            json!({
+                "id": p.id,
+                "workflow": p.workflow_name,
+                "status": format!("{:?}", p.status).to_lowercase(),
+                "created_at": p.created_at,
+                "nodes": nodes,
+            })
+        })
+        .collect();
+    let resolved = root.display().to_string();
+    Json(json!({
+        "resolved": resolved,
+        "subtitle": format!("{} run(s) · {}", runs.len(), resolved),
+        "stats": stats,
+        "runs": runs_json,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // TODOs — a small personal list for the activity panel, persisted in the same
 // settings file. Single-user local app, so plain read-modify-write is fine.
@@ -507,7 +549,7 @@ pub(crate) async fn platforms<A: API>(State(state): State<AppState<A>>) -> Json<
     let gmail = server(&state, "gmail").await.as_ref().and_then(|s| stdio_env(s, "EMAIL_USER")).is_some();
     // GitHub Actions reuses the GitHub connection. The Workspace Team board is
     // the team's own pipeline, always shown (configured via /api/workspace-dir).
-    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack, "gmail": gmail, "workspace": true }))
+    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack, "gmail": gmail, "workspace": true, "pipelines": true }))
 }
 
 /// GET /api/board/gmail — inbox stats over IMAP using the app password from the

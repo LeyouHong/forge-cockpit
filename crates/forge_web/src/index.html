@@ -1339,6 +1339,7 @@
     const GCAL_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="6" width="20" height="20" rx="3" fill="#fff" stroke="#4285F4" stroke-width="2"/><rect x="6" y="6" width="20" height="6" rx="3" fill="#4285F4"/><text x="16" y="24" font-size="10" font-weight="700" fill="#4285F4" text-anchor="middle" font-family="-apple-system,Arial,sans-serif">31</text></svg>';
     const GHA_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#2088FF"/><path fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5l3 3 7-7"/></svg>';
     const WS_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#7c5cff"/><circle cx="8" cy="8" r="2.3" fill="#fff"/><circle cx="16" cy="8" r="2.3" fill="#fff"/><circle cx="12" cy="16" r="2.3" fill="#fff"/><path fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" d="M8 10.2v1.3a1.5 1.5 0 0 0 1.5 1.5h5a1.5 1.5 0 0 0 1.5-1.5v-1.3M12 13v1"/></svg>';
+    const PL_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#0ea5a4"/><circle cx="7" cy="12" r="2.2" fill="#fff"/><circle cx="17" cy="7" r="2.2" fill="#fff"/><circle cx="17" cy="17" r="2.2" fill="#fff"/><path fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" d="M9 11l6-3M9 13l6 3"/></svg>';
     const SLACK_LOGO = '<svg class="gh-logo" viewBox="0 0 122.8 122.8" aria-hidden="true"><path d="M25.8 77.6c0 7.1-5.8 12.9-12.9 12.9S0 84.7 0 77.6s5.8-12.9 12.9-12.9h12.9v12.9z" fill="#e01e5a"/><path d="M32.3 77.6c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9v32.3c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V77.6z" fill="#e01e5a"/><path d="M45.2 25.8c-7.1 0-12.9-5.8-12.9-12.9S38.1 0 45.2 0s12.9 5.8 12.9 12.9v12.9H45.2z" fill="#36c5f0"/><path d="M45.2 32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H12.9C5.8 58.1 0 52.3 0 45.2s5.8-12.9 12.9-12.9h32.3z" fill="#36c5f0"/><path d="M97 45.2c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9-5.8 12.9-12.9 12.9H97V45.2z" fill="#2eb67d"/><path d="M90.5 45.2c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V12.9C64.7 5.8 70.5 0 77.6 0s12.9 5.8 12.9 12.9v32.3z" fill="#2eb67d"/><path d="M77.6 97c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9-12.9-5.8-12.9-12.9V97h12.9z" fill="#ecb22e"/><path d="M77.6 90.5c-7.1 0-12.9-5.8-12.9-12.9s5.8-12.9 12.9-12.9h32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H77.6z" fill="#ecb22e"/></svg>';
     const GMAIL_LOGO = '<svg class="gh-logo" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4caf50" d="M45 16.2l-5 2.75-5 4.75L35 40h7c1.657 0 3-1.343 3-3V16.2z"/><path fill="#1e88e5" d="M3 16.2l3.614 1.71L13 23.7V40H6c-1.657 0-3-1.343-3-3V16.2z"/><polygon fill="#e53935" points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"/><path fill="#c62828" d="M3 12.298V16.2l10 7.5V11.2L9.876 8.859C9.132 8.301 8.228 8 7.298 8C4.924 8 3 9.924 3 12.298z"/><path fill="#fbc02d" d="M45 12.298V16.2l-10 7.5V11.2l3.124-2.341C38.868 8.301 39.772 8 40.702 8C43.076 8 45 9.924 45 12.298z"/></svg>';
 
@@ -1833,6 +1834,7 @@
     /* ---------- boards (kanban) ---------- */
     const KB_PLATFORMS = [
       { key: 'workspace', name: 'Workspace Team', logo: WS_LOGO },
+      { key: 'pipelines', name: 'Pipelines', logo: PL_LOGO },
       { key: 'github', name: 'GitHub', logo: GH_LOGO },
       { key: 'gha', name: 'GitHub Actions', logo: GHA_LOGO },
       { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
@@ -1920,7 +1922,7 @@
       if (d.url) { const h = card.querySelector('.sc-head'); h.setAttribute('role', 'link'); h.onclick = () => window.open(d.url, '_blank', 'noopener'); }
       if (p.key === 'github' && d.repo) makeRepoPicker(card, d.repo);
       if (p.key === 'jira') makeJiraPicker(card, d.project || '');
-      if (p.key === 'workspace') makeWorkspacePicker(card, d.dir, d.resolved);
+      if (p.key === 'workspace' || p.key === 'pipelines') makeWorkspacePicker(card, d.dir, d.resolved);
       tiles.innerHTML = '';
       for (const st of (d.stats || [])) {
         const t = document.createElement(st.url ? 'a' : 'div'); t.className = 'stat-tile';
@@ -1929,6 +1931,31 @@
         tiles.appendChild(t);
       }
       if (p.key === 'workspace') renderWsAlerts(card, d.messages || []);
+      if (p.key === 'pipelines') renderPipelines(card, d.runs || []);
+    }
+    // Pipelines card: list recent workflow runs, each as a row of node pills
+    // colored by DAG status (done/running/failed/skipped/pending).
+    function renderPipelines(card, runs) {
+      let box = card.querySelector('.ws-msgs');
+      if (!box) { box = document.createElement('div'); box.className = 'ws-msgs'; box.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:7px;'; card.appendChild(box); }
+      box.innerHTML = '';
+      if (!runs.length) { box.innerHTML = '<span class="sl">no runs yet — try: forge-pipeline run flow.yaml</span>'; return; }
+      const color = { done: '#2e9e44', running: '#3b82f6', failed: '#e5484d', skipped: '#9ca3af', pending: '#c7c7c7' };
+      for (const r of runs.slice(0, 6)) {
+        const row = document.createElement('div');
+        const head = document.createElement('div'); head.style.cssText = 'font-size:11px;font-weight:600;display:flex;gap:6px;align-items:baseline;';
+        const wf = document.createElement('span'); wf.textContent = r.workflow;
+        const badge = document.createElement('span'); badge.textContent = r.status; badge.className = 'sl'; badge.style.color = color[r.status] || '#888';
+        head.appendChild(wf); head.appendChild(badge);
+        const strip = document.createElement('div'); strip.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;';
+        for (const n of (r.nodes || [])) {
+          const pill = document.createElement('span');
+          pill.textContent = n.id; pill.title = n.status;
+          pill.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:8px;color:#fff;background:' + (color[n.status] || '#888') + ';';
+          strip.appendChild(pill);
+        }
+        row.appendChild(head); row.appendChild(strip); box.appendChild(row);
+      }
     }
     // Workspace card: a small path input so the user can point the board at the
     // workspace dir the orchestrator writes to (persisted server-side).

@@ -122,6 +122,7 @@ where
         .route("/api/board/slack", get(board::slack_board::<A>))
         .route("/api/board/gmail", get(board::gmail_board::<A>))
         .route("/api/board/workspace", get(board::workspace_board::<A>))
+        .route("/api/board/pipelines", get(board::pipelines_board::<A>))
         .route(
             "/api/workspace-dir",
             get(board::get_workspace_dir::<A>).put(board::set_workspace_dir::<A>),
