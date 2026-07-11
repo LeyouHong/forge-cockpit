@@ -2862,7 +2862,6 @@ dependencies = [
  "base64 0.22.1",
  "forge_api",
  "forge_domain",
- "forge_workspace",
  "futures",
  "imap",
  "native-tls",
