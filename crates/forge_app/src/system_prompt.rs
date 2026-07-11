@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use strum::IntoEnumIterator;
 use tracing::debug;
 
-use crate::{ShellService, SkillFetchService, TemplateEngine};
+use crate::{PipelineService, ShellService, SkillFetchService, TemplateEngine};
 
 #[derive(Setters)]
 pub struct SystemPrompt<S> {
@@ -27,7 +27,7 @@ pub struct SystemPrompt<S> {
     template_config: TemplateConfig,
 }
 
-impl<S: SkillFetchService + ShellService> SystemPrompt<S> {
+impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
     pub fn new(services: Arc<S>, environment: Environment, agent: Agent) -> Self {
         Self {
             services,
@@ -94,6 +94,30 @@ impl<S: SkillFetchService + ShellService> SystemPrompt<S> {
 
             let skills = self.services.list_skills().await?;
 
+            // The user's saved pipelines: listed in the prompt so matching requests
+            // route through pipeline_run. Best-effort — a broken dir must not sink
+            // the conversation.
+            let pipelines = match self.services.list_pipelines().await {
+                Ok(out) => out
+                    .pipelines
+                    .into_iter()
+                    .map(|p| forge_domain::PipelineEntry {
+                        file: p.file,
+                        name: p.name,
+                        description: p.description,
+                        inputs: p
+                            .inputs
+                            .into_iter()
+                            .map(|(k, default)| match default {
+                                Some(d) => format!("{k} (default: {d})"),
+                                None => k,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+
             // Fetch extension statistics from git
             let extensions = self.fetch_extensions(self.max_extensions).await;
 
@@ -121,6 +145,7 @@ impl<S: SkillFetchService + ShellService> SystemPrompt<S> {
                 custom_rules: custom_rules.join("\n\n"),
                 supports_parallel_tool_calls,
                 skills,
+                pipelines,
                 model: None,
                 tool_names,
                 extensions,
@@ -252,6 +277,37 @@ mod tests {
     use super::*;
 
     const MAX_EXTENSIONS: usize = 15;
+
+    #[test]
+    fn test_pipeline_instructions_render_when_agent_has_tool() {
+        let mut tool_names = Map::new();
+        tool_names.insert("pipeline_run".to_string(), json!("pipeline_run"));
+        let ctx = SystemContext {
+            tool_names,
+            pipelines: vec![forge_domain::PipelineEntry {
+                file: "pr-review.yaml".to_string(),
+                name: "pr-review".to_string(),
+                description: "Reviews a GitHub PR and comments".to_string(),
+                inputs: vec!["pr".to_string(), "repo (default: owner/name)".to_string()],
+            }],
+            ..Default::default()
+        };
+        let tpl = "{{#if tool_names.pipeline_run}}{{#if pipelines}}{{> forge-partial-pipeline-instructions.md}}{{/if}}{{/if}}";
+        let actual = TemplateEngine::default()
+            .render_template(Template::<SystemContext>::new(tpl), &ctx)
+            .unwrap();
+        assert!(actual.contains("<available_pipelines>"));
+        assert!(actual.contains("<file>pr-review.yaml</file>"));
+        assert!(actual.contains("Reviews a GitHub PR and comments"));
+        assert!(actual.contains("pr, repo (default: owner/name)"));
+
+        // Without the tool (muse/sage) or without pipelines, nothing renders.
+        let bare = SystemContext { pipelines: ctx.pipelines.clone(), ..Default::default() };
+        let none = TemplateEngine::default()
+            .render_template(Template::<SystemContext>::new(tpl), &bare)
+            .unwrap();
+        assert_eq!(none, "");
+    }
 
     #[test]
     fn test_parse_extensions_sorts_git_output() {
