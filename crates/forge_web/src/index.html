@@ -568,6 +568,7 @@
     .pl-node .nproj { font-size: 9.5px; color: #7c5cff; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-node .nprompt { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-node .nouts { font-size: 9px; color: #2e9e44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nout-val { font-size: 9.5px; color: #3b82f6; font-family: ui-monospace, Menlo, monospace; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #8a8f98; background: var(--bg, #fff); left: 50%; transform: translateX(-50%); cursor: crosshair; }
     .pl-port.in { top: -7px; }
     .pl-port.out { bottom: -7px; background: #8a8f98; }
@@ -2377,6 +2378,7 @@
         const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
         PL.runOutputs = {};
         if (mine) for (const n of (mine.nodes || [])) PL.runOutputs[n.id] = { outputs: n.outputs || {}, status: n.status, error: n.error };
+        refreshNodeOutputs();
       }
       box.innerHTML = '';
       if (!(d.runs || []).length) { box.innerHTML = '<span class="sl">no runs yet</span>'; return; }
@@ -2472,6 +2474,7 @@
       if (n.outputs && n.outputs.length) { const ou = document.createElement('div'); ou.className = 'nouts'; ou.textContent = 'outputs: ' + n.outputs.map((o) => o.name).join(', '); body.appendChild(ou); }
       const pout = document.createElement('div'); pout.className = 'pl-port out'; pout.dataset.id = id;
       el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
+      updateNodeOutputLine(el, id);
       const onHead = (e) => !e.target.closest('.acts');
       head.onmousedown = (e) => { if (onHead(e)) startDrag(e, id); };
       head.ondblclick = (e) => { if (onHead(e)) { e.stopPropagation(); openNodeModal(id); } };
@@ -2484,6 +2487,17 @@
       for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id);
       if (PL.sel === id) PL.sel = null; renderCanvas(); renderInspector();
     }
+    // Show a one-line preview of a node's last-run output on its card.
+    function updateNodeOutputLine(el, id) {
+      let rv = el.querySelector('.nout-val');
+      const ro = PL.runOutputs && PL.runOutputs[id];
+      const val = ro && ro.outputs ? (Object.values(ro.outputs)[0] || '') : '';
+      const line = val ? '→ ' + (((val.split('\n').find((l) => l.trim())) || val).slice(0, 60)) : '';
+      if (!line) { if (rv) rv.remove(); return; }
+      if (!rv) { rv = document.createElement('div'); rv.className = 'nout-val'; (el.querySelector('.nbody') || el).appendChild(rv); }
+      rv.textContent = line;
+    }
+    function refreshNodeOutputs() { if (!PL.g) return; for (const id of Object.keys(PL.g.nodes)) { const el = document.getElementById('pln-' + id); if (el) updateNodeOutputLine(el, id); } }
     function drawEdges() {
       const svg = $('pl-edges'); svg.innerHTML = '';
       for (const id of Object.keys(PL.g.nodes)) for (const dep of PL.g.nodes[id].depends_on) {
