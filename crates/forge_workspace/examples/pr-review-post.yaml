@@ -1,0 +1,49 @@
+# Batch PR review that POSTS the findings back as a PR comment.
+#
+# ⚠️ THIS WRITES LIVE COMMENTS to real pull requests. Point `vars.repo` only at a
+#    repo YOU own — never a third-party project. Requires an authenticated `gh`.
+#
+#   forge-pipeline run crates/forge_workspace/examples/pr-review-post.yaml \
+#       --project . --isolate-mcp
+#
+# The `post` node relies on the engine's shell-safe templating: in a shell node,
+# {{...}} values are POSIX single-quoted, so the review text (quotes, newlines,
+# backticks, $(...)) lands as one literal --body argument — no breakage, no
+# command injection. Use {{raw:...}} only when you deliberately want no quoting.
+#
+# There is no conditional execution yet, so this posts on every PR (including a
+# bare "LGTM"). Gate it yourself (e.g. a shell `post` that greps for LGTM and
+# exits 0 without commenting) if you don't want no-op comments.
+
+name: pr-review-post
+vars:
+  repo: "LeyouHong/forge-cockpit" # a repo YOU own
+  pr_ids: "1"
+for_each:
+  source: "{{vars.pr_ids}}"
+  as: pr
+nodes:
+  fetch:
+    mode: shell
+    prompt: "gh pr diff {{pr}} --repo {{vars.repo}}"
+    outputs:
+      - name: diff
+        extract: stdout
+  review:
+    depends_on: [fetch]
+    prompt: |
+      You are a senior code reviewer. Review the following PR diff for correctness,
+      security, and obvious bugs. List each concrete issue as a short bullet with a
+      file:line reference and a one-line fix. If nothing substantive, reply exactly
+      "LGTM". Be terse — no preamble.
+
+      PR #{{pr}} diff:
+      {{nodes.fetch.outputs.diff}}
+    outputs:
+      - name: findings
+        extract: result
+  post:
+    depends_on: [review]
+    mode: shell
+    # {{nodes.review.outputs.findings}} is shell-escaped by the engine.
+    prompt: "gh pr comment {{pr}} --repo {{vars.repo}} --body {{nodes.review.outputs.findings}}"

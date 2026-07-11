@@ -331,15 +331,21 @@ pub struct IterationSummary {
 // ─── Template resolution ───────────────────────────────────────────────────
 
 /// Resolve `{{…}}` placeholders against input / vars / upstream node outputs.
-/// Supported: `input.<k>`, `vars.<k>`, `nodes.<id>.outputs.<name>`, and a
-/// leading `raw:` (kept for compatibility; a no-op here since we pass args
-/// directly rather than through a shell). Unknown expressions are left intact.
+/// Supported: `input.<k>`, `vars.<k>`, `nodes.<id>.outputs.<name>`, plus the
+/// for_each vars (`{{<as>}}`, `{{loop.index}}`, `{{loop.total}}`).
+///
+/// In `shell` mode each substituted value is POSIX single-quoted so arbitrary
+/// content (quotes, spaces, newlines) lands as ONE safe argument — do NOT wrap
+/// placeholders in your own quotes. A leading `raw:` opts a value out of that
+/// escaping (substituted verbatim). Non-shell (agent-prompt) mode substitutes
+/// verbatim. Unknown expressions are left intact.
 pub fn resolve_template(
     tpl: &str,
     input: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
     nodes: &BTreeMap<String, NodeState>,
     each: Option<&EachCtx>,
+    shell: bool,
 ) -> String {
     let mut out = String::with_capacity(tpl.len());
     let mut rest = tpl;
@@ -353,14 +359,26 @@ pub fn resolve_template(
             continue;
         };
         let mut expr = after[..end].trim();
+        let mut raw = false;
         if let Some(stripped) = expr.strip_prefix("raw:") {
+            raw = true;
             expr = stripped.trim();
         }
-        out.push_str(&resolve_expr(expr, input, vars, nodes, each));
+        let value = resolve_expr(expr, input, vars, nodes, each);
+        if shell && !raw {
+            out.push_str(&shell_quote(&value));
+        } else {
+            out.push_str(&value);
+        }
         rest = &after[end + 2..];
     }
     out.push_str(rest);
     out
+}
+
+/// POSIX single-quote a value so it survives the shell as one literal argument.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn resolve_expr(
@@ -539,8 +557,8 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
             let (mode, resolved_prompt, project, outputs, attempt) = {
                 let mut p = pipeline.lock().unwrap();
                 let node = wf.node(&node_id).unwrap().clone();
-                let prompt = resolve_template(&node.prompt, &p.input, &p.vars, &p.nodes, each);
-                let proj = resolve_template(&node.project, &p.input, &p.vars, &p.nodes, each);
+                let prompt = resolve_template(&node.prompt, &p.input, &p.vars, &p.nodes, each, node.mode == NodeMode::Shell);
+                let proj = resolve_template(&node.project, &p.input, &p.vars, &p.nodes, each, false);
                 let st = p.nodes.get_mut(&node_id).unwrap();
                 st.status = NodeStatus::Running;
                 st.attempts += 1;
@@ -649,7 +667,7 @@ fn resolve_items(fe: &ForEach, input: &BTreeMap<String, String>, vars: &BTreeMap
         Source::Items(v) => v.clone(),
         Source::Template(t) => {
             let empty: BTreeMap<String, NodeState> = BTreeMap::new();
-            let resolved = resolve_template(t, input, vars, &empty, None);
+            let resolved = resolve_template(t, input, vars, &empty, None, false);
             resolved.split(&fe.split).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
         }
     }
@@ -968,8 +986,34 @@ mod tests {
             &vars,
             &nodes,
             None,
+            false,
         );
         assert_eq!(got, "app: login => THE SPEC []");
+    }
+
+    #[test]
+    fn shell_mode_quotes_values_safely() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            "review".to_string(),
+            NodeState {
+                status: NodeStatus::Done,
+                outputs: map(&[("f", "it's a \"bug\"\nline2")]),
+                attempts: 1,
+                replan_count: 0,
+                error: None,
+            },
+        );
+        let e = BTreeMap::new();
+        // shell mode: value is single-quoted, inner ' escaped as '\'' — one safe arg.
+        let got = resolve_template("gh pr comment --body {{nodes.review.outputs.f}}", &e, &e, &nodes, None, true);
+        assert_eq!(got, "gh pr comment --body 'it'\\''s a \"bug\"\nline2'");
+        // raw: opts out of escaping
+        let raw = resolve_template("{{raw:nodes.review.outputs.f}}", &e, &e, &nodes, None, true);
+        assert_eq!(raw, "it's a \"bug\"\nline2");
+        // non-shell mode substitutes verbatim
+        let plain = resolve_template("{{nodes.review.outputs.f}}", &e, &e, &nodes, None, false);
+        assert_eq!(plain, "it's a \"bug\"\nline2");
     }
 
     #[test]
@@ -983,6 +1027,7 @@ mod tests {
             &e,
             &nodes,
             Some(&each),
+            false,
         );
         assert_eq!(got, "review PR 42 (1/3)");
     }
@@ -1033,7 +1078,7 @@ nodes:
     fn unknown_placeholder_is_left_intact() {
         let e = BTreeMap::new();
         let nodes = BTreeMap::new();
-        assert_eq!(resolve_template("{{bogus.path}}", &e, &e, &nodes, None), "{{bogus.path}}");
+        assert_eq!(resolve_template("{{bogus.path}}", &e, &e, &nodes, None, false), "{{bogus.path}}");
     }
 
     #[test]
