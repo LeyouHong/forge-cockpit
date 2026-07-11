@@ -373,6 +373,88 @@ pub(crate) async fn run_pipeline<A: API>(
     Ok(Json(json!({ "started": true, "log": log.to_string_lossy() })))
 }
 
+fn forge_workspace_run_bin() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("forge-workspace-run")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("forge-workspace-run"))
+}
+
+/// Is `pid` still alive? (`kill -0`)
+fn pid_alive(pid: &str) -> bool {
+    Command::new("kill").arg("-0").arg(pid).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamRun {
+    project: String,
+    #[serde(default)]
+    goal: Option<String>,
+    #[serde(default)]
+    daemon: bool,
+}
+
+/// POST /api/team/run — launch the orchestrator (`forge-workspace-run`) against a
+/// project (optionally with a --goal for the coordinator, optionally --daemon).
+pub(crate) async fn team_run<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamRun>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    std::fs::create_dir_all(ws.join("pipelines"))?;
+    // Refuse to double-run if one is already alive.
+    let pidfile = ws.join(".team-run.pid");
+    if let Ok(pid) = std::fs::read_to_string(&pidfile) {
+        if pid_alive(pid.trim()) {
+            return Err(AppError::bad_request("the team is already running for this project"));
+        }
+    }
+    let bin = forge_workspace_run_bin();
+    let log = std::fs::File::create(ws.join(".team-run.log"))?;
+    let err = log.try_clone()?;
+    let mut cmd = Command::new(&bin);
+    cmd.arg("--project").arg(&project).arg("--workspace").arg(&ws).arg("--isolate-mcp");
+    if let Some(g) = body.goal.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+        cmd.arg("--goal").arg(g);
+    }
+    if body.daemon {
+        cmd.arg("--daemon");
+    }
+    cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err));
+    match cmd.spawn() {
+        Ok(child) => {
+            let pid = child.id();
+            let _ = std::fs::write(&pidfile, pid.to_string());
+            std::thread::spawn(move || {
+                let mut c = child;
+                let _ = c.wait();
+            });
+            Ok(Json(json!({ "started": true, "pid": pid, "daemon": body.daemon })))
+        }
+        Err(e) => Err(AppError::bad_request(format!("could not launch forge-workspace-run ({}): {e}", bin.display()))),
+    }
+}
+
+/// POST /api/team/stop — stop the orchestrator running for a project.
+pub(crate) async fn team_stop<A: API>(
+    State(_): State<AppState<A>>,
+    Json(q): Json<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let pidfile = project.join(".forge-workspace").join(".team-run.pid");
+    let Ok(pid) = std::fs::read_to_string(&pidfile) else {
+        return Ok(Json(json!({ "stopped": false, "reason": "not running" })));
+    };
+    let pid = pid.trim().to_string();
+    if pid_alive(&pid) {
+        let _ = Command::new("kill").arg(&pid).status();
+    }
+    let _ = std::fs::remove_file(&pidfile);
+    Ok(Json(json!({ "stopped": true })))
+}
+
 /// GET /api/team?project=NAME — the resident team's board: work requests (with
 /// their pipeline stage + who claimed them) and the message-bus inbox, read from
 /// `<project>/.forge-workspace` (what `forge-workspace-run` writes). Pure read.
@@ -408,7 +490,8 @@ pub(crate) async fn team_board<A: API>(
             })
         })
         .collect();
-    Ok(Json(json!({ "workspace": ws.to_string_lossy(), "requests": requests, "messages": messages })))
+    let running = std::fs::read_to_string(ws.join(".team-run.pid")).ok().map(|p| pid_alive(p.trim())).unwrap_or(false);
+    Ok(Json(json!({ "workspace": ws.to_string_lossy(), "running": running, "requests": requests, "messages": messages })))
 }
 
 /// GET /api/pipeline/runs?project=NAME — recent runs with per-node DAG status.

@@ -530,6 +530,8 @@
     .pl-node.run-skipped .nstat { background: #9ca3af; }
     @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
     /* Team canvas */
+    .tm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
     .tm-alerts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
     .tm-alert { border-left: 3px solid #e5484d; background: #fff5f5; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
     .tm-alert b { color: #e5484d; }
@@ -781,6 +783,12 @@
     </div>
     <div class="kanban-scroll">
       <section class="kanban-section">
+        <div class="tm-bar">
+          <input id="tm-goal" placeholder='goal for the coordinator (optional) — e.g. "harden calc.py: add validation + tests"' />
+          <button class="btn btn-primary btn-sm" id="tm-run">▶ Run</button>
+          <button class="btn btn-sm" id="tm-daemon">⚡ Start Daemon</button>
+          <span class="sl" id="tm-status"></span>
+        </div>
         <div id="tm-alerts" class="tm-alerts"></div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
         <div id="tm-empty" class="sl" style="margin-top:10px"></div>
@@ -2594,6 +2602,22 @@
       }
     }
     $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
+    $('tm-run').onclick = () => tmRun(false);
+    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else tmRun(true); };
+    async function tmRun(daemon) {
+      if (!TEAM.project) { $('tm-status').textContent = 'add a project first'; return; }
+      const goal = $('tm-goal').value.trim();
+      const r = await api('/api/team/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, goal, daemon }) });
+      const d = await r.json();
+      if (!r.ok) { $('tm-status').textContent = '✗ ' + (d.error || 'failed'); $('tm-status').style.color = '#e5484d'; return; }
+      $('tm-status').textContent = (daemon ? '⚡ daemon started' : '▶ team started') + ' (pid ' + d.pid + ')'; $('tm-status').style.color = '#2e9e44';
+      startTeamPoll();
+    }
+    async function tmStop() {
+      if (!TEAM.project) return;
+      await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
+      $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
+    }
     function startTeamPoll() { tmStopPoll(); loadTeam(); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
@@ -2602,7 +2626,9 @@
     }
     function renderTeam(d) {
       const reqs = d.requests || [], msgs = d.messages || [];
-      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — start the team with:  forge-workspace-run --project <this dir> --goal "…"';
+      TEAM.running = !!d.running;
+      $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
+      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
       const ab = $('tm-alerts'); ab.innerHTML = '';
       for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
