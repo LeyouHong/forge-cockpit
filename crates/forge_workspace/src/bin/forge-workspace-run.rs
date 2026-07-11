@@ -13,9 +13,14 @@
 //! With --goal "<objective>" a coordinator (Lead) runs first and decomposes the
 //! objective into requests on the board, which the pipeline then works.
 //!
+//! Hung agents are recovered by killing any subprocess that outlives
+//! --agent-timeout-secs; a request that stays stuck past --max-attempts is
+//! parked and an alert is pushed to the --alert-to inbox on the message bus.
+//!
 //!   forge-workspace-run --project DIR [--workspace DIR] [--forge PATH]
 //!       [--goal "<objective>"] [--concurrent N] [--max-attempts N]
-//!       [--poll-secs N] [--daemon] [--dry-run]
+//!       [--poll-secs N] [--agent-timeout-secs N] [--alert-to INBOX]
+//!       [--daemon] [--dry-run]
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,6 +28,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use forge_workspace::message::{self, Category};
 use forge_workspace::request::{self, RequestDocument, RequestStatus};
 use serde_json::json;
 
@@ -55,7 +61,12 @@ fn has(args: &mut Vec<String>, name: &str) -> bool {
 struct Tracker {
     last_status: Option<RequestStatus>,
     attempts: u32,
+    /// How many times the agent working this request was killed for exceeding
+    /// the timeout (a hung/runaway session).
+    timeouts: u32,
     stuck: bool,
+    /// Whether a stuck alert has already been pushed to the bus (send once).
+    alerted: bool,
 }
 
 struct State {
@@ -79,6 +90,11 @@ struct Cfg {
     poll: Duration,
     daemon: bool,
     dry_run: bool,
+    /// Max wall-clock an agent subprocess may run before it is killed (recovery
+    /// from a hung/runaway session). The freed request is retried next poll.
+    agent_timeout: Duration,
+    /// Inbox that stuck-request alerts are sent to (a human or lead agent).
+    alert_to: String,
     /// When set (via --goal), a coordinator agent decomposes it into requests on
     /// the board at startup before the pipeline runs.
     goal: Option<String>,
@@ -134,6 +150,10 @@ fn run() -> anyhow::Result<()> {
         poll: Duration::from_secs(flag(&mut args, "--poll-secs").and_then(|s| s.parse().ok()).unwrap_or(3)),
         daemon: has(&mut args, "--daemon"),
         dry_run: has(&mut args, "--dry-run"),
+        agent_timeout: Duration::from_secs(
+            flag(&mut args, "--agent-timeout-secs").and_then(|s| s.parse().ok()).unwrap_or(300),
+        ),
+        alert_to: flag(&mut args, "--alert-to").unwrap_or_else(|| "human".into()),
         goal: flag(&mut args, "--goal").filter(|g| !g.trim().is_empty()),
         plan_only: has(&mut args, "--plan-only"),
         home,
@@ -145,8 +165,9 @@ fn run() -> anyhow::Result<()> {
         ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
     }
     println!(
-        "▶ orchestrator: project={} concurrent={} max-attempts={} daemon={} dry-run={} isolate-mcp={}{}",
-        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.daemon, cfg.dry_run, cfg.home.is_some(),
+        "▶ orchestrator: project={} concurrent={} max-attempts={} agent-timeout={}s alert-to={} daemon={} dry-run={} isolate-mcp={}{}",
+        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.agent_timeout.as_secs(), cfg.alert_to,
+        cfg.daemon, cfg.dry_run, cfg.home.is_some(),
         cfg.goal.as_deref().map(|g| format!(" goal={g:?}")).unwrap_or_default()
     );
 
@@ -203,7 +224,23 @@ fn run() -> anyhow::Result<()> {
                 match decision {
                     Decision::Skip => continue,
                     Decision::Stuck => {
-                        println!("  ✗ {} STUCK in {:?} after {} attempts — leaving it.", req.id, req.status, cfg.max_attempts);
+                        // Alert the bus exactly once, the poll a request first goes stuck.
+                        let timeouts = st.trackers.get(&req.id).map(|t| t.timeouts).unwrap_or(0);
+                        let first = st.trackers.get(&req.id).map(|t| !t.alerted).unwrap_or(true);
+                        if first {
+                            let body = format!(
+                                "Request `{}` (\"{}\") is STUCK in {:?} after {} attempts \
+                                 ({} agent timeout(s)). The pipeline has parked it — a human or \
+                                 lead needs to intervene (clarify the request, split it, or fix a \
+                                 blocker), then reset it to keep it moving.",
+                                req.id, req.title, req.status, cfg.max_attempts, timeouts
+                            );
+                            println!("  ✗ {} STUCK in {:?} after {} attempts — alerting `{}`.", req.id, req.status, cfg.max_attempts, cfg.alert_to);
+                            let _ = message::send_message(&cfg.workspace, "orchestrator", &cfg.alert_to, &body, Category::Ticket);
+                            if let Some(t) = st.trackers.get_mut(&req.id) {
+                                t.alerted = true;
+                            }
+                        }
                         continue;
                     }
                     Decision::Run(attempts) => {
@@ -243,8 +280,17 @@ fn run() -> anyhow::Result<()> {
 
     println!("\n===== final state =====");
     for r in request::list_requests(&cfg.workspace, None)? {
-        let stuck = state.lock().unwrap().trackers.get(&r.id).map(|t| t.stuck).unwrap_or(false);
-        println!("  {}  [{:?}]{}  {}", r.id, r.status, if stuck { " STUCK" } else { "" }, r.title);
+        let (stuck, timeouts) = {
+            let st = state.lock().unwrap();
+            let t = st.trackers.get(&r.id);
+            (t.map(|t| t.stuck).unwrap_or(false), t.map(|t| t.timeouts).unwrap_or(0))
+        };
+        let flags = format!(
+            "{}{}",
+            if stuck { " STUCK" } else { "" },
+            if timeouts > 0 { format!(" ({timeouts} timeout(s))") } else { String::new() },
+        );
+        println!("  {}  [{:?}]{}  {}", r.id, r.status, flags, r.title);
     }
     Ok(())
 }
@@ -310,8 +356,13 @@ fn run_coordinator(cfg: &Cfg, goal: &str) {
 }
 
 /// Spawn a role agent for a request on its own thread; clear `running` when done.
+///
+/// The subprocess is bounded by `cfg.agent_timeout`: if it runs longer it is
+/// killed (recovery from a hung/runaway agent) so the concurrency slot is freed
+/// and the request is retried on the next poll instead of wedging the pipeline.
 fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, role: &'static str, sop: &'static str) {
     std::thread::spawn(move || {
+        let mut timed_out = false;
         if !cfg.dry_run {
             let topo = topology(&cfg.workspace, role);
             let prompt = format!(
@@ -327,12 +378,45 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, ro
             if let Some(home) = &cfg.home {
                 cmd.env("FORGE_CONFIG", home);
             }
-            let _ = cmd.status();
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    let deadline = Instant::now() + cfg.agent_timeout;
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(_)) => break, // exited on its own
+                            Ok(None) => {
+                                if Instant::now() >= deadline {
+                                    let _ = child.kill();
+                                    let _ = child.wait();
+                                    timed_out = true;
+                                    println!(
+                                        "  ⏱ {} [{:?}] agent exceeded {}s — killed; will retry.",
+                                        req.id, req.status, cfg.agent_timeout.as_secs()
+                                    );
+                                    break;
+                                }
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                            Err(e) => {
+                                eprintln!("  ! {} wait error: {e}", req.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("  ! {} failed to spawn forge: {e}", req.id),
+            }
         } else {
             // Simulate a session that does nothing (so stuck detection can be tested).
             std::thread::sleep(Duration::from_millis(200));
         }
-        state.lock().unwrap().running.remove(&req.id);
+        let mut guard = state.lock().unwrap();
+        if timed_out {
+            if let Some(t) = guard.trackers.get_mut(&req.id) {
+                t.timeouts += 1;
+            }
+        }
+        guard.running.remove(&req.id);
     });
 }
 
