@@ -65,20 +65,11 @@ struct Tracker {
     /// the timeout (a hung/runaway session).
     timeouts: u32,
     stuck: bool,
-    /// Whether a stuck alert has already been pushed to the bus (send once).
-    alerted: bool,
 }
 
 struct State {
     running: HashSet<String>,
     trackers: HashMap<String, Tracker>,
-}
-
-/// Outcome of the tracker update for one request this poll.
-enum Decision {
-    Skip,
-    Stuck,
-    Run(u32),
 }
 
 struct Cfg {
@@ -200,59 +191,57 @@ fn run() -> anyhow::Result<()> {
                 if st.running.contains(&req.id) {
                     continue;
                 }
-                // Update the tracker in a small scope so its &mut ends before we
-                // touch `running`. Progress = status changed since last look.
-                let decision = {
+                // Reset the stuck counter whenever the request advanced to a new
+                // status (real progress); skip requests already parked as stuck.
+                {
                     let t = st.trackers.entry(req.id.clone()).or_default();
                     if t.stuck {
-                        Decision::Skip
-                    } else {
-                        if t.last_status == Some(req.status) {
-                            t.attempts += 1;
-                        } else {
-                            t.last_status = Some(req.status);
-                            t.attempts = 1;
-                        }
-                        if t.attempts > cfg.max_attempts {
-                            t.stuck = true;
-                            Decision::Stuck
-                        } else {
-                            Decision::Run(t.attempts)
-                        }
-                    }
-                };
-                match decision {
-                    Decision::Skip => continue,
-                    Decision::Stuck => {
-                        // Alert the bus exactly once, the poll a request first goes stuck.
-                        let timeouts = st.trackers.get(&req.id).map(|t| t.timeouts).unwrap_or(0);
-                        let first = st.trackers.get(&req.id).map(|t| !t.alerted).unwrap_or(true);
-                        if first {
-                            let body = format!(
-                                "Request `{}` (\"{}\") is STUCK in {:?} after {} attempts \
-                                 ({} agent timeout(s)). The pipeline has parked it — a human or \
-                                 lead needs to intervene (clarify the request, split it, or fix a \
-                                 blocker), then reset it to keep it moving.",
-                                req.id, req.title, req.status, cfg.max_attempts, timeouts
-                            );
-                            println!("  ✗ {} STUCK in {:?} after {} attempts — alerting `{}`.", req.id, req.status, cfg.max_attempts, cfg.alert_to);
-                            let _ = message::send_message(&cfg.workspace, "orchestrator", &cfg.alert_to, &body, Category::Ticket);
-                            if let Some(t) = st.trackers.get_mut(&req.id) {
-                                t.alerted = true;
-                            }
-                        }
                         continue;
                     }
-                    Decision::Run(attempts) => {
-                        if st.running.len() >= cfg.concurrent {
-                            continue; // saturated; try next poll
-                        }
-                        let (role, sop) = role_for(req.status);
-                        println!("  → {} [{:?}] attempt {attempts} → {role}{}", req.id, req.status, if cfg.dry_run { " (dry-run)" } else { "" });
-                        st.running.insert(req.id.clone());
-                        spawn_agent(cfg.clone(), state.clone(), req.clone(), role, sop);
+                    if t.last_status != Some(req.status) {
+                        t.last_status = Some(req.status);
+                        t.attempts = 0;
                     }
                 }
+
+                // Concurrency gate BEFORE consuming an attempt: a request starved
+                // by a full pool hasn't failed — it just hasn't had a turn yet, so
+                // it must not accrue stuck-attempts. Only a request that actually
+                // gets scheduled consumes one.
+                if st.running.len() >= cfg.concurrent {
+                    continue;
+                }
+
+                // This request gets a turn. Consume an attempt; park it (once) if
+                // it has burned its budget without the status ever advancing.
+                let attempts = {
+                    let t = st.trackers.entry(req.id.clone()).or_default();
+                    t.attempts += 1;
+                    t.attempts
+                };
+                if attempts > cfg.max_attempts {
+                    let timeouts = st.trackers.get(&req.id).map(|t| t.timeouts).unwrap_or(0);
+                    if let Some(t) = st.trackers.get_mut(&req.id) {
+                        t.stuck = true;
+                    }
+                    // Marking stuck makes the top-of-loop guard skip this request
+                    // on every later poll, so the alert fires exactly once.
+                    let body = format!(
+                        "Request `{}` (\"{}\") is STUCK in {:?} after {} attempts \
+                         ({} agent timeout(s)). The pipeline has parked it — a human or \
+                         lead needs to intervene (clarify the request, split it, or fix a \
+                         blocker), then reset it to keep it moving.",
+                        req.id, req.title, req.status, cfg.max_attempts, timeouts
+                    );
+                    println!("  ✗ {} STUCK in {:?} after {} attempts — alerting `{}`.", req.id, req.status, cfg.max_attempts, cfg.alert_to);
+                    let _ = message::send_message(&cfg.workspace, "orchestrator", &cfg.alert_to, &body, Category::Ticket);
+                    continue;
+                }
+
+                let (role, sop) = role_for(req.status);
+                println!("  → {} [{:?}] attempt {attempts} → {role}{}", req.id, req.status, if cfg.dry_run { " (dry-run)" } else { "" });
+                st.running.insert(req.id.clone());
+                spawn_agent(cfg.clone(), state.clone(), req.clone(), role, sop);
             }
         }
 
