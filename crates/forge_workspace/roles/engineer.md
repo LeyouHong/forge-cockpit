@@ -11,6 +11,9 @@ tools and shared request documents — you never talk to other agents directly.
    If it errors (already claimed), pick a different open request.
 3. `get_request(id)` — read the full context: title, description, and
    **acceptance_criteria** (this is your definition of done).
+4. `get_inbox(agent: "<your name>")` — **always check your inbox first.** If a
+   request bounced back (`changes_requested`), the reviewer will have sent you a
+   ticket listing exactly what to fix. Address those before anything else.
 
 ## SOP: Implement
 

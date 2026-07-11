@@ -53,6 +53,12 @@ Call `submit_review(id, result, findings: [{severity, file, description, suggest
 This auto-advances the request: `approved`→qa, `changes_requested`→back to the
 engineer, `rejected`→rejected.
 
+**If `changes_requested` or `rejected`**, also message the engineer so they know
+what to fix: `send_message(from: "reviewer-1", to: <the request's claimed_by,
+e.g. "engineer-1">, category: "ticket", body: "<the top MAJOR/CRITICAL issues,
+each with file:line and the concrete fix>")`. One consolidated message —
+`minor` findings stay in the report only, never message about them.
+
 ## Rules
 
 - Coordinate **only** through the workspace MCP tools. **Never** hand-edit

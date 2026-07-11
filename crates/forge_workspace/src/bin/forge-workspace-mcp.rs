@@ -14,6 +14,7 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
+use forge_workspace::message::{self, Category};
 use forge_workspace::request::{
     self, Finding, NewRequest, QaResult, ReviewResult, Section, Severity,
 };
@@ -157,6 +158,30 @@ fn handle_call(msg: &Value) -> Result<Value, String> {
             let result = if s("result") == "passed" { QaResult::Passed } else { QaResult::Failed };
             submit(&r, &s("id"), Section::Qa { result, notes: s("notes") })
         }
+        "send_message" => {
+            let category = if s("category") == "notification" { Category::Notification } else { Category::Ticket };
+            match message::send_message(&r, &s("from"), &s("to"), &s("body"), category) {
+                Ok(m) => text_result(format!("sent {} to {}", m.id, m.to), false),
+                Err(e) => text_result(format!("error: {e:#}"), true),
+            }
+        }
+        "get_inbox" => {
+            let unread_only = args.get("unread_only").and_then(Value::as_bool).unwrap_or(true);
+            match message::get_inbox(&r, &s("agent"), unread_only) {
+                Ok(msgs) => {
+                    let text = if msgs.is_empty() {
+                        "(inbox empty)".to_string()
+                    } else {
+                        msgs.iter()
+                            .map(|m| format!("[{:?}] from {}: {}", m.category, m.from, m.body))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    text_result(text, false)
+                }
+                Err(e) => text_result(format!("error: {e:#}"), true),
+            }
+        }
         other => return Err(format!("unknown tool: {other}")),
     };
     Ok(out)
@@ -219,6 +244,15 @@ fn tool_defs() -> Value {
                 "file": { "type": "string" }, "description": { "type": "string" }, "suggestion": { "type": "string" } } } })
           }), json!(["id","result"])) },
         { "name": "submit_qa", "description": "QA: record the test verdict. passed->done, failed->back to engineer.",
-          "inputSchema": obj(json!({ "id": str_prop("Request id"), "result": json!({ "type": "string", "enum": ["passed","failed"] }), "notes": str_prop("Test notes") }), json!(["id","result"])) }
+          "inputSchema": obj(json!({ "id": str_prop("Request id"), "result": json!({ "type": "string", "enum": ["passed","failed"] }), "notes": str_prop("Test notes") }), json!(["id","result"])) },
+        { "name": "send_message", "description": "Send a message to another agent (for rework details, help, coordination). Agents never talk directly.",
+          "inputSchema": obj(json!({
+            "from": str_prop("Your agent name"),
+            "to": str_prop("Recipient agent name (e.g. engineer-1)"),
+            "body": str_prop("Message text"),
+            "category": json!({ "type": "string", "enum": ["notification","ticket"], "description": "notification = FYI; ticket = please act on it (default ticket)" })
+          }), json!(["from","to","body"])) },
+        { "name": "get_inbox", "description": "Read your inbox. Returned messages are marked read, so poll unread_only to see each once.",
+          "inputSchema": obj(json!({ "agent": str_prop("Your agent name"), "unread_only": json!({ "type": "boolean", "description": "Only unread messages (default true)" }) }), json!(["agent"])) }
     ])
 }
