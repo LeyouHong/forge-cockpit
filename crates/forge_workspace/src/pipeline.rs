@@ -106,9 +106,9 @@ pub struct Workflow {
 
 /// Batch spec: run the whole DAG once per item, sequentially. Each iteration
 /// resets per-node state; node prompts see the current item via `{{<as>}}` and
-/// position via `{{loop.index}}` / `{{loop.total}}`. (Non-goals, matching the
-/// reference impl: nested loops, parallel iterations, dynamic source from an
-/// upstream node — `before:` setup nodes are not ported yet.)
+/// position via `{{loop.index}}` / `{{loop.total}}`. A `before` (aka `setup`)
+/// list runs once up front and its outputs feed a dynamic `source`. (Non-goals,
+/// matching the reference: nested loops, parallel iterations.)
 #[derive(Debug, Clone)]
 pub struct ForEach {
     pub source: Source,
@@ -117,6 +117,10 @@ pub struct ForEach {
     /// Variable name the current item is exposed as. Default "item".
     pub as_name: String,
     pub on_failure: OnFailure,
+    /// Nodes that run ONCE before the loop (a setup phase): they stay `done`
+    /// across all iterations and are excluded from the per-iteration reset. The
+    /// `source` is resolved AFTER they run, so it may reference their outputs.
+    pub before: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +181,13 @@ fn parse_for_each(v: &serde_yml::Value) -> Result<ForEach> {
         Some("stop") => OnFailure::Stop,
         _ => OnFailure::Continue,
     };
-    Ok(ForEach { source, split, as_name, on_failure })
+    let before = m
+        .get("before")
+        .or_else(|| m.get("setup"))
+        .and_then(|v| v.as_sequence())
+        .map(|s| s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Ok(ForEach { source, split, as_name, on_failure, before })
 }
 
 /// Parse a workflow YAML document and validate its DAG shape.
@@ -243,6 +253,13 @@ fn validate(wf: &Workflow) -> Result<()> {
             }
             if !downstream_of(wf, target).contains(n.id.as_str()) {
                 bail!("verify node `{}` must be downstream of its replan_target `{}`", n.id, target);
+            }
+        }
+    }
+    if let Some(fe) = &wf.for_each {
+        for b in &fe.before {
+            if !ids.contains(b.as_str()) {
+                bail!("for_each setup/before names unknown node `{}`", b);
             }
         }
     }
@@ -484,23 +501,36 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
     match &wf.for_each {
         None => {
             println!("▶ pipeline {id} — workflow `{}` ({} nodes)", wf.name, wf.nodes.len());
-            let failed = run_dag(wf, &pipeline, cfg, None, &id);
+            let failed = run_dag(wf, &pipeline, cfg, None, &id, None);
             finalize(&pipeline, cfg, failed);
         }
         Some(fe) => {
-            let (input, vars) = {
+            // Setup phase: run the `before` nodes (and their deps) once; they
+            // stay done across every iteration and let the source be dynamic.
+            let setup = ancestor_closure(wf, &fe.before);
+            if !setup.is_empty() {
+                println!("▶ pipeline {id} — workflow `{}` · setup {:?}", wf.name, fe.before);
+                let setup_failed = run_dag(wf, &pipeline, cfg, None, &id, Some(&setup));
+                if setup_failed {
+                    println!("  ✗ setup failed — aborting before the loop.");
+                    finalize(&pipeline, cfg, true);
+                    let final_state = pipeline.lock().unwrap().clone();
+                    return Ok(final_state);
+                }
+            }
+            let (input, vars, nodes) = {
                 let p = pipeline.lock().unwrap();
-                (p.input.clone(), p.vars.clone())
+                (p.input.clone(), p.vars.clone(), p.nodes.clone())
             };
-            let items = resolve_items(fe, &input, &vars);
+            let items = resolve_items(fe, &input, &vars, &nodes);
             let total = items.len();
             println!("▶ pipeline {id} — workflow `{}` (for_each `{}`: {total} iteration(s))", wf.name, fe.as_name);
             let mut any_failed = false;
             for (index, item) in items.iter().enumerate() {
-                reset_nodes(&pipeline);
+                reset_nodes_except(&pipeline, &setup);
                 println!("\n  ⟳ iteration {}/{total} — {} = {item}", index + 1, fe.as_name);
                 let each = EachCtx { as_name: &fe.as_name, item, index, total };
-                let failed = run_dag(wf, &pipeline, cfg, Some(&each), &id);
+                let failed = run_dag(wf, &pipeline, cfg, Some(&each), &id, None);
                 {
                     let mut p = pipeline.lock().unwrap();
                     p.iterations.push(IterationSummary {
@@ -534,7 +564,7 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
 
 /// Run the DAG to a fixed point once (parallel, output-passing, retries, skip
 /// cascade). Returns whether any node ended failed. Assumes nodes start pending.
-fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each: Option<&EachCtx>, id: &str) -> bool {
+fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each: Option<&EachCtx>, id: &str, only: Option<&HashSet<String>>) -> bool {
     let (tx, rx) = mpsc::channel::<Done>();
     let mut running: usize = 0;
 
@@ -544,11 +574,13 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
         loop {
             let launch = {
                 let mut p = pipeline.lock().unwrap();
-                cascade_skips(wf, &mut p);
+                if only.is_none() {
+                    cascade_skips(wf, &mut p);
+                }
                 if running >= cfg.concurrent {
                     None
                 } else {
-                    ready_node(wf, &p)
+                    ready_node(wf, &p, only)
                 }
             };
             let Some(node_id) = launch else { break };
@@ -661,26 +693,20 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
     pipeline.lock().unwrap().nodes.values().any(|n| n.status == NodeStatus::Failed)
 }
 
-/// Resolve a for_each source into concrete items.
-fn resolve_items(fe: &ForEach, input: &BTreeMap<String, String>, vars: &BTreeMap<String, String>) -> Vec<String> {
+/// Resolve a for_each source into concrete items. `nodes` carries the setup
+/// phase's outputs so a `{{nodes.<setup>.outputs.<x>}}` source can resolve.
+fn resolve_items(
+    fe: &ForEach,
+    input: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, String>,
+    nodes: &BTreeMap<String, NodeState>,
+) -> Vec<String> {
     match &fe.source {
         Source::Items(v) => v.clone(),
         Source::Template(t) => {
-            let empty: BTreeMap<String, NodeState> = BTreeMap::new();
-            let resolved = resolve_template(t, input, vars, &empty, None, false);
+            let resolved = resolve_template(t, input, vars, nodes, None, false);
             resolved.split(&fe.split).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
         }
-    }
-}
-
-/// Reset every node to pending for a fresh for_each iteration.
-fn reset_nodes(pipeline: &Arc<Mutex<Pipeline>>) {
-    let mut p = pipeline.lock().unwrap();
-    for st in p.nodes.values_mut() {
-        st.status = NodeStatus::Pending;
-        st.outputs.clear();
-        st.attempts = 0;
-        st.error = None;
     }
 }
 
@@ -759,14 +785,51 @@ fn cascade_skips(wf: &Workflow, p: &mut Pipeline) {
 }
 
 /// The next pending node whose dependencies are all done (author order).
-fn ready_node(wf: &Workflow, p: &Pipeline) -> Option<String> {
+/// When `only` is set, restrict scheduling to that node set (used by the
+/// for_each setup phase to run just the `before` nodes).
+fn ready_node(wf: &Workflow, p: &Pipeline, only: Option<&HashSet<String>>) -> Option<String> {
     wf.nodes
         .iter()
         .find(|n| {
-            p.nodes[&n.id].status == NodeStatus::Pending
+            only.map_or(true, |s| s.contains(&n.id))
+                && p.nodes[&n.id].status == NodeStatus::Pending
                 && n.depends_on.iter().all(|d| p.nodes[d].status == NodeStatus::Done)
         })
         .map(|n| n.id.clone())
+}
+
+/// A node set plus all their transitive dependencies (for the setup closure).
+fn ancestor_closure(wf: &Workflow, roots: &[String]) -> HashSet<String> {
+    let mut set: HashSet<String> = roots.iter().cloned().collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for id in set.iter().cloned().collect::<Vec<_>>() {
+            if let Some(n) = wf.node(&id) {
+                for d in &n.depends_on {
+                    if set.insert(d.clone()) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
+/// Reset every node NOT in `keep` to pending (used between for_each iterations
+/// to preserve the setup phase's results).
+fn reset_nodes_except(pipeline: &Arc<Mutex<Pipeline>>, keep: &HashSet<String>) {
+    let mut p = pipeline.lock().unwrap();
+    for (id, st) in p.nodes.iter_mut() {
+        if keep.contains(id) {
+            continue;
+        }
+        st.status = NodeStatus::Pending;
+        st.outputs.clear();
+        st.attempts = 0;
+        st.error = None;
+    }
 }
 
 /// Run one node and extract its declared outputs.
@@ -1045,8 +1108,31 @@ nodes:
         let fe = wf.for_each.as_ref().unwrap();
         assert_eq!(fe.as_name, "id");
         let input: BTreeMap<String, String> = [("ids".to_string(), "1, 2 ,3".to_string())].into();
-        let items = resolve_items(fe, &input, &BTreeMap::new());
+        let items = resolve_items(fe, &input, &BTreeMap::new(), &BTreeMap::new());
         assert_eq!(items, vec!["1", "2", "3"]); // split + trimmed
+    }
+
+    #[test]
+    fn foreach_before_setup_parsed_and_validated() {
+        let yaml = r#"
+name: s
+input: {}
+for_each: { before: [disc], source: "{{nodes.disc.outputs.l}}" }
+nodes:
+  disc: { mode: shell, prompt: "echo x", outputs: [{ name: l, extract: stdout }] }
+  w: { depends_on: [disc], mode: shell, prompt: "echo {{item}}" }
+"#;
+        let wf = parse_workflow(yaml).unwrap();
+        assert_eq!(wf.for_each.as_ref().unwrap().before, vec!["disc"]);
+        // unknown before node is rejected
+        let bad = r#"
+name: s
+input: {}
+for_each: { before: [ghost], source: "x" }
+nodes:
+  a: { mode: shell, prompt: "true" }
+"#;
+        assert!(parse_workflow(bad).unwrap_err().to_string().contains("unknown node"));
     }
 
     #[test]
@@ -1060,7 +1146,7 @@ nodes:
 "#;
         let wf = parse_workflow(yaml).unwrap();
         let fe = wf.for_each.as_ref().unwrap();
-        let items = resolve_items(fe, &BTreeMap::new(), &BTreeMap::new());
+        let items = resolve_items(fe, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
         assert_eq!(items, vec!["alpha", "beta"]);
     }
 
