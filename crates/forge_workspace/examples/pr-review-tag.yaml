@@ -1,0 +1,68 @@
+# Auto-review a PR; if it needs fixes, label it (and post the findings).
+#
+# ⚠️ THIS WRITES to a real PR (adds a label + a comment). Point `vars.repo` only
+#    at a repo YOU own. Requires an authenticated `gh`.
+#
+#   # one-shot:
+#   forge-pipeline run crates/forge_workspace/examples/pr-review-tag.yaml \
+#       --input pr=42 --project . --isolate-mcp
+#
+#   # resident — review every new/updated PR:
+#   forge-pipeline watch crates/forge_workspace/examples/pr-review-tag.yaml \
+#       --repo you/your-repo --project . --isolate-mcp
+#
+# Flow:  fetch (shell) → review (agent) → act (shell).
+# The agent's first line is a machine verdict (VERDICT: NEEDS_FIX | LGTM); the
+# `act` shell node reads it and only labels/comments when a fix is needed. The
+# {{...}} values in shell nodes are auto-quoted, so the multi-line review is safe
+# to pass to gh. There is no DAG-level conditional yet, so the decision lives in
+# the shell `if`.
+
+name: pr-review-tag
+vars:
+  repo: "LeyouHong/forge-cockpit" # a repo YOU own
+  label: "needs-fix"
+input:
+  pr: "PR number to review"
+nodes:
+  fetch:
+    mode: shell
+    prompt: "gh pr diff {{input.pr}} --repo {{vars.repo}}"
+    outputs:
+      - name: diff
+        extract: stdout
+  review:
+    depends_on: [fetch]
+    prompt: |
+      You are a senior code reviewer. Review the PR diff below for correctness,
+      security, and obvious bugs.
+
+      Your reply MUST begin with a single verdict line, EXACTLY one of:
+        VERDICT: NEEDS_FIX
+        VERDICT: LGTM
+      If NEEDS_FIX, follow it with a short bullet list of concrete issues, each
+      with a file:line and a one-line fix. If LGTM, write nothing after the line.
+
+      PR #{{input.pr}} diff:
+      {{nodes.fetch.outputs.diff}}
+    outputs:
+      - name: findings
+        extract: result
+  act:
+    depends_on: [review]
+    mode: shell
+    prompt: |
+      set -e
+      REVIEW={{nodes.review.outputs.findings}}
+      if printf '%s' "$REVIEW" | head -1 | grep -q NEEDS_FIX; then
+        # make sure the label exists, then tag + post the findings
+        gh label create {{vars.label}} --repo {{vars.repo}} --color FBCA04 2>/dev/null || true
+        gh pr edit {{input.pr}} --repo {{vars.repo}} --add-label {{vars.label}}
+        gh pr comment {{input.pr}} --repo {{vars.repo}} --body "$REVIEW"
+        echo "NEEDS_FIX -> labelled {{vars.label}} and commented"
+      else
+        echo "LGTM -> no changes"
+      fi
+    outputs:
+      - name: result
+        extract: stdout
