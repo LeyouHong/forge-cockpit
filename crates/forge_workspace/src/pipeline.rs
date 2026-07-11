@@ -526,7 +526,7 @@ fn exec_node(
     let mut out = BTreeMap::new();
     for o in outputs {
         let v = match o.extract {
-            Extract::Result => strip_ansi(&raw_stdout).trim().to_string(),
+            Extract::Result => clean_result(&raw_stdout),
             Extract::Stdout => raw_stdout.clone(),
             Extract::GitDiff => {
                 let mut cmd = Command::new("git");
@@ -572,6 +572,32 @@ fn run_capture(mut cmd: Command, timeout: Duration) -> std::result::Result<Strin
         Some(s) => Err(format!("exited with {}", s.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into()))),
         None => Err(format!("timed out after {}s", timeout.as_secs())),
     }
+}
+
+/// Clean a `forge -p` capture into usable `result` text: strip ANSI, then drop
+/// the session chrome (`● [HH:MM:SS] Initialize/Finished …`) and spinner lines
+/// (`… · Ctrl+C to interrupt`) forge streams to stdout. What remains is the
+/// agent's reasoning + answer. NOTE: forge has no clean-answer output mode, so
+/// this still includes the model's thinking — isolating just the final answer
+/// would need a structured output from forge itself.
+fn clean_result(raw: &str) -> String {
+    let stripped = strip_ansi(raw);
+    let mut out: Vec<&str> = Vec::new();
+    for line in stripped.lines() {
+        let t = line.trim_end();
+        let tl = t.trim_start();
+        if tl.is_empty() && out.last().map(|l: &&str| l.is_empty()).unwrap_or(true) {
+            continue; // collapse blank runs
+        }
+        if tl.contains("· Ctrl+C to interrupt") {
+            continue; // spinner
+        }
+        if tl.starts_with("● [") && (tl.contains("Initialize") || tl.contains("Finished")) {
+            continue; // session chrome
+        }
+        out.push(t);
+    }
+    out.join("\n").trim().to_string()
 }
 
 /// Strip ANSI/VT escape sequences (forge -p emits heavy spinner output).
@@ -643,6 +669,16 @@ mod tests {
             &nodes,
         );
         assert_eq!(got, "app: login => THE SPEC []");
+    }
+
+    #[test]
+    fn clean_result_drops_chrome_and_spinner() {
+        let raw = "\u{1b}[2K⠋ Thinking 00s · Ctrl+C to interrupt\n\
+                   ● [21:26:30] Initialize abc-123\n\
+                   The user asked for BANANA.\n\
+                   BANANA\n\
+                   ● [21:26:33] Finished abc-123\n";
+        assert_eq!(clean_result(raw), "The user asked for BANANA.\nBANANA");
     }
 
     #[test]
