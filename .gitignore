@@ -43,6 +43,9 @@ jobs/**
 *.js
 *.map
 **/.forge/request.body.json
+# Pipeline/team runtime state (pipelines are now global under ~/.forge-web)
+**/.forge/pipelines/
+.forge-workspace/
 node_modules/
 bench/__pycache__
 scripts/__pycache__/
@@ -55,3 +58,4 @@ forge-framework-guide.pdf
 # npm packaging build output
 npm/dist/
 npm/**/node_modules/
+multiagent-orchestration-guide.pdf

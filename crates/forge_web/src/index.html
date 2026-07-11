@@ -457,10 +457,6 @@
       }
     }
     /* Pipeline page */
-    .pl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-    .pl-bar label { font-size: 12px; color: var(--muted); }
-    .pl-bar #pl-project { border: 1px solid var(--border); padding: 4px 22px 4px 8px; color: var(--text); min-width: 140px; }
-    .pl-bar #pl-newpath { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; min-width: 240px; flex: 1; }
     .pl-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
     .pl-subhead { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
     .pl-files, .pl-runs { display: flex; flex-direction: column; gap: 4px; }
@@ -710,20 +706,13 @@
   <!-- Pipeline builder (its own page) -->
   <div class="kanban-overlay" id="pipeline-overlay">
     <div class="kanban-head">
-      <span><b>🧬 Pipeline</b> <span class="drawer-hint">build &amp; run workflows per project</span></span>
+      <span><b>🧬 Pipeline</b> <span class="drawer-hint">build &amp; run reusable workflows</span></span>
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="pl-refresh">Refresh</button>
       <button class="icon-btn" id="pipeline-close" title="Close">✕</button>
     </div>
     <div class="kanban-scroll">
       <section class="kanban-section">
-        <div class="pl-bar">
-          <label>Project</label>
-          <select id="pl-project" class="repo-select"></select>
-          <input id="pl-newpath" placeholder="…or type a path + Enter" />
-          <button class="btn btn-sm" id="pl-addproject">+ Add project</button>
-          <button class="btn btn-ghost btn-sm" id="pl-delproject" title="Forget this project">Forget</button>
-        </div>
         <div class="pl-grid">
           <div class="pl-left">
             <div class="pl-subhead"><span>Pipelines</span><button class="btn btn-sm" id="pl-new">+ New</button></div>
@@ -779,6 +768,7 @@
       <div style="flex:1"></div>
       <label class="sl" style="margin-right:6px">Project</label>
       <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
+      <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
     </div>
@@ -794,6 +784,15 @@
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
         <div id="tm-empty" class="sl" style="margin-top:10px"></div>
       </section>
+    </div>
+  </div>
+
+  <!-- Pipeline: Run dialog (pick target dir + fill inputs) -->
+  <div class="pl-picker-overlay" id="pl-rundlg">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b>▶ Run pipeline</b><div style="flex:1"></div><button class="icon-btn" id="pl-run-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="pl-run-body"></div>
+      <div class="pl-picker-foot"><span class="sl" id="pl-run-msg"></span><div style="flex:1"></div><button class="btn btn-primary btn-sm" id="pl-run-go">▶ Run</button></div>
     </div>
   </div>
 
@@ -2109,7 +2108,7 @@
     /* ---------- pipeline page ---------- */
     const PL = { project: null, file: null };
     const PL_COLOR = { done: '#2e9e44', running: '#3b82f6', failed: '#e5484d', skipped: '#9ca3af', pending: '#c7c7c7' };
-    function openPipeline() { $('pipeline-overlay').classList.add('open'); loadProjects(); }
+    function openPipeline() { $('pipeline-overlay').classList.add('open'); loadFiles(); loadRuns(); }
     $('pipeline-open').onclick = openPipeline;
     $('pipeline-close').onclick = () => { stopRunPoll(); $('pipeline-overlay').classList.remove('open'); };
     $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
@@ -2123,32 +2122,21 @@
     function plShowValid(d) { if (d.valid) plStatus('✓ valid workflow', false); else plStatus('✗ ' + (d.error || 'invalid'), true); }
     const plBody = (o) => ({ method: o.m || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o.b) });
 
-    async function loadProjects() {
-      const d = await (await api('/api/pipeline/projects')).json().catch(() => ({ projects: [] }));
-      const sel = $('pl-project'); sel.innerHTML = '';
-      for (const p of (d.projects || [])) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + '  ·  ' + p.path; sel.appendChild(o); }
-      if ((d.projects || []).length) {
-        if (!PL.project || !d.projects.find((p) => p.name === PL.project)) PL.project = d.projects[0].name;
-        sel.value = PL.project; loadFiles(); loadRuns();
-      } else { PL.project = null; $('pl-files').innerHTML = '<span class="sl">no projects — add one above</span>'; $('pl-runs').innerHTML = ''; }
-    }
-    $('pl-project').onchange = () => { PL.project = $('pl-project').value; PL.file = null; plSetEditor('', 'no pipeline open'); loadFiles(); loadRuns(); };
+    // Add a Team project via a path (returns the created project name, or false).
     async function addProjectPath(path) {
       if (!path || !path.trim()) return false;
       const r = await api('/api/pipeline/projects', plBody({ b: { path: path.trim() } })); const d = await r.json();
-      if (!r.ok) { plStatus(d.error || 'failed to add project', true); return false; }
-      PL.project = d.name; $('pl-newpath').value = ''; loadProjects(); return true;
+      return r.ok ? d.name : false;
     }
-    $('pl-newpath').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addProjectPath($('pl-newpath').value); } };
-    $('pl-addproject').onclick = () => openPicker($('pl-newpath').value.trim() || null);
 
-    /* server-side folder picker (server is local → this is your filesystem) */
-    const PICK = { path: null, parent: null };
+    /* server-side folder picker (server is local → this is your filesystem).
+       PICK.onUse(path) is invoked with the chosen folder. */
+    const PICK = { path: null, parent: null, onUse: null };
     $('pl-picker-close').onclick = () => $('pl-picker').classList.remove('open');
     $('pl-picker-up').onclick = () => { if (PICK.parent) browseTo(PICK.parent); };
     $('pl-picker-path').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); browseTo($('pl-picker-path').value.trim()); } };
-    $('pl-picker-use').onclick = async () => { if (PICK.path && await addProjectPath(PICK.path)) $('pl-picker').classList.remove('open'); };
-    function openPicker(start) { $('pl-picker').classList.add('open'); browseTo(start); }
+    $('pl-picker-use').onclick = () => { if (PICK.path && PICK.onUse) PICK.onUse(PICK.path); $('pl-picker').classList.remove('open'); };
+    function openPicker(start, onUse) { PICK.onUse = onUse || null; $('pl-picker').classList.add('open'); browseTo(start); }
     async function browseTo(path) {
       const url = '/api/pipeline/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
       const d = await (await api(url)).json().catch(() => null);
@@ -2167,23 +2155,16 @@
         list.appendChild(row);
       }
     }
-    $('pl-delproject').onclick = async () => {
-      if (!PL.project || !confirm('Forget project "' + PL.project + '"? (files are not deleted)')) return;
-      await api('/api/pipeline/projects/delete', plBody({ b: { name: PL.project } }));
-      PL.project = null; PL.file = null; plSetEditor('', 'no pipeline open'); loadProjects();
-    };
-
     async function loadFiles() {
-      if (!PL.project) return;
       const box = $('pl-files'); box.innerHTML = '<span class="sl">…</span>';
-      const d = await (await api('/api/pipeline/files?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ files: [] }));
+      const d = await (await api('/api/pipeline/files')).json().catch(() => ({ files: [] }));
       box.innerHTML = '';
       if (!(d.files || []).length) { box.innerHTML = '<span class="sl">no pipelines yet — + New</span>'; return; }
       for (const f of d.files) {
         const row = document.createElement('div'); row.className = 'pl-file' + (f === PL.file ? ' active' : '');
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = f; nm.onclick = () => openFile(f);
         const rm = document.createElement('span'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'delete';
-        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { project: PL.project, name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
+        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
         row.appendChild(nm); row.appendChild(rm); box.appendChild(row);
       }
     }
@@ -2194,9 +2175,9 @@
     PL.tab = PL.tab || 'visual';
     async function openFile(name) {
       PL.file = name; PL.sel = null; closeNodeModal(); stopRunPoll(); $('pl-editing').textContent = name;
-      const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
+      const d = await (await api('/api/pipeline/graph?name=' + encodeURIComponent(name))).json();
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
-      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
+      const f = await (await api('/api/pipeline/file?name=' + encodeURIComponent(name))).json().catch(() => ({}));
       $('pl-editor').value = f.content || '';
       PL.runOutputs = {};
       plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles(); loadRuns();
@@ -2264,11 +2245,10 @@
     }
 
     $('pl-new').onclick = async () => {
-      if (!PL.project) { plStatus('add a project first', true); return; }
       let name = prompt('New pipeline file name:', 'my-flow.yaml'); if (!name) return;
       if (!/\.(ya?ml)$/.test(name)) name += '.yaml';
       const base = name.replace(/\.(ya?ml)$/, '');
-      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
       if (!r.ok) { const d = await r.json(); plStatus(d.error || 'create failed', true); return; }
       await openFile(name); loadFiles();
     };
@@ -2285,17 +2265,17 @@
     $('pl-tab-yaml').onclick = async () => {
       if (PL.tab === 'yaml' || !PL.file) { setTab('yaml'); return; }
       await plSaveGraph();
-      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
+      const f = await (await api('/api/pipeline/file?name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
       $('pl-editor').value = f.content || ''; setTab('yaml');
     };
 
     async function plSaveGraph() {
       if (!PL.file || !PL.g) return { ok: false };
-      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
+      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
       return { r, d: await r.json() };
     }
     async function plSaveYaml() {
-      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, content: $('pl-editor').value } }));
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { name: PL.file, content: $('pl-editor').value } }));
       return { r, d: await r.json() };
     }
     async function plSave() { return PL.tab === 'visual' ? plSaveGraph() : plSaveYaml(); }
@@ -2313,13 +2293,48 @@
       if (!r || !r.ok) { plStatus((d && d.error) || 'save failed', true); return; }
       plStatus(d.valid ? '✓ saved · valid' : '⚠ saved · ✗ ' + (d.error || 'invalid'), !d.valid);
     };
+    /* Run dialog: pipelines are global, so Run asks for a target directory
+       (where the agent/shell nodes execute) + values for the workflow's
+       declared input fields, then POSTs { name, dir, inputs }. */
+    const RUN = { dir: '' };
     $('pl-run').onclick = async () => {
       if (!PL.file) { plStatus('open a pipeline first', true); return; }
       const { d: sv } = await plSave();
       if (sv && sv.valid === false) { plStatus('✗ not valid — fix before running:\n' + (sv.error || ''), true); return; }
-      const r = await api('/api/pipeline/run', plBody({ b: { project: PL.project, name: PL.file } }));
+      openRunDialog();
+    };
+    function openRunDialog() {
+      const input = (PL.g && PL.g.input) || {};
+      const keys = Object.keys(input);
+      RUN.dir = RUN.dir || '~';
+      let html = '<div class="pl-insp-row"><label>target directory <span class="sl">(where nodes run)</span></label>'
+        + '<div style="display:flex;gap:6px;align-items:center">'
+        + '<input id="pl-run-dir" style="flex:1" value="' + escapeHtml(RUN.dir) + '" placeholder="~/path/to/project">'
+        + '<button class="btn btn-sm" id="pl-run-browse">Browse…</button></div></div>';
+      if (keys.length) {
+        for (const k of keys) {
+          const def = input[k] == null ? '' : String(input[k]);
+          html += '<div class="pl-insp-row"><label>' + escapeHtml(k) + '</label>'
+            + '<input class="pl-run-in" data-k="' + escapeHtml(k) + '" value="' + escapeHtml(def) + '"></div>';
+        }
+      } else {
+        html += '<div class="sl">This pipeline declares no <code>input:</code> fields.</div>';
+      }
+      $('pl-run-body').innerHTML = html;
+      $('pl-run-msg').textContent = '';
+      $('pl-run-browse').onclick = () => openPicker(RUN.dir && RUN.dir !== '~' ? RUN.dir : '', (p) => { RUN.dir = p; $('pl-run-dir').value = p; });
+      $('pl-rundlg').classList.add('open');
+    }
+    $('pl-run-close').onclick = () => $('pl-rundlg').classList.remove('open');
+    $('pl-run-go').onclick = async () => {
+      const dir = $('pl-run-dir').value.trim();
+      if (!dir) { $('pl-run-msg').textContent = 'pick a target directory'; return; }
+      RUN.dir = dir;
+      const inputs = {}; for (const el of document.querySelectorAll('.pl-run-in')) inputs[el.dataset.k] = el.value;
+      const r = await api('/api/pipeline/run', plBody({ b: { name: PL.file, dir, inputs } }));
       const d = await r.json();
-      if (!r.ok) { plStatus(d.error || 'run failed to start', true); return; }
+      if (!r.ok) { $('pl-run-msg').textContent = d.error || 'run failed to start'; return; }
+      $('pl-rundlg').classList.remove('open');
       plStatus('▶ run started — nodes light up as they run', false);
       startRunPoll();
     };
@@ -2337,8 +2352,8 @@
       }
     }
     async function pollRunOnce() {
-      if (!PL.project || !PL.g) return null;
-      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => null);
+      if (!PL.g) return null;
+      const d = await (await api('/api/pipeline/runs')).json().catch(() => null);
       if (!d) return null;
       const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
       if (!mine) return null;
@@ -2370,9 +2385,8 @@
       openNodeModal(id);
     }
     async function loadRuns() {
-      if (!PL.project) return;
       const box = $('pl-runs');
-      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ runs: [] }));
+      const d = await (await api('/api/pipeline/runs')).json().catch(() => ({ runs: [] }));
       // capture the newest run for the open workflow → per-node outputs (shown in the edit modal)
       if (PL.g) {
         const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
@@ -2617,7 +2631,7 @@
         const ta = document.createElement('textarea'); ta.readOnly = true; ta.style.minHeight = '90px'; ta.placeholder = '(no log for this node yet)'; r.appendChild(ta);
         box.appendChild(r);
         const fetchLog = async () => {
-          const d = await (await api('/api/pipeline/node-log?project=' + encodeURIComponent(PL.project) + '&run=' + encodeURIComponent(PL.runId) + '&node=' + encodeURIComponent(id))).json().catch(() => null);
+          const d = await (await api('/api/pipeline/node-log?run=' + encodeURIComponent(PL.runId) + '&node=' + encodeURIComponent(id))).json().catch(() => null);
           if (!d) return;
           const atBottom = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 8;
           ta.value = stripAnsiJs(d.log || '').slice(-8000);
@@ -2666,9 +2680,13 @@
         sel.value = TEAM.project; startTeamPoll();
       } else {
         TEAM.project = null; [...$('tm-canvas').querySelectorAll('.tm-card')].forEach((c) => c.remove());
-        $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — add one on the 🧬 Pipeline page first.';
+        $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — click "+ Project" to add a folder.';
       }
     }
+    $('tm-addproject').onclick = () => openPicker('', async (p) => {
+      const name = await addProjectPath(p);
+      if (name) { TEAM.project = name; tmLoadProjects(); }
+    });
     $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
     $('tm-run').onclick = () => tmRun(false);
     $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else tmRun(true); };

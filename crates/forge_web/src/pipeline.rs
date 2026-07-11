@@ -10,7 +10,7 @@
 //! Like the rest of `/api/*`, these run commands/agents as the user; the page is
 //! gated behind the per-run bearer token.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use axum::Json;
@@ -115,8 +115,6 @@ pub(crate) async fn add_project<A: API>(
     list.push(project.clone());
     s["pipeline_projects"] = Value::Array(list);
     write_settings(&s);
-    // Make sure the pipelines dir exists so the first "New" lands somewhere.
-    let _ = std::fs::create_dir_all(pipelines_dir(&path));
     Ok(Json(project))
 }
 
@@ -140,22 +138,32 @@ pub(crate) async fn remove_project<A: API>(
     Json(json!({ "ok": true }))
 }
 
-// ─── Pipeline files (<project>/.forge/pipelines/*.yaml) ─────────────────────
+// ─── Pipeline files (global: ~/.forge-web/pipelines/*.yaml) ─────────────────
+// Pipelines are reusable recipes, independent of any project. The target working
+// directory and inputs are supplied at RUN time (see run_pipeline), and runs
+// persist globally too. `project` is only for the Team page.
 
-fn pipelines_dir(project: &Path) -> PathBuf {
-    project.join(".forge").join("pipelines")
+fn web_home() -> PathBuf {
+    home_dir().join(".forge-web")
+}
+/// Where global pipeline files live.
+fn global_pipelines_dir() -> PathBuf {
+    web_home().join("pipelines")
+}
+/// The workspace all runs persist to (global, not per project).
+fn runs_ws() -> PathBuf {
+    web_home().join("runs")
 }
 
-/// Resolve `<project>/.forge/pipelines/<name>`, rejecting path traversal.
-fn pipeline_file(project_name: &str, file: &str) -> Result<PathBuf, AppError> {
+/// Resolve `~/.forge-web/pipelines/<name>`, rejecting path traversal.
+fn pipeline_file(file: &str) -> Result<PathBuf, AppError> {
     if file.contains('/') || file.contains("..") || file.trim().is_empty() {
         return Err(AppError::bad_request("invalid pipeline name"));
     }
     if !(file.ends_with(".yaml") || file.ends_with(".yml")) {
         return Err(AppError::bad_request("pipeline name must end in .yaml/.yml"));
     }
-    let path = project_path(project_name).ok_or_else(|| AppError::not_found("no such project"))?;
-    Ok(pipelines_dir(&path).join(file))
+    Ok(global_pipelines_dir().join(file))
 }
 
 #[derive(Deserialize)]
@@ -163,13 +171,9 @@ pub(crate) struct ProjectQuery {
     project: String,
 }
 
-/// GET /api/pipeline/files?project=NAME — list workflow files in the project.
-pub(crate) async fn list_files<A: API>(
-    State(_): State<AppState<A>>,
-    Query(q): Query<ProjectQuery>,
-) -> Result<Json<Value>, AppError> {
-    let path = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let dir = pipelines_dir(&path);
+/// GET /api/pipeline/files — list all (global) workflow files.
+pub(crate) async fn list_files<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    let dir = global_pipelines_dir();
     let mut files: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
@@ -181,21 +185,20 @@ pub(crate) async fn list_files<A: API>(
         }
     }
     files.sort();
-    Ok(Json(json!({ "dir": dir.to_string_lossy(), "files": files })))
+    Json(json!({ "dir": dir.to_string_lossy(), "files": files }))
 }
 
 #[derive(Deserialize)]
 pub(crate) struct FileQuery {
-    project: String,
     name: String,
 }
 
-/// GET /api/pipeline/file?project=NAME&name=FILE — read a workflow + validation.
+/// GET /api/pipeline/file?name=FILE — read a workflow + validation.
 pub(crate) async fn read_file<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<FileQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let path = pipeline_file(&q.project, &q.name)?;
+    let path = pipeline_file(&q.name)?;
     let content = std::fs::read_to_string(&path).map_err(|_| AppError::not_found("no such pipeline"))?;
     let (valid, error) = validate(&content);
     Ok(Json(json!({ "name": q.name, "content": content, "valid": valid, "error": error })))
@@ -203,7 +206,6 @@ pub(crate) async fn read_file<A: API>(
 
 #[derive(Deserialize)]
 pub(crate) struct FileSave {
-    project: String,
     name: String,
     content: String,
 }
@@ -214,7 +216,7 @@ pub(crate) async fn save_file<A: API>(
     State(_): State<AppState<A>>,
     Json(body): Json<FileSave>,
 ) -> Result<Json<Value>, AppError> {
-    let path = pipeline_file(&body.project, &body.name)?;
+    let path = pipeline_file(&body.name)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -228,14 +230,14 @@ pub(crate) async fn delete_file<A: API>(
     State(_): State<AppState<A>>,
     Json(q): Json<FileQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let path = pipeline_file(&q.project, &q.name)?;
+    let path = pipeline_file(&q.name)?;
     std::fs::remove_file(&path).map_err(|_| AppError::not_found("no such pipeline"))?;
     Ok(Json(json!({ "ok": true })))
 }
 
 /// The layout sidecar next to a pipeline: `<name>.layout.json` holding node xy.
-fn layout_path(project: &str, file: &str) -> Result<PathBuf, AppError> {
-    Ok(pipeline_file(project, file)?.with_extension("layout.json"))
+fn layout_path(file: &str) -> Result<PathBuf, AppError> {
+    Ok(pipeline_file(file)?.with_extension("layout.json"))
 }
 
 /// GET /api/pipeline/graph?project=&name= — the workflow as JSON (for the visual
@@ -245,11 +247,11 @@ pub(crate) async fn read_graph<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<FileQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let path = pipeline_file(&q.project, &q.name)?;
+    let path = pipeline_file(&q.name)?;
     let content = std::fs::read_to_string(&path).map_err(|_| AppError::not_found("no such pipeline"))?;
     let workflow: Value = serde_yml::from_str(&content).unwrap_or_else(|_| json!({}));
     let (valid, error) = validate(&content);
-    let layout: Value = layout_path(&q.project, &q.name)
+    let layout: Value = layout_path(&q.name)
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -259,7 +261,6 @@ pub(crate) async fn read_graph<A: API>(
 
 #[derive(Deserialize)]
 pub(crate) struct GraphSave {
-    project: String,
     name: String,
     workflow: Value,
     layout: Option<Value>,
@@ -271,14 +272,14 @@ pub(crate) async fn save_graph<A: API>(
     State(_): State<AppState<A>>,
     Json(body): Json<GraphSave>,
 ) -> Result<Json<Value>, AppError> {
-    let path = pipeline_file(&body.project, &body.name)?;
+    let path = pipeline_file(&body.name)?;
     let yaml = serde_yml::to_string(&body.workflow)
         .map_err(|e| AppError::bad_request(format!("serialize workflow to yaml: {e}")))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     std::fs::write(&path, &yaml)?;
-    if let (Some(layout), Ok(lp)) = (&body.layout, layout_path(&body.project, &body.name)) {
+    if let (Some(layout), Ok(lp)) = (&body.layout, layout_path(&body.name)) {
         let _ = std::fs::write(lp, serde_json::to_string_pretty(layout).unwrap_or_default());
     }
     let (valid, error) = validate(&yaml);
@@ -336,17 +337,35 @@ fn forge_pipeline_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("forge-pipeline"))
 }
 
-/// POST /api/pipeline/run — run a workflow against its project (background).
+#[derive(Deserialize)]
+pub(crate) struct RunReq {
+    name: String,
+    /// Target working directory nodes default to (their `project:` field wins).
+    #[serde(default)]
+    dir: Option<String>,
+    /// Values for the workflow's declared `input:` fields.
+    #[serde(default)]
+    inputs: std::collections::BTreeMap<String, String>,
+}
+
+/// POST /api/pipeline/run — run a (global) workflow against a target directory
+/// with the given inputs, in the background. Runs persist to the global runs ws.
 pub(crate) async fn run_pipeline<A: API>(
     State(_): State<AppState<A>>,
-    Json(q): Json<FileQuery>,
+    Json(body): Json<RunReq>,
 ) -> Result<Json<Value>, AppError> {
-    let file = pipeline_file(&q.project, &q.name)?;
+    let file = pipeline_file(&body.name)?;
     if !file.exists() {
         return Err(AppError::not_found("no such pipeline"));
     }
-    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let ws = project.join(".forge-workspace");
+    let project = body
+        .dir
+        .as_deref()
+        .map(|d| PathBuf::from(shellexpand(d)))
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(home_dir);
+    let project = project.canonicalize().map_err(|_| AppError::bad_request("target directory does not exist"))?;
+    let ws = runs_ws();
     std::fs::create_dir_all(ws.join("pipelines"))?;
     let log = ws.join("pipelines").join(".last-run.log");
 
@@ -358,9 +377,13 @@ pub(crate) async fn run_pipeline<A: API>(
         .arg(&file)
         .arg("--project").arg(&project)
         .arg("--workspace").arg(&ws)
-        .arg("--isolate-mcp")
-        .stdout(Stdio::from(out))
-        .stderr(Stdio::from(err));
+        .arg("--isolate-mcp");
+    for (k, v) in &body.inputs {
+        if !v.trim().is_empty() {
+            cmd.arg("--input").arg(format!("{k}={v}"));
+        }
+    }
+    cmd.stdout(Stdio::from(out)).stderr(Stdio::from(err));
     // Spawn detached; a reaper thread waits so we don't leave a zombie.
     match cmd.spawn() {
         Ok(mut child) => {
@@ -523,13 +546,12 @@ pub(crate) async fn team_stop<A: API>(
 
 #[derive(Deserialize)]
 pub(crate) struct NodeLogQuery {
-    project: String,
     run: String,
     node: String,
 }
 
-/// GET /api/pipeline/node-log?project=&run=&node= — a node's live streamed
-/// stdout for a run (what the agent/command is printing right now).
+/// GET /api/pipeline/node-log?run=&node= — a node's live streamed stdout for a
+/// run (what the agent/command is printing right now).
 pub(crate) async fn node_log<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<NodeLogQuery>,
@@ -537,9 +559,7 @@ pub(crate) async fn node_log<A: API>(
     if [&q.run, &q.node].iter().any(|s| s.contains('/') || s.contains("..")) {
         return Err(AppError::bad_request("invalid id"));
     }
-    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let path = project
-        .join(".forge-workspace")
+    let path = runs_ws()
         .join("pipelines")
         .join(".log")
         .join(&q.run)
@@ -587,14 +607,9 @@ pub(crate) async fn team_board<A: API>(
     Ok(Json(json!({ "workspace": ws.to_string_lossy(), "running": running, "requests": requests, "messages": messages })))
 }
 
-/// GET /api/pipeline/runs?project=NAME — recent runs with per-node DAG status.
-pub(crate) async fn list_runs<A: API>(
-    State(_): State<AppState<A>>,
-    Query(q): Query<ProjectQuery>,
-) -> Result<Json<Value>, AppError> {
-    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let ws = project.join(".forge-workspace");
-    let runs = forge_workspace::pipeline::list_pipelines(&ws);
+/// GET /api/pipeline/runs — recent (global) runs with per-node DAG status.
+pub(crate) async fn list_runs<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    let runs = forge_workspace::pipeline::list_pipelines(&runs_ws());
     let runs_json: Vec<Value> = runs
         .iter()
         .take(12)
@@ -635,7 +650,7 @@ pub(crate) async fn list_runs<A: API>(
             })
         })
         .collect();
-    Ok(Json(json!({ "runs": runs_json })))
+    Json(json!({ "runs": runs_json }))
 }
 
 /// Expand a leading `~` to the home directory.
