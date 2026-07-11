@@ -517,6 +517,13 @@
     .pl-node .nh .badge { font-size: 8.5px; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; color: #fff; border-radius: 4px; padding: 1px 5px; }
     .pl-node .nh .badge.shell { background: #c98a2b; }
     .pl-node .nh .badge.claude { background: #7c5cff; }
+    .pl-node .nh .badge.setup { background: #3b82f6; }
+    .pl-foreach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+    .pl-foreach .pl-fe-toggle { display: flex; align-items: center; gap: 5px; font-weight: 600; }
+    .pl-foreach .pl-fe-field { display: flex; align-items: center; gap: 5px; }
+    .pl-foreach .pl-fe-field > label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .pl-foreach input, .pl-foreach select { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+    .pl-foreach input { min-width: 12ch; }
     .pl-node .nh .nid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-node .nh .acts { margin-left: auto; display: flex; gap: 7px; align-items: center; }
     .pl-node .nh .acts .e { font-size: 10px; color: #7c5cff; cursor: pointer; }
@@ -705,6 +712,7 @@
                 <button class="btn btn-ghost btn-sm" id="pl-auto">Auto-layout</button>
                 <span class="sl pl-hint">drag a node's ● out-port onto another node's ○ in-port to link (dependency)</span>
               </div>
+              <div class="pl-foreach" id="pl-foreach"></div>
               <div class="pl-canvas-wrap">
                 <div id="pl-canvas" class="pl-canvas">
                   <div id="pl-viewport" class="pl-viewport">
@@ -2037,7 +2045,7 @@
     function plSetEditor(content, label) {
       $('pl-editing').textContent = label; $('pl-editor').value = content; closeNodeModal();
       if (label === 'no pipeline open') { PL.file = null; PL.g = null; PL.sel = null; }
-      [...$('pl-viewport').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = '';
+      [...$('pl-viewport').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = ''; $('pl-foreach').innerHTML = '';
       $('pl-status').textContent = ''; $('pl-status').className = 'pl-status';
     }
     function plStatus(msg, err) { const s = $('pl-status'); s.textContent = msg; s.className = 'pl-status ' + (err ? 'err' : 'ok'); }
@@ -2119,7 +2127,7 @@
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
       const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
       $('pl-editor').value = f.content || '';
-      plShowValid(d); setTab(PL.tab); renderCanvas(); renderInspector(); loadFiles();
+      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles();
     }
     const PL_NODE_KEYS = ['mode', 'prompt', 'project', 'retries', 'depends_on', 'outputs'];
     const PL_WF_KEYS = ['name', 'vars', 'input', 'nodes'];
@@ -2136,9 +2144,19 @@
           _extra: extra,
         };
       }
-      // Preserve top-level keys we don't model (for_each, description, git_push…).
+      // Preserve top-level keys we don't model (description, git_push…); pull
+      // for_each out into an editable model.
       const wfExtra = {}; for (const k of Object.keys(wf)) if (!PL_WF_KEYS.includes(k)) wfExtra[k] = wf[k];
-      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout), extra: wfExtra };
+      let forEach = null; const fe = wfExtra.for_each;
+      if (fe) {
+        forEach = {
+          source: Array.isArray(fe.source) ? fe.source.join(', ') : (fe.source || ''),
+          as: fe.as || 'item', on_failure: fe.on_failure || 'continue',
+          before: Array.isArray(fe.before) ? fe.before.slice() : (Array.isArray(fe.setup) ? fe.setup.slice() : []),
+        };
+        delete wfExtra.for_each;
+      }
+      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout), extra: wfExtra, forEach };
       ensureLayout(g); return g;
     }
     function ensureLayout(g) {
@@ -2161,9 +2179,15 @@
         if (n.outputs && n.outputs.length) o.outputs = n.outputs;
         nodes[id] = o;
       }
-      // Start from preserved top-level extras (for_each, description…), then set ours.
+      // Start from preserved top-level extras (description…), then set ours.
       const wf = Object.assign({}, g.extra || {}, { name: g.name || 'workflow', input: g.input || {}, nodes });
       if (g.vars && Object.keys(g.vars).length) wf.vars = g.vars;
+      if (g.forEach) {
+        const fe = { source: g.forEach.source, as: g.forEach.as || 'item' };
+        if (g.forEach.on_failure && g.forEach.on_failure !== 'continue') fe.on_failure = g.forEach.on_failure;
+        if (g.forEach.before && g.forEach.before.length) fe.before = g.forEach.before;
+        wf.for_each = fe;
+      }
       return wf;
     }
 
@@ -2299,6 +2323,22 @@
       for (const id of Object.keys(PL.g.nodes)) vp.appendChild(nodeEl(id));
       drawEdges(); applyView();
     }
+    /* for_each (batch) config bar */
+    function renderForEach() {
+      const box = $('pl-foreach'); if (!box) return; box.innerHTML = '';
+      if (!PL.g) return;
+      const toggle = document.createElement('label'); toggle.className = 'pl-fe-toggle';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!PL.g.forEach;
+      cb.onchange = () => { PL.g.forEach = cb.checked ? { source: '', as: 'item', on_failure: 'continue', before: [] } : null; renderForEach(); renderCanvas(); };
+      toggle.appendChild(cb); toggle.appendChild(document.createTextNode(' for_each — run the DAG once per item'));
+      box.appendChild(toggle);
+      const fe = PL.g.forEach; if (!fe) return;
+      const field = (label, el) => { const w = document.createElement('span'); w.className = 'pl-fe-field'; const l = document.createElement('label'); l.textContent = label; w.appendChild(l); w.appendChild(el); box.appendChild(w); };
+      const src = document.createElement('input'); src.value = fe.source; src.placeholder = '{{input.ids}} or a,b,c'; src.style.minWidth = '20ch'; src.oninput = () => (fe.source = src.value); field('source', src);
+      const asIn = document.createElement('input'); asIn.value = fe.as; asIn.style.minWidth = '7ch'; asIn.oninput = () => { fe.as = asIn.value || 'item'; }; field('as', asIn);
+      const onf = document.createElement('select'); for (const o of ['continue', 'stop']) { const op = document.createElement('option'); op.value = o; op.textContent = o; if (fe.on_failure === o) op.selected = true; onf.appendChild(op); } onf.onchange = () => (fe.on_failure = onf.value); field('on_failure', onf);
+      const setup = document.createElement('input'); setup.value = (fe.before || []).join(', '); setup.placeholder = 'setup node ids (run once)'; setup.oninput = () => { fe.before = setup.value.split(',').map((s) => s.trim()).filter(Boolean); renderCanvas(); }; field('setup', setup);
+    }
     function nodeEl(id) {
       const n = PL.g.nodes[id], pos = PL.g.layout[id];
       const el = document.createElement('div'); el.className = 'pl-node' + (PL.sel === id ? ' sel' : ''); el.id = 'pln-' + id;
@@ -2311,7 +2351,9 @@
       const eb = document.createElement('span'); eb.className = 'e'; eb.textContent = 'edit'; eb.onclick = (e) => { e.stopPropagation(); openNodeModal(id); };
       const xb = document.createElement('span'); xb.className = 'x'; xb.textContent = '✕'; xb.onclick = (e) => { e.stopPropagation(); deleteNode(id); };
       acts.appendChild(eb); acts.appendChild(xb);
-      head.appendChild(badge); head.appendChild(nid); head.appendChild(acts);
+      head.appendChild(badge);
+      if (PL.g.forEach && (PL.g.forEach.before || []).includes(id)) { const sb = document.createElement('span'); sb.className = 'badge setup'; sb.textContent = 'setup'; head.appendChild(sb); }
+      head.appendChild(nid); head.appendChild(acts);
       const body = document.createElement('div'); body.className = 'nbody';
       if (n.project) { const pj = document.createElement('div'); pj.className = 'nproj'; pj.textContent = n.project; body.appendChild(pj); }
       const pr = document.createElement('div'); pr.className = 'nprompt'; pr.textContent = ((n.prompt || '').split('\n')[0] || '').slice(0, 60) || 'no prompt'; body.appendChild(pr);
