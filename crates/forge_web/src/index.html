@@ -499,7 +499,9 @@
     .pl-tab { font: inherit; font-size: 12px; padding: 3px 12px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
     .pl-tab.active { background: var(--hover); color: var(--text); font-weight: 600; }
     .pl-palette { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-    .pl-canvas-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 10px; align-items: stretch; }
+    .pl-canvas-wrap { display: block; }
+    .pl-node-modal { width: min(480px, 94vw); }
+    .pl-nm-body { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; }
     .pl-canvas { position: relative; height: 460px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; cursor: grab; background:
       radial-gradient(circle, rgba(127,127,127,.18) 1px, transparent 1px) 0 0 / 18px 18px; }
     .pl-canvas.panning { cursor: grabbing; }
@@ -527,14 +529,12 @@
     .pl-port.in { top: -7px; }
     .pl-port.out { bottom: -7px; background: #8a8f98; }
     .pl-port.out:hover, .pl-port.in.tgt { border-color: #7c5cff; background: #7c5cff; }
-    .pl-inspector { border: 1px solid var(--border); border-radius: 10px; padding: 10px; overflow-y: auto; height: 460px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }
     .pl-insp-row { display: flex; flex-direction: column; gap: 3px; }
     .pl-insp-row label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
-    .pl-inspector input, .pl-inspector select, .pl-inspector textarea { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
-    .pl-inspector textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; min-height: 90px; resize: vertical; }
+    .pl-nm-body input, .pl-nm-body select, .pl-nm-body textarea { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
+    .pl-nm-body textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; min-height: 110px; resize: vertical; }
     .pl-out-row { display: flex; gap: 4px; }
     .pl-out-row input { flex: 1; }
-    @media (max-width: 900px) { .pl-canvas-wrap { grid-template-columns: 1fr; } .pl-inspector { height: auto; max-height: 300px; } }
   </style>
 </head>
 <body>
@@ -716,7 +716,6 @@
                     <button class="btn btn-sm" id="pl-zfit" title="Reset view">⤢</button>
                   </div>
                 </div>
-                <div id="pl-inspector" class="pl-inspector"><span class="sl">select a node to edit it</span></div>
               </div>
             </div>
             <textarea id="pl-editor" class="pl-editor" style="display:none" spellcheck="false"></textarea>
@@ -724,6 +723,19 @@
           </div>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Node edit modal -->
+  <div class="pl-picker-overlay" id="pl-nodemodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b>✏️ Edit node</b><div style="flex:1"></div><button class="icon-btn" id="pl-nm-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="pl-nm-body"></div>
+      <div class="pl-picker-foot">
+        <button class="btn btn-ghost btn-sm" id="pl-nm-del" style="color:var(--danger,#e5484d)">Delete node</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="pl-nm-done">Done</button>
+      </div>
     </div>
   </div>
 
@@ -2023,10 +2035,10 @@
     $('pipeline-close').onclick = () => $('pipeline-overlay').classList.remove('open');
     $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
     function plSetEditor(content, label) {
-      $('pl-editing').textContent = label; $('pl-editor').value = content;
+      $('pl-editing').textContent = label; $('pl-editor').value = content; closeNodeModal();
       if (label === 'no pipeline open') { PL.file = null; PL.g = null; PL.sel = null; }
-      [...$('pl-canvas').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = '';
-      renderInspector(); $('pl-status').textContent = ''; $('pl-status').className = 'pl-status';
+      [...$('pl-viewport').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = '';
+      $('pl-status').textContent = ''; $('pl-status').className = 'pl-status';
     }
     function plStatus(msg, err) { const s = $('pl-status'); s.textContent = msg; s.className = 'pl-status ' + (err ? 'err' : 'ok'); }
     function plShowValid(d) { if (d.valid) plStatus('✓ valid workflow', false); else plStatus('✗ ' + (d.error || 'invalid'), true); }
@@ -2102,7 +2114,7 @@
                 layout: { id: {x,y} } } */
     PL.tab = PL.tab || 'visual';
     async function openFile(name) {
-      PL.file = name; PL.sel = null; $('pl-editing').textContent = name;
+      PL.file = name; PL.sel = null; closeNodeModal(); $('pl-editing').textContent = name;
       const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
       const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
@@ -2224,8 +2236,9 @@
       if (!PL.g) { plStatus('open or create a pipeline first', true); return; }
       const id = newNodeId(PL.g);
       PL.g.nodes[id] = { mode, prompt: mode === 'shell' ? 'echo hello' : 'Describe the task…', project: '', retries: 0, depends_on: [], outputs: [] };
-      const c = $('pl-canvas'); PL.g.layout[id] = { x: (c.scrollLeft || 0) + 40, y: (c.scrollTop || 0) + 40 };
-      PL.sel = id; renderCanvas(); renderInspector();
+      const g = toGraph($('pl-canvas').getBoundingClientRect().left + 60, $('pl-canvas').getBoundingClientRect().top + 60);
+      PL.g.layout[id] = { x: g.x, y: g.y };
+      openNodeModal(id);
     }
     async function loadRuns() {
       if (!PL.project) return;
@@ -2295,7 +2308,7 @@
       const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'shell' : 'agent';
       const nid = document.createElement('span'); nid.className = 'nid'; nid.textContent = id;
       const acts = document.createElement('span'); acts.className = 'acts';
-      const eb = document.createElement('span'); eb.className = 'e'; eb.textContent = 'edit'; eb.onclick = (e) => { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); };
+      const eb = document.createElement('span'); eb.className = 'e'; eb.textContent = 'edit'; eb.onclick = (e) => { e.stopPropagation(); openNodeModal(id); };
       const xb = document.createElement('span'); xb.className = 'x'; xb.textContent = '✕'; xb.onclick = (e) => { e.stopPropagation(); deleteNode(id); };
       acts.appendChild(eb); acts.appendChild(xb);
       head.appendChild(badge); head.appendChild(nid); head.appendChild(acts);
@@ -2307,7 +2320,8 @@
       el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
       const onHead = (e) => !e.target.closest('.acts');
       head.onmousedown = (e) => { if (onHead(e)) startDrag(e, id); };
-      head.onclick = (e) => { if (onHead(e)) { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); } };
+      head.ondblclick = (e) => { if (onHead(e)) { e.stopPropagation(); openNodeModal(id); } };
+      head.onclick = (e) => { if (onHead(e)) { e.stopPropagation(); PL.sel = id; [...$('pl-viewport').querySelectorAll('.pl-node.sel')].forEach((x) => x.classList.remove('sel')); document.getElementById('pln-' + id).classList.add('sel'); } };
       pout.onmousedown = (e) => startLink(e, id);
       return el;
     }
@@ -2367,52 +2381,57 @@
       document.onmousemove = null; document.onmouseup = null; renderCanvas(); renderInspector();
     }
     /* ---- inspector ---- */
-    function renderInspector() {
-      const box = $('pl-inspector'); if (!box) return; box.innerHTML = '';
-      if (!PL.g || !PL.sel || !PL.g.nodes[PL.sel]) { box.innerHTML = '<span class="sl">select a node to edit it</span>'; return; }
-      const id = PL.sel, n = PL.g.nodes[id];
+    /* node edit modal */
+    function nodeModalOpen() { return $('pl-nodemodal').classList.contains('open'); }
+    function openNodeModal(id) { PL.sel = id; renderCanvas(); $('pl-nodemodal').classList.add('open'); buildNodeForm($('pl-nm-body')); }
+    function closeNodeModal() { $('pl-nodemodal').classList.remove('open'); }
+    // Existing call sites use renderInspector() to "refresh the editor"; now that
+    // means re-rendering the modal body when it's open.
+    function renderInspector() { if (nodeModalOpen() && PL.g && PL.sel && PL.g.nodes[PL.sel]) buildNodeForm($('pl-nm-body')); else if (nodeModalOpen() && !(PL.g && PL.g.nodes[PL.sel])) closeNodeModal(); }
+    $('pl-nm-close').onclick = closeNodeModal;
+    $('pl-nm-done').onclick = closeNodeModal;
+    $('pl-nm-del').onclick = () => { if (PL.sel) deleteNode(PL.sel); closeNodeModal(); };
+    function buildNodeForm(box) {
+      box.innerHTML = ''; const id = PL.sel, n = PL.g && PL.g.nodes[id]; if (!n) return;
       const row = (label, el) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(el); box.appendChild(r); };
       const idIn = document.createElement('input'); idIn.value = id;
       idIn.onchange = () => { const nid = idIn.value.trim(); if (!nid || nid === id || PL.g.nodes[nid]) { idIn.value = id; return; } renameNode(id, nid); };
-      row('id', idIn);
+      row('node id', idIn);
       const modeSel = document.createElement('select');
       for (const m of ['claude', 'shell']) { const o = document.createElement('option'); o.value = m; o.textContent = m === 'claude' ? 'agent (forge -p)' : 'shell'; if (n.mode === m) o.selected = true; modeSel.appendChild(o); }
-      modeSel.onchange = () => { n.mode = modeSel.value; renderCanvas(); renderInspector(); };
+      modeSel.onchange = () => { n.mode = modeSel.value; renderCanvas(); buildNodeForm(box); };
       row('mode', modeSel);
       const pjIn = document.createElement('input'); pjIn.value = n.project || ''; pjIn.placeholder = 'e.g. {{input.project}} or a path (optional)';
       pjIn.oninput = () => { n.project = pjIn.value; renderCanvas(); };
       row('project / cwd', pjIn);
       const pr = document.createElement('textarea'); pr.value = n.prompt || '';
-      pr.oninput = () => { n.prompt = pr.value; const b = document.querySelector('#pln-' + id + ' .nbody'); if (b) b.textContent = pr.value.slice(0, 90); };
+      pr.oninput = () => { n.prompt = pr.value; const b = document.querySelector('#pln-' + id + ' .nprompt'); if (b) b.textContent = ((pr.value.split('\n')[0] || '').slice(0, 60)) || 'no prompt'; };
       row(n.mode === 'shell' ? 'command' : 'prompt', pr);
       const outWrap = document.createElement('div');
       const renderOuts = () => {
         outWrap.innerHTML = '';
         (n.outputs || []).forEach((o, i) => {
           const r = document.createElement('div'); r.className = 'pl-out-row';
-          const nm = document.createElement('input'); nm.value = o.name; nm.placeholder = 'name'; nm.oninput = () => (o.name = nm.value);
+          const nm = document.createElement('input'); nm.value = o.name; nm.placeholder = 'name'; nm.oninput = () => { o.name = nm.value; renderCanvas(); };
           const ex = document.createElement('select'); for (const x of ['result', 'stdout', 'git_diff']) { const op = document.createElement('option'); op.value = x; op.textContent = x; if (o.extract === x) op.selected = true; ex.appendChild(op); } ex.onchange = () => (o.extract = ex.value);
-          const rm = document.createElement('button'); rm.className = 'btn btn-ghost btn-sm'; rm.textContent = '✕'; rm.onclick = () => { n.outputs.splice(i, 1); renderOuts(); };
+          const rm = document.createElement('button'); rm.className = 'btn btn-ghost btn-sm'; rm.textContent = '✕'; rm.onclick = () => { n.outputs.splice(i, 1); renderOuts(); renderCanvas(); };
           r.appendChild(nm); r.appendChild(ex); r.appendChild(rm); outWrap.appendChild(r);
         });
-        const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ output'; add.onclick = () => { n.outputs = n.outputs || []; n.outputs.push({ name: 'out', extract: n.mode === 'shell' ? 'stdout' : 'result' }); renderOuts(); };
+        const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ output'; add.onclick = () => { n.outputs = n.outputs || []; n.outputs.push({ name: 'out', extract: n.mode === 'shell' ? 'stdout' : 'result' }); renderOuts(); renderCanvas(); };
         outWrap.appendChild(add);
       };
       renderOuts(); row('outputs', outWrap);
       if (n.depends_on && n.depends_on.length) {
         const dw = document.createElement('div'); dw.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px';
-        n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); renderInspector(); }; dw.appendChild(t); });
-        row('depends on', dw);
+        n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove dependency'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); buildNodeForm(box); }; dw.appendChild(t); });
+        row('depends on (edit on canvas)', dw);
       }
-      const del = document.createElement('button'); del.className = 'btn btn-ghost btn-sm'; del.textContent = 'Delete node'; del.style.color = 'var(--danger,#e5484d)';
-      del.onclick = () => deleteNode(id);
-      box.appendChild(del);
     }
     function renameNode(oldId, nid) {
       const g = PL.g; g.nodes[nid] = g.nodes[oldId]; delete g.nodes[oldId];
       g.layout[nid] = g.layout[oldId]; delete g.layout[oldId];
       for (const k of Object.keys(g.nodes)) g.nodes[k].depends_on = g.nodes[k].depends_on.map((x) => (x === oldId ? nid : x));
-      PL.sel = nid; renderCanvas(); renderInspector();
+      PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
     }
 
     // Renders one framed stats card per connected platform, each with a small
