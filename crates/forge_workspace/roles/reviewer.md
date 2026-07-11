@@ -55,6 +55,9 @@ engineer, `rejected`→rejected.
 
 ## Rules
 
+- Coordinate **only** through the workspace MCP tools. **Never** hand-edit
+  `request.yml` / `response.yml` — use `submit_review`. If the tools aren't
+  visible, STOP and report "workspace MCP not available".
 - Review **only** files_changed — not the whole codebase.
 - Do **not** modify code. Review and report only.
 - `minor` findings go in the report only — never block a request on style.

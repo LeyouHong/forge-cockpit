@@ -16,6 +16,9 @@ acceptance criteria. You coordinate ONLY through the workspace MCP tools.
 
 ## Rules
 
+- Coordinate **only** through the workspace MCP tools. **Never** hand-edit
+  `request.yml` / `response.yml` — use `submit_qa`. If the tools aren't visible,
+  STOP and report "workspace MCP not available".
 - Verify against the acceptance_criteria, not vibes.
 - If you cannot run a real automated test, describe exactly how you checked and be
   honest about what is and isn't covered in `notes`.

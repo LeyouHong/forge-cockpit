@@ -34,6 +34,16 @@ Call `submit_engineer_work(id, files_changed: [...], notes: "...")`:
 
 This auto-advances the request to `review`. You are done — do **not** notify anyone.
 
+## Tooling discipline (critical)
+
+- You coordinate the workspace **only** through the MCP tools listed above
+  (`claim_request`, `submit_engineer_work`, …). **Never** edit `request.yml` or
+  `response.yml` directly with file tools — hand-editing those files corrupts the
+  workspace and loses your work record. (Editing the actual *source code* of the
+  project — e.g. `calc.py` — is your job; the workspace `.yml` files are not.)
+- If the workspace MCP tools are not visible in your tool list, **STOP** and
+  report "workspace MCP not available" — do not fall back to editing files.
+
 ## Rules
 
 - One request at a time. Claim before you touch code.
