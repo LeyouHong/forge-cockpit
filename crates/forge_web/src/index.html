@@ -518,6 +518,17 @@
     .pl-node .nh .badge.shell { background: #c98a2b; }
     .pl-node .nh .badge.claude { background: #7c5cff; }
     .pl-node .nh .badge.setup { background: #3b82f6; }
+    .pl-node .nh .nstat { width: 9px; height: 9px; border-radius: 50%; background: transparent; flex: 0 0 auto; transition: background .2s; }
+    .pl-node.run-pending .nstat { background: #c7c7c7; }
+    .pl-node.run-running { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .pl-node.run-running .nstat { background: #3b82f6; animation: plpulse 1s ease-in-out infinite; }
+    .pl-node.run-done { border-color: #2e9e44; }
+    .pl-node.run-done .nstat { background: #2e9e44; }
+    .pl-node.run-failed { border-color: #e5484d; box-shadow: 0 0 0 2px rgba(229,72,77,.22); }
+    .pl-node.run-failed .nstat { background: #e5484d; }
+    .pl-node.run-skipped { opacity: .55; }
+    .pl-node.run-skipped .nstat { background: #9ca3af; }
+    @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
     .pl-foreach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
     .pl-foreach .pl-fe-toggle { display: flex; align-items: center; gap: 5px; font-weight: 600; }
     .pl-foreach .pl-fe-field { display: flex; align-items: center; gap: 5px; }
@@ -2040,7 +2051,7 @@
     const PL_COLOR = { done: '#2e9e44', running: '#3b82f6', failed: '#e5484d', skipped: '#9ca3af', pending: '#c7c7c7' };
     function openPipeline() { $('pipeline-overlay').classList.add('open'); loadProjects(); }
     $('pipeline-open').onclick = openPipeline;
-    $('pipeline-close').onclick = () => $('pipeline-overlay').classList.remove('open');
+    $('pipeline-close').onclick = () => { stopRunPoll(); $('pipeline-overlay').classList.remove('open'); };
     $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
     function plSetEditor(content, label) {
       $('pl-editing').textContent = label; $('pl-editor').value = content; closeNodeModal();
@@ -2122,7 +2133,7 @@
                 layout: { id: {x,y} } } */
     PL.tab = PL.tab || 'visual';
     async function openFile(name) {
-      PL.file = name; PL.sel = null; closeNodeModal(); $('pl-editing').textContent = name;
+      PL.file = name; PL.sel = null; closeNodeModal(); stopRunPoll(); $('pl-editing').textContent = name;
       const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
       const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
@@ -2248,9 +2259,42 @@
       const r = await api('/api/pipeline/run', plBody({ b: { project: PL.project, name: PL.file } }));
       const d = await r.json();
       if (!r.ok) { plStatus(d.error || 'run failed to start', true); return; }
-      plStatus('▶ run started — watch "Recent runs" (agent nodes take a bit)', false);
-      let n = 0; const t = setInterval(() => { loadRuns(); if (++n > 48 || !$('pipeline-overlay').classList.contains('open')) clearInterval(t); }, 2500);
+      plStatus('▶ run started — nodes light up as they run', false);
+      startRunPoll();
     };
+    /* live run-status coloring on the canvas */
+    function clearRunStatus() {
+      if (!PL.g) return;
+      for (const id of Object.keys(PL.g.nodes)) { const el = document.getElementById('pln-' + id); if (el) el.classList.remove('run-pending', 'run-running', 'run-done', 'run-failed', 'run-skipped'); }
+    }
+    function paintRunStatus(map) {
+      if (!PL.g) return;
+      for (const id of Object.keys(PL.g.nodes)) {
+        const el = document.getElementById('pln-' + id); if (!el) continue;
+        el.classList.remove('run-pending', 'run-running', 'run-done', 'run-failed', 'run-skipped');
+        if (map[id]) el.classList.add('run-' + map[id]);
+      }
+    }
+    async function pollRunOnce() {
+      if (!PL.project || !PL.g) return null;
+      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => null);
+      if (!d) return null;
+      const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+      if (!mine) return null;
+      const map = {}; for (const nd of (mine.nodes || [])) map[nd.id] = nd.status;
+      paintRunStatus(map);
+      return mine.status;
+    }
+    function stopRunPoll() { if (PL.runPoll) { clearInterval(PL.runPoll); PL.runPoll = null; } }
+    function startRunPoll() {
+      stopRunPoll(); clearRunStatus();
+      let n = 0;
+      PL.runPoll = setInterval(async () => {
+        loadRuns();
+        const st = await pollRunOnce();
+        if (st === 'done' || st === 'failed' || ++n > 90 || !$('pipeline-overlay').classList.contains('open')) stopRunPoll();
+      }, 2000);
+    }
 
     /* palette */
     $('pl-add-shell').onclick = () => addNode('shell');
@@ -2345,6 +2389,8 @@
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
       const pin = document.createElement('div'); pin.className = 'pl-port in'; pin.dataset.id = id;
       const head = document.createElement('div'); head.className = 'nh';
+      const stat = document.createElement('span'); stat.className = 'nstat';
+      head.appendChild(stat);
       const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'shell' : 'agent';
       const nid = document.createElement('span'); nid.className = 'nid'; nid.textContent = id;
       const acts = document.createElement('span'); acts.className = 'acts';
