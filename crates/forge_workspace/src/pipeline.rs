@@ -73,6 +73,20 @@ pub struct WorkflowNode {
     /// Extra attempts on failure (0 = fail-fast).
     #[serde(default)]
     pub retries: u32,
+    /// Postcondition check: on failure, instead of failing the pipeline, re-run
+    /// `replan_target` and everything downstream of it, up to `max_replan` times.
+    #[serde(default)]
+    pub verify: bool,
+    /// Node to re-run when this verify node fails (required if `verify`).
+    #[serde(default)]
+    pub replan_target: Option<String>,
+    /// Re-plan budget (default 1: verify → redo once → accept failure).
+    #[serde(default = "one")]
+    pub max_replan: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +234,17 @@ fn validate(wf: &Workflow) -> Result<()> {
                 bail!("node `{}` depends on unknown node `{}`", n.id, d);
             }
         }
+        if n.verify {
+            let Some(target) = n.replan_target.as_deref() else {
+                bail!("verify node `{}` needs a `replan_target`", n.id);
+            };
+            if !ids.contains(target) {
+                bail!("verify node `{}` replan_target `{}` does not exist", n.id, target);
+            }
+            if !downstream_of(wf, target).contains(n.id.as_str()) {
+                bail!("verify node `{}` must be downstream of its replan_target `{}`", n.id, target);
+            }
+        }
     }
     // Cycle check: repeatedly peel nodes whose deps are all resolved.
     let mut resolved: HashSet<&str> = HashSet::new();
@@ -261,6 +286,10 @@ pub struct NodeState {
     pub outputs: BTreeMap<String, String>,
     #[serde(default)]
     pub attempts: u32,
+    /// How many times this verify node has triggered a re-plan. Survives the
+    /// subtree reset (so the budget is not lost when the node is re-run).
+    #[serde(default)]
+    pub replan_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -416,7 +445,7 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
         .map(|id| {
             (
                 id.clone(),
-                NodeState { status: NodeStatus::Pending, outputs: Default::default(), attempts: 0, error: None },
+                NodeState { status: NodeStatus::Pending, outputs: Default::default(), attempts: 0, replan_count: 0, error: None },
             )
         })
         .collect();
@@ -577,16 +606,33 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
                     println!("  ✓ {} done", done.id);
                 }
                 Err(e) => {
-                    let node = wf.node(&done.id).unwrap();
-                    let st = p.nodes.get_mut(&done.id).unwrap();
-                    if st.attempts <= node.retries {
-                        // Reset to pending for another attempt.
-                        st.status = NodeStatus::Pending;
-                        println!("  ↻ {} failed (attempt {}/{}) — retrying: {}", done.id, st.attempts, node.retries + 1, e);
+                    let node = wf.node(&done.id).unwrap().clone();
+                    if node.verify {
+                        // Postcondition failed: re-plan from the target instead of
+                        // failing, until the budget is spent.
+                        let count = p.nodes[&done.id].replan_count;
+                        if count < node.max_replan {
+                            let target = node.replan_target.clone().unwrap();
+                            p.nodes.get_mut(&done.id).unwrap().replan_count = count + 1;
+                            reset_subtree(wf, &mut p, &target);
+                            println!("  ↺ verify {} failed → re-plan {}/{} from `{}`: {}", done.id, count + 1, node.max_replan, target, e);
+                        } else {
+                            let st = p.nodes.get_mut(&done.id).unwrap();
+                            st.status = NodeStatus::Failed;
+                            st.error = Some(format!("verify failed after {} re-plan(s): {e}", node.max_replan));
+                            println!("  ✗ verify {} failed after {} re-plan(s): {}", done.id, node.max_replan, e);
+                        }
                     } else {
-                        st.status = NodeStatus::Failed;
-                        st.error = Some(e.clone());
-                        println!("  ✗ {} failed: {}", done.id, e);
+                        let st = p.nodes.get_mut(&done.id).unwrap();
+                        if st.attempts <= node.retries {
+                            // Reset to pending for another attempt.
+                            st.status = NodeStatus::Pending;
+                            println!("  ↻ {} failed (attempt {}/{}) — retrying: {}", done.id, st.attempts, node.retries + 1, e);
+                        } else {
+                            st.status = NodeStatus::Failed;
+                            st.error = Some(e.clone());
+                            println!("  ✗ {} failed: {}", done.id, e);
+                        }
                     }
                 }
             }
@@ -633,6 +679,41 @@ fn finalize(pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, any_failed: bool) 
 impl Pipeline {
     fn status_str(&self) -> String {
         format!("{:?}", self.status).to_lowercase()
+    }
+}
+
+/// Every node that transitively depends on `root` (excludes `root` itself).
+fn downstream_of<'a>(wf: &'a Workflow, root: &str) -> HashSet<&'a str> {
+    let mut set: HashSet<&str> = HashSet::new();
+    loop {
+        let before = set.len();
+        for n in &wf.nodes {
+            if set.contains(n.id.as_str()) {
+                continue;
+            }
+            if n.depends_on.iter().any(|d| d == root || set.contains(d.as_str())) {
+                set.insert(n.id.as_str());
+            }
+        }
+        if set.len() == before {
+            break;
+        }
+    }
+    set
+}
+
+/// Reset `root` and everything downstream of it to pending for a re-plan pass.
+/// `replan_count` is deliberately preserved so the budget survives the reset.
+fn reset_subtree(wf: &Workflow, p: &mut Pipeline, root: &str) {
+    let mut set = downstream_of(wf, root);
+    set.insert(root);
+    for id in set {
+        if let Some(st) = p.nodes.get_mut(id) {
+            st.status = NodeStatus::Pending;
+            st.outputs.clear();
+            st.attempts = 0;
+            st.error = None;
+        }
     }
 }
 
@@ -877,7 +958,7 @@ mod tests {
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "design".to_string(),
-            NodeState { status: NodeStatus::Done, outputs: map(&[("spec", "THE SPEC")]), attempts: 1, error: None },
+            NodeState { status: NodeStatus::Done, outputs: map(&[("spec", "THE SPEC")]), attempts: 1, replan_count: 0, error: None },
         );
         let input = map(&[("feature", "login")]);
         let vars = map(&[("project", "app")]);
@@ -986,6 +1067,31 @@ nodes:
   b: { prompt: y, depends_on: [a] }
 "#;
         assert!(parse_workflow(yaml).unwrap_err().to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn verify_requires_replan_target() {
+        let yaml = r#"
+name: v
+input: {}
+nodes:
+  a: { mode: shell, prompt: "true" }
+  v: { depends_on: [a], mode: shell, verify: true, prompt: "false" }
+"#;
+        assert!(parse_workflow(yaml).unwrap_err().to_string().contains("replan_target"));
+    }
+
+    #[test]
+    fn verify_must_be_downstream_of_target() {
+        let yaml = r#"
+name: v
+input: {}
+nodes:
+  a: { mode: shell, prompt: "true" }
+  b: { mode: shell, prompt: "true" }
+  v: { depends_on: [a], mode: shell, verify: true, replan_target: b, prompt: "false" }
+"#;
+        assert!(parse_workflow(yaml).unwrap_err().to_string().contains("downstream"));
     }
 
     #[test]
