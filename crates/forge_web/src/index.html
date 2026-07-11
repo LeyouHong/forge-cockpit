@@ -2376,7 +2376,7 @@
       // capture the newest run for the open workflow → per-node outputs (shown in the edit modal)
       if (PL.g) {
         const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
-        PL.runOutputs = {};
+        PL.runOutputs = {}; PL.runId = mine ? mine.id : null;
         if (mine) for (const n of (mine.nodes || [])) PL.runOutputs[n.id] = { outputs: n.outputs || {}, status: n.status, error: n.error };
         refreshNodeOutputs();
       }
@@ -2552,7 +2552,9 @@
     /* node edit modal */
     function nodeModalOpen() { return $('pl-nodemodal').classList.contains('open'); }
     function openNodeModal(id) { PL.sel = id; renderCanvas(); $('pl-nodemodal').classList.add('open'); buildNodeForm($('pl-nm-body')); }
-    function closeNodeModal() { $('pl-nodemodal').classList.remove('open'); }
+    function closeNodeModal() { stopNodeLogPoll(); $('pl-nodemodal').classList.remove('open'); }
+    function stopNodeLogPoll() { if (PL.logPoll) { clearInterval(PL.logPoll); PL.logPoll = null; } }
+    function stripAnsiJs(s) { return (s || '').replace(/\[[0-9;?]*[a-zA-Z]/g, ''); }
     // Existing call sites use renderInspector() to "refresh the editor"; now that
     // means re-rendering the modal body when it's open.
     function renderInspector() { if (nodeModalOpen() && PL.g && PL.sel && PL.g.nodes[PL.sel]) buildNodeForm($('pl-nm-body')); else if (nodeModalOpen() && !(PL.g && PL.g.nodes[PL.sel])) closeNodeModal(); }
@@ -2606,6 +2608,30 @@
           r.appendChild(oh); r.appendChild(ta);
         }
         box.appendChild(r);
+      }
+      // live run log (streamed stdout) — polls while the node is running
+      stopNodeLogPoll();
+      if (PL.runId) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label'); l.textContent = 'run log'; r.appendChild(l);
+        const ta = document.createElement('textarea'); ta.readOnly = true; ta.style.minHeight = '90px'; ta.placeholder = '(no log for this node yet)'; r.appendChild(ta);
+        box.appendChild(r);
+        const fetchLog = async () => {
+          const d = await (await api('/api/pipeline/node-log?project=' + encodeURIComponent(PL.project) + '&run=' + encodeURIComponent(PL.runId) + '&node=' + encodeURIComponent(id))).json().catch(() => null);
+          if (!d) return;
+          const atBottom = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 8;
+          ta.value = stripAnsiJs(d.log || '').slice(-8000);
+          if (atBottom) ta.scrollTop = ta.scrollHeight;
+        };
+        fetchLog();
+        if ((PL.runOutputs[id] || {}).status === 'running') {
+          PL.logPoll = setInterval(async () => {
+            if (!nodeModalOpen()) { stopNodeLogPoll(); return; }
+            await fetchLog();
+            const cur = (PL.runOutputs[id] || {}).status;
+            if (cur && cur !== 'running') stopNodeLogPoll();
+          }, 1500);
+        }
       }
     }
     function renameNode(oldId, nid) {

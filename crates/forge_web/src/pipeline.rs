@@ -521,6 +521,33 @@ pub(crate) async fn team_stop<A: API>(
     Ok(Json(json!({ "stopped": true })))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct NodeLogQuery {
+    project: String,
+    run: String,
+    node: String,
+}
+
+/// GET /api/pipeline/node-log?project=&run=&node= — a node's live streamed
+/// stdout for a run (what the agent/command is printing right now).
+pub(crate) async fn node_log<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<NodeLogQuery>,
+) -> Result<Json<Value>, AppError> {
+    if [&q.run, &q.node].iter().any(|s| s.contains('/') || s.contains("..")) {
+        return Err(AppError::bad_request("invalid id"));
+    }
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let path = project
+        .join(".forge-workspace")
+        .join("pipelines")
+        .join(".log")
+        .join(&q.run)
+        .join(format!("{}.txt", q.node));
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    Ok(Json(json!({ "log": content })))
+}
+
 /// GET /api/team?project=NAME — the resident team's board: work requests (with
 /// their pipeline stage + who claimed them) and the message-bus inbox, read from
 /// `<project>/.forge-workspace` (what `forge-workspace-run` writes). Pure read.
