@@ -10,8 +10,12 @@
 //!                       it is marked stuck and left alone (no infinite token burn)
 //!   - daemon mode     — keep running and pick up new requests (--daemon)
 //!
+//! With --goal "<objective>" a coordinator (Lead) runs first and decomposes the
+//! objective into requests on the board, which the pipeline then works.
+//!
 //!   forge-workspace-run --project DIR [--workspace DIR] [--forge PATH]
-//!       [--concurrent N] [--max-attempts N] [--poll-secs N] [--daemon] [--dry-run]
+//!       [--goal "<objective>"] [--concurrent N] [--max-attempts N]
+//!       [--poll-secs N] [--daemon] [--dry-run]
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -25,6 +29,7 @@ use serde_json::json;
 const ENGINEER_SOP: &str = include_str!("../../roles/engineer.md");
 const REVIEWER_SOP: &str = include_str!("../../roles/reviewer.md");
 const QA_SOP: &str = include_str!("../../roles/qa.md");
+const COORDINATOR_SOP: &str = include_str!("../../roles/coordinator.md");
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     if let Some(i) = args.iter().position(|a| a == name) {
@@ -74,6 +79,12 @@ struct Cfg {
     poll: Duration,
     daemon: bool,
     dry_run: bool,
+    /// When set (via --goal), a coordinator agent decomposes it into requests on
+    /// the board at startup before the pipeline runs.
+    goal: Option<String>,
+    /// When set (via --plan-only), run just the coordinator and exit — decompose
+    /// the goal, print the board, don't work the pipeline.
+    plan_only: bool,
     /// When set (via --isolate-mcp), spawned agents run with FORGE_CONFIG=this,
     /// an isolated base_path exposing ONLY the workspace MCP.
     home: Option<PathBuf>,
@@ -123,6 +134,8 @@ fn run() -> anyhow::Result<()> {
         poll: Duration::from_secs(flag(&mut args, "--poll-secs").and_then(|s| s.parse().ok()).unwrap_or(3)),
         daemon: has(&mut args, "--daemon"),
         dry_run: has(&mut args, "--dry-run"),
+        goal: flag(&mut args, "--goal").filter(|g| !g.trim().is_empty()),
+        plan_only: has(&mut args, "--plan-only"),
         home,
     };
 
@@ -132,9 +145,23 @@ fn run() -> anyhow::Result<()> {
         ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
     }
     println!(
-        "▶ orchestrator: project={} concurrent={} max-attempts={} daemon={} dry-run={} isolate-mcp={}",
-        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.daemon, cfg.dry_run, cfg.home.is_some()
+        "▶ orchestrator: project={} concurrent={} max-attempts={} daemon={} dry-run={} isolate-mcp={}{}",
+        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.daemon, cfg.dry_run, cfg.home.is_some(),
+        cfg.goal.as_deref().map(|g| format!(" goal={g:?}")).unwrap_or_default()
     );
+
+    // Planning phase (⑧): a coordinator turns the goal into requests on the board
+    // before the pipeline runs. Synchronous — the board must be populated first.
+    if let Some(goal) = cfg.goal.clone() {
+        run_coordinator(&cfg, &goal);
+        if cfg.plan_only {
+            println!("\n===== board after planning =====");
+            for r in request::list_requests(&cfg.workspace, None)? {
+                println!("  {}  [{:?}]  {}", r.id, r.status, r.title);
+            }
+            return Ok(());
+        }
+    }
 
     let state = Arc::new(Mutex::new(State { running: HashSet::new(), trackers: HashMap::new() }));
     let cfg = Arc::new(cfg);
@@ -232,6 +259,7 @@ fn topology(workspace: &Path, role: &str) -> String {
          You are one agent on a pipeline team. Work flows **engineer → reviewer → qa → done**, \
          handed off automatically by request status. Agents coordinate ONLY through the shared \
          request documents and messages — never talk to each other directly.\n\
+         - **coordinator** (Lead) — decomposes goals into requests (upstream of all)\n\
          - **engineer** — implements requests in `open` / `in_progress`\n\
          - **reviewer** — reviews requests in `review` (downstream of engineer)\n\
          - **qa** — verifies requests in `qa` (downstream of reviewer)\n\n\
@@ -252,6 +280,33 @@ fn topology(workspace: &Path, role: &str) -> String {
     }
     t.push_str(&format!("\nYou are the **{role}** (agent name `{role}-1`).\n"));
     t
+}
+
+/// Run the coordinator (Lead) once, synchronously, to decompose `goal` into
+/// requests on the board. Blocks until the agent finishes so the pipeline sees a
+/// populated board. In dry-run it only announces what it would do.
+fn run_coordinator(cfg: &Cfg, goal: &str) {
+    let before = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(0);
+    println!("  ⚑ coordinator planning{}: {goal}", if cfg.dry_run { " (dry-run)" } else { "" });
+    if cfg.dry_run {
+        return;
+    }
+    let topo = topology(&cfg.workspace, "coordinator");
+    let prompt = format!(
+        "{topo}\n{sop}\n\n---\nYou are agent `coordinator-1`. The workspace tools are available as \
+         MCP tools (create_request, list_requests, get_request, send_message). Your objective:\n\n\
+         {goal}\n\nFollow your SOP: explore the project, then break this objective into focused \
+         work requests via create_request. Start now.",
+        sop = COORDINATOR_SOP,
+    );
+    let mut cmd = Command::new(&cfg.forge);
+    cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
+    if let Some(home) = &cfg.home {
+        cmd.env("FORGE_CONFIG", home);
+    }
+    let _ = cmd.status();
+    let after = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(before);
+    println!("  ⚑ coordinator done — {} request(s) created.", after.saturating_sub(before));
 }
 
 /// Spawn a role agent for a request on its own thread; clear `running` when done.
