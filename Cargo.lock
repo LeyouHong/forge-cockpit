@@ -2862,6 +2862,7 @@ dependencies = [
  "base64 0.22.1",
  "forge_api",
  "forge_domain",
+ "forge_workspace",
  "futures",
  "imap",
  "native-tls",
@@ -2873,6 +2874,20 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "forge_workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "forge_domain",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "tempfile",
 ]
 
 [[package]]

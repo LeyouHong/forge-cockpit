@@ -110,12 +110,47 @@ pub fn get_inbox(root: &Path, agent: &str, unread_only: bool) -> Result<Vec<Mess
     Ok(out)
 }
 
+/// List every message on the bus, newest first, WITHOUT marking anything read.
+/// For dashboards / monitoring — unlike [`get_inbox`] this is a pure read.
+pub fn list_messages(root: &Path) -> Result<Vec<Message>> {
+    let dir = msg_dir(root);
+    let mut out = Vec::new();
+    if !dir.exists() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yml") {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(m) = serde_yml::from_str::<Message>(&text)
+        {
+            out.push(m);
+        }
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // newest first
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn list_messages_is_pure_read() {
+        let d = tmp();
+        send_message(d.path(), "a", "b", "hi", Category::Ticket).unwrap();
+        send_message(d.path(), "a", "c", "yo", Category::Notification).unwrap();
+        // lists everything regardless of recipient, newest first
+        let all = list_messages(d.path()).unwrap();
+        assert_eq!(all.len(), 2);
+        // does NOT mark read — an unread inbox poll still sees the message
+        assert_eq!(get_inbox(d.path(), "b", true).unwrap().len(), 1);
     }
 
     #[test]

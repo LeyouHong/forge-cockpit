@@ -15,7 +15,7 @@
 pub mod message;
 pub mod request;
 
-pub use message::{get_inbox, send_message, Category, Message};
+pub use message::{get_inbox, list_messages, send_message, Category, Message};
 pub use request::{
     claim_request, create_request, get_request, list_requests, update_response, Finding, NewRequest,
     QaResult, RequestDocument, RequestStatus, ResponseDocument, ReviewResult, Section, Severity,
