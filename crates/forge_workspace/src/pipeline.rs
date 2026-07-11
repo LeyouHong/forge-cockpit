@@ -86,6 +86,47 @@ pub struct Workflow {
     pub input_defaults: BTreeMap<String, String>,
     /// Nodes in author order (also the display order).
     pub nodes: Vec<WorkflowNode>,
+    /// When set, run the whole DAG once per item in the source list.
+    pub for_each: Option<ForEach>,
+}
+
+/// Batch spec: run the whole DAG once per item, sequentially. Each iteration
+/// resets per-node state; node prompts see the current item via `{{<as>}}` and
+/// position via `{{loop.index}}` / `{{loop.total}}`. (Non-goals, matching the
+/// reference impl: nested loops, parallel iterations, dynamic source from an
+/// upstream node — `before:` setup nodes are not ported yet.)
+#[derive(Debug, Clone)]
+pub struct ForEach {
+    pub source: Source,
+    /// Separator when `source` resolves to a string. Default ",".
+    pub split: String,
+    /// Variable name the current item is exposed as. Default "item".
+    pub as_name: String,
+    pub on_failure: OnFailure,
+}
+
+#[derive(Debug, Clone)]
+pub enum Source {
+    /// A templated string (`"{{input.pr_ids}}"`), split into items.
+    Template(String),
+    /// A literal YAML list.
+    Items(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnFailure {
+    /// Later iterations still run; the pipeline ends `failed` if any iter failed.
+    Continue,
+    /// The first failing iteration halts the whole run.
+    Stop,
+}
+
+/// The current-item context threaded into template resolution during a for_each.
+pub struct EachCtx<'a> {
+    pub as_name: &'a str,
+    pub item: &'a str,
+    pub index: usize,
+    pub total: usize,
 }
 
 impl Workflow {
@@ -104,6 +145,25 @@ struct WorkflowRaw {
     #[serde(default)]
     input: serde_yml::Mapping,
     nodes: serde_yml::Mapping,
+    #[serde(default)]
+    for_each: Option<serde_yml::Value>,
+}
+
+fn parse_for_each(v: &serde_yml::Value) -> Result<ForEach> {
+    let m = v.as_mapping().context("for_each must be a mapping")?;
+    let source = match m.get("source") {
+        Some(serde_yml::Value::Sequence(seq)) => Source::Items(seq.iter().map(value_to_string).collect()),
+        Some(serde_yml::Value::String(s)) => Source::Template(s.clone()),
+        Some(other) => Source::Template(value_to_string(other)),
+        None => bail!("for_each needs a `source` (a list or a templated string)"),
+    };
+    let split = m.get("split").and_then(|x| x.as_str()).unwrap_or(",").to_string();
+    let as_name = m.get("as").and_then(|x| x.as_str()).unwrap_or("item").to_string();
+    let on_failure = match m.get("on_failure").and_then(|x| x.as_str()) {
+        Some("stop") => OnFailure::Stop,
+        _ => OnFailure::Continue,
+    };
+    Ok(ForEach { source, split, as_name, on_failure })
 }
 
 /// Parse a workflow YAML document and validate its DAG shape.
@@ -131,6 +191,7 @@ pub fn parse_workflow(raw: &str) -> Result<Workflow> {
         nodes.push(node);
     }
 
+    let for_each = doc.for_each.as_ref().map(parse_for_each).transpose()?;
     let wf = Workflow {
         name: doc.name,
         description: doc.description,
@@ -138,6 +199,7 @@ pub fn parse_workflow(raw: &str) -> Result<Workflow> {
         input_keys,
         input_defaults,
         nodes,
+        for_each,
     };
     validate(&wf)?;
     Ok(wf)
@@ -221,9 +283,20 @@ pub struct Pipeline {
     pub nodes: BTreeMap<String, NodeState>,
     /// Node ids in author order (for display).
     pub node_order: Vec<String>,
+    /// One entry per for_each iteration (empty for a plain single run).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub iterations: Vec<IterationSummary>,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IterationSummary {
+    pub index: usize,
+    pub item: String,
+    /// "done" | "failed"
+    pub status: String,
 }
 
 // ─── Template resolution ───────────────────────────────────────────────────
@@ -237,6 +310,7 @@ pub fn resolve_template(
     input: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
     nodes: &BTreeMap<String, NodeState>,
+    each: Option<&EachCtx>,
 ) -> String {
     let mut out = String::with_capacity(tpl.len());
     let mut rest = tpl;
@@ -253,7 +327,7 @@ pub fn resolve_template(
         if let Some(stripped) = expr.strip_prefix("raw:") {
             expr = stripped.trim();
         }
-        out.push_str(&resolve_expr(expr, input, vars, nodes));
+        out.push_str(&resolve_expr(expr, input, vars, nodes, each));
         rest = &after[end + 2..];
     }
     out.push_str(rest);
@@ -265,7 +339,20 @@ fn resolve_expr(
     input: &BTreeMap<String, String>,
     vars: &BTreeMap<String, String>,
     nodes: &BTreeMap<String, NodeState>,
+    each: Option<&EachCtx>,
 ) -> String {
+    // for_each: {{<as>}}, {{loop.index}}, {{loop.total}}
+    if let Some(e) = each {
+        if expr == e.as_name {
+            return e.item.to_string();
+        }
+        if expr == "loop.index" {
+            return e.index.to_string();
+        }
+        if expr == "loop.total" {
+            return e.total.to_string();
+        }
+    }
     if let Some(k) = expr.strip_prefix("input.") {
         return input.get(k).cloned().unwrap_or_default();
     }
@@ -341,15 +428,68 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
         vars: wf.vars.clone(),
         nodes,
         node_order,
+        iterations: Vec::new(),
         created_at: now(),
         completed_at: None,
     }));
     persist(&pipeline, cfg);
 
+    match &wf.for_each {
+        None => {
+            println!("▶ pipeline {id} — workflow `{}` ({} nodes)", wf.name, wf.nodes.len());
+            let failed = run_dag(wf, &pipeline, cfg, None, &id);
+            finalize(&pipeline, cfg, failed);
+        }
+        Some(fe) => {
+            let (input, vars) = {
+                let p = pipeline.lock().unwrap();
+                (p.input.clone(), p.vars.clone())
+            };
+            let items = resolve_items(fe, &input, &vars);
+            let total = items.len();
+            println!("▶ pipeline {id} — workflow `{}` (for_each `{}`: {total} iteration(s))", wf.name, fe.as_name);
+            let mut any_failed = false;
+            for (index, item) in items.iter().enumerate() {
+                reset_nodes(&pipeline);
+                println!("\n  ⟳ iteration {}/{total} — {} = {item}", index + 1, fe.as_name);
+                let each = EachCtx { as_name: &fe.as_name, item, index, total };
+                let failed = run_dag(wf, &pipeline, cfg, Some(&each), &id);
+                {
+                    let mut p = pipeline.lock().unwrap();
+                    p.iterations.push(IterationSummary {
+                        index,
+                        item: item.clone(),
+                        status: if failed { "failed" } else { "done" }.to_string(),
+                    });
+                }
+                persist(&pipeline, cfg);
+                any_failed |= failed;
+                if failed && fe.on_failure == OnFailure::Stop {
+                    println!("  ✗ iteration failed and on_failure=stop — halting.");
+                    break;
+                }
+            }
+            finalize(&pipeline, cfg, any_failed);
+        }
+    }
+
+    let final_state = pipeline.lock().unwrap().clone();
+    println!("\n===== pipeline {} =====", final_state.status_str());
+    for it in &final_state.iterations {
+        println!("  iteration {} [{}]  {}", it.index + 1, it.status, it.item);
+    }
+    for nid in &final_state.node_order {
+        let st = &final_state.nodes[nid];
+        println!("  {nid:20} {:?}{}", st.status, st.error.as_deref().map(|e| format!(" — {e}")).unwrap_or_default());
+    }
+    Ok(final_state)
+}
+
+/// Run the DAG to a fixed point once (parallel, output-passing, retries, skip
+/// cascade). Returns whether any node ended failed. Assumes nodes start pending.
+fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each: Option<&EachCtx>, id: &str) -> bool {
     let (tx, rx) = mpsc::channel::<Done>();
     let mut running: usize = 0;
-
-    println!("▶ pipeline {id} — workflow `{}` ({} nodes)", wf.name, wf.nodes.len());
 
     loop {
         // Cascade skips from failed/skipped dependencies, then launch every
@@ -370,14 +510,14 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
             let (mode, resolved_prompt, project, outputs, attempt) = {
                 let mut p = pipeline.lock().unwrap();
                 let node = wf.node(&node_id).unwrap().clone();
-                let prompt = resolve_template(&node.prompt, &p.input, &p.vars, &p.nodes);
-                let proj = resolve_template(&node.project, &p.input, &p.vars, &p.nodes);
+                let prompt = resolve_template(&node.prompt, &p.input, &p.vars, &p.nodes, each);
+                let proj = resolve_template(&node.project, &p.input, &p.vars, &p.nodes, each);
                 let st = p.nodes.get_mut(&node_id).unwrap();
                 st.status = NodeStatus::Running;
                 st.attempts += 1;
                 (node.mode, prompt, proj, node.outputs, st.attempts)
             };
-            persist(&pipeline, cfg);
+            persist(pipeline, cfg);
 
             let project_dir = if project.trim().is_empty() {
                 cfg.default_project.clone()
@@ -387,16 +527,16 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
             println!("  → {node_id} [{mode:?}] attempt {attempt}{}", if cfg.dry_run { " (dry-run)" } else { "" });
 
             // For a `claude` node with a `result` output, provision an output
-            // contract file: the agent is told to write its final answer there,
-            // and we read it back (falling back to cleaned stdout). This makes
-            // agent-text passing reliable despite forge -p's mixed stdout.
+            // contract file (per iteration): the agent writes its final answer
+            // there and we read it back — reliable despite forge -p's mixed stdout.
             let result_file = if !cfg.dry_run
                 && mode == NodeMode::Claude
                 && outputs.iter().any(|o| o.extract == Extract::Result)
             {
-                let dir = cfg.workspace.join("pipelines").join(".out").join(&id);
+                let dir = cfg.workspace.join("pipelines").join(".out").join(id);
                 let _ = std::fs::create_dir_all(&dir);
-                Some(dir.join(format!("{node_id}.txt")))
+                let prefix = each.map(|e| format!("{}-", e.index)).unwrap_or_default();
+                Some(dir.join(format!("{prefix}{node_id}.txt")))
             } else {
                 None
             };
@@ -418,8 +558,7 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
             });
         }
 
-        // Nothing running and nothing launchable → we're done (or deadlocked,
-        // which validate() already ruled out for pure DAGs).
+        // Nothing running and nothing launchable → this pass is settled.
         if running == 0 {
             break;
         }
@@ -452,24 +591,43 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
                 }
             }
         }
-        persist(&pipeline, cfg);
+        persist(pipeline, cfg);
     }
 
-    // Settle final status.
+    pipeline.lock().unwrap().nodes.values().any(|n| n.status == NodeStatus::Failed)
+}
+
+/// Resolve a for_each source into concrete items.
+fn resolve_items(fe: &ForEach, input: &BTreeMap<String, String>, vars: &BTreeMap<String, String>) -> Vec<String> {
+    match &fe.source {
+        Source::Items(v) => v.clone(),
+        Source::Template(t) => {
+            let empty: BTreeMap<String, NodeState> = BTreeMap::new();
+            let resolved = resolve_template(t, input, vars, &empty, None);
+            resolved.split(&fe.split).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        }
+    }
+}
+
+/// Reset every node to pending for a fresh for_each iteration.
+fn reset_nodes(pipeline: &Arc<Mutex<Pipeline>>) {
     let mut p = pipeline.lock().unwrap();
-    let any_failed = p.nodes.values().any(|n| n.status == NodeStatus::Failed);
-    p.status = if any_failed { PipelineStatus::Failed } else { PipelineStatus::Done };
-    p.completed_at = Some(now());
-    let final_state = p.clone();
-    drop(p);
-    persist(&pipeline, cfg);
-
-    println!("\n===== pipeline {} =====", final_state.status_str());
-    for id in &final_state.node_order {
-        let st = &final_state.nodes[id];
-        println!("  {id:20} {:?}{}", st.status, st.error.as_deref().map(|e| format!(" — {e}")).unwrap_or_default());
+    for st in p.nodes.values_mut() {
+        st.status = NodeStatus::Pending;
+        st.outputs.clear();
+        st.attempts = 0;
+        st.error = None;
     }
-    Ok(final_state)
+}
+
+/// Settle the pipeline's terminal status and persist.
+fn finalize(pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, any_failed: bool) {
+    {
+        let mut p = pipeline.lock().unwrap();
+        p.status = if any_failed { PipelineStatus::Failed } else { PipelineStatus::Done };
+        p.completed_at = Some(now());
+    }
+    persist(pipeline, cfg);
 }
 
 impl Pipeline {
@@ -728,8 +886,56 @@ mod tests {
             &input,
             &vars,
             &nodes,
+            None,
         );
         assert_eq!(got, "app: login => THE SPEC []");
+    }
+
+    #[test]
+    fn template_resolves_foreach_item_and_loop() {
+        let e = BTreeMap::new();
+        let nodes = BTreeMap::new();
+        let each = EachCtx { as_name: "pr", item: "42", index: 1, total: 3 };
+        let got = resolve_template(
+            "review PR {{pr}} ({{loop.index}}/{{loop.total}})",
+            &e,
+            &e,
+            &nodes,
+            Some(&each),
+        );
+        assert_eq!(got, "review PR 42 (1/3)");
+    }
+
+    #[test]
+    fn foreach_source_string_splits_into_items() {
+        let yaml = r#"
+name: batch
+input: { ids: "1, 2 ,3" }
+for_each: { source: "{{input.ids}}", as: id }
+nodes:
+  work: { mode: shell, prompt: "echo {{id}}" }
+"#;
+        let wf = parse_workflow(yaml).unwrap();
+        let fe = wf.for_each.as_ref().unwrap();
+        assert_eq!(fe.as_name, "id");
+        let input: BTreeMap<String, String> = [("ids".to_string(), "1, 2 ,3".to_string())].into();
+        let items = resolve_items(fe, &input, &BTreeMap::new());
+        assert_eq!(items, vec!["1", "2", "3"]); // split + trimmed
+    }
+
+    #[test]
+    fn foreach_source_literal_list() {
+        let yaml = r#"
+name: batch
+input: {}
+for_each: { source: [alpha, beta] }
+nodes:
+  work: { mode: shell, prompt: "echo {{item}}" }
+"#;
+        let wf = parse_workflow(yaml).unwrap();
+        let fe = wf.for_each.as_ref().unwrap();
+        let items = resolve_items(fe, &BTreeMap::new(), &BTreeMap::new());
+        assert_eq!(items, vec!["alpha", "beta"]);
     }
 
     #[test]
@@ -746,7 +952,7 @@ mod tests {
     fn unknown_placeholder_is_left_intact() {
         let e = BTreeMap::new();
         let nodes = BTreeMap::new();
-        assert_eq!(resolve_template("{{bogus.path}}", &e, &e, &nodes), "{{bogus.path}}");
+        assert_eq!(resolve_template("{{bogus.path}}", &e, &e, &nodes, None), "{{bogus.path}}");
     }
 
     #[test]
