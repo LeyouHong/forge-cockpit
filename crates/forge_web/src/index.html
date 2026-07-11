@@ -505,14 +505,20 @@
     .pl-edges { position: absolute; inset: 0; width: 3000px; height: 2000px; pointer-events: none; overflow: visible; }
     .pl-edges path { stroke: #8a8f98; stroke-width: 2; fill: none; }
     .pl-edges path.hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
-    .pl-node { position: absolute; width: 168px; background: var(--bg, #fff); border: 1.5px solid var(--border); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 12px; user-select: none; }
-    .pl-node.sel { border-color: #7c5cff; box-shadow: 0 0 0 2px rgba(124,92,255,.25); }
-    .pl-node .nh { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); cursor: grab; border-radius: 9px 9px 0 0; }
-    .pl-node .nh .badge { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #fff; border-radius: 5px; padding: 1px 5px; }
-    .pl-node .nh .badge.shell { background: #0ea5a4; }
+    .pl-node { position: absolute; width: 210px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; user-select: none; }
+    .pl-node.sel { border-color: #7c5cff; box-shadow: 0 0 0 2px rgba(124,92,255,.3); }
+    .pl-node .nh { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-bottom: 1px solid var(--border); cursor: grab; border-radius: 9px 9px 0 0; }
+    .pl-node .nh .badge { font-size: 8.5px; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; color: #fff; border-radius: 4px; padding: 1px 5px; }
+    .pl-node .nh .badge.shell { background: #c98a2b; }
     .pl-node .nh .badge.claude { background: #7c5cff; }
     .pl-node .nh .nid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pl-node .nbody { padding: 6px 8px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; max-height: 46px; overflow: hidden; }
+    .pl-node .nh .acts { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+    .pl-node .nh .acts .e { font-size: 10px; color: #7c5cff; cursor: pointer; }
+    .pl-node .nh .acts .x { font-size: 10px; color: #e5484d; cursor: pointer; }
+    .pl-node .nbody { padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; }
+    .pl-node .nproj { font-size: 9.5px; color: #7c5cff; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nprompt { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nouts { font-size: 9px; color: #2e9e44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #8a8f98; background: var(--bg, #fff); left: 50%; transform: translateX(-50%); cursor: crosshair; }
     .pl-port.in { top: -7px; }
     .pl-port.out { bottom: -7px; background: #8a8f98; }
@@ -2092,30 +2098,39 @@
       $('pl-editor').value = f.content || '';
       plShowValid(d); setTab(PL.tab); renderCanvas(); renderInspector(); loadFiles();
     }
+    const PL_NODE_KEYS = ['mode', 'prompt', 'project', 'retries', 'depends_on', 'outputs'];
+    const PL_WF_KEYS = ['name', 'vars', 'input', 'nodes'];
     function graphFromWorkflow(wf, layout) {
       const nodes = {}; const raw = wf.nodes || {};
       for (const id of Object.keys(raw)) {
         const n = raw[id] || {};
+        // Preserve node fields the visual editor doesn't model (verify, branch, …).
+        const extra = {}; for (const k of Object.keys(n)) if (!PL_NODE_KEYS.includes(k)) extra[k] = n[k];
         nodes[id] = {
           mode: n.mode || 'claude', prompt: n.prompt || '', project: n.project || '', retries: n.retries || 0,
           depends_on: Array.isArray(n.depends_on) ? n.depends_on.slice() : [],
           outputs: Array.isArray(n.outputs) ? n.outputs.map((o) => ({ name: o.name || 'out', extract: o.extract || 'result' })) : [],
+          _extra: extra,
         };
       }
-      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout) };
+      // Preserve top-level keys we don't model (for_each, description, git_push…).
+      const wfExtra = {}; for (const k of Object.keys(wf)) if (!PL_WF_KEYS.includes(k)) wfExtra[k] = wf[k];
+      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout), extra: wfExtra };
       ensureLayout(g); return g;
     }
     function ensureLayout(g) {
       const ids = Object.keys(g.nodes); const depth = {}; for (const id of ids) depth[id] = 0;
       let changed = true; for (let k = 0; k < ids.length && changed; k++) { changed = false; for (const id of ids) for (const d of g.nodes[id].depends_on) if (g.nodes[d] && depth[d] + 1 > depth[id]) { depth[id] = depth[d] + 1; changed = true; } }
-      const perCol = {};
-      for (const id of ids) { if (g.layout[id] && typeof g.layout[id].x === 'number') continue; const c = depth[id]; perCol[c] = perCol[c] || 0; g.layout[id] = { x: 30 + c * 210, y: 24 + perCol[c] * 120 }; perCol[c]++; }
+      // Top-to-bottom: y grows with dependency depth; siblings at the same
+      // depth spread horizontally. Matches the reference's vertical flow.
+      const perRow = {};
+      for (const id of ids) { if (g.layout[id] && typeof g.layout[id].x === 'number') continue; const r = depth[id]; perRow[r] = perRow[r] || 0; g.layout[id] = { x: 60 + perRow[r] * 240, y: 24 + r * 150 }; perRow[r]++; }
     }
     function newNodeId(g) { let i = 1; while (g.nodes['node' + i]) i++; return 'node' + i; }
     function buildWorkflow() {
       const g = PL.g; const nodes = {};
       for (const id of Object.keys(g.nodes)) {
-        const n = g.nodes[id]; const o = { prompt: n.prompt };
+        const n = g.nodes[id]; const o = Object.assign({}, n._extra || {}); o.prompt = n.prompt;
         if (n.mode && n.mode !== 'claude') o.mode = n.mode;
         if (n.project) o.project = n.project;
         if (n.retries) o.retries = n.retries;
@@ -2123,7 +2138,8 @@
         if (n.outputs && n.outputs.length) o.outputs = n.outputs;
         nodes[id] = o;
       }
-      const wf = { name: g.name || 'workflow', input: g.input || {}, nodes };
+      // Start from preserved top-level extras (for_each, description…), then set ours.
+      const wf = Object.assign({}, g.extra || {}, { name: g.name || 'workflow', input: g.input || {}, nodes });
       if (g.vars && Object.keys(g.vars).length) wf.vars = g.vars;
       return wf;
     }
@@ -2236,16 +2252,29 @@
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
       const pin = document.createElement('div'); pin.className = 'pl-port in'; pin.dataset.id = id;
       const head = document.createElement('div'); head.className = 'nh';
-      const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'sh' : 'ai';
+      const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'shell' : 'agent';
       const nid = document.createElement('span'); nid.className = 'nid'; nid.textContent = id;
-      head.appendChild(badge); head.appendChild(nid);
-      const body = document.createElement('div'); body.className = 'nbody'; body.textContent = (n.prompt || '').slice(0, 90);
+      const acts = document.createElement('span'); acts.className = 'acts';
+      const eb = document.createElement('span'); eb.className = 'e'; eb.textContent = 'edit'; eb.onclick = (e) => { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); };
+      const xb = document.createElement('span'); xb.className = 'x'; xb.textContent = '✕'; xb.onclick = (e) => { e.stopPropagation(); deleteNode(id); };
+      acts.appendChild(eb); acts.appendChild(xb);
+      head.appendChild(badge); head.appendChild(nid); head.appendChild(acts);
+      const body = document.createElement('div'); body.className = 'nbody';
+      if (n.project) { const pj = document.createElement('div'); pj.className = 'nproj'; pj.textContent = n.project; body.appendChild(pj); }
+      const pr = document.createElement('div'); pr.className = 'nprompt'; pr.textContent = ((n.prompt || '').split('\n')[0] || '').slice(0, 60) || 'no prompt'; body.appendChild(pr);
+      if (n.outputs && n.outputs.length) { const ou = document.createElement('div'); ou.className = 'nouts'; ou.textContent = 'outputs: ' + n.outputs.map((o) => o.name).join(', '); body.appendChild(ou); }
       const pout = document.createElement('div'); pout.className = 'pl-port out'; pout.dataset.id = id;
       el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
-      head.onmousedown = (e) => startDrag(e, id);
-      head.onclick = (e) => { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); };
+      const onHead = (e) => !e.target.closest('.acts');
+      head.onmousedown = (e) => { if (onHead(e)) startDrag(e, id); };
+      head.onclick = (e) => { if (onHead(e)) { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); } };
       pout.onmousedown = (e) => startLink(e, id);
       return el;
+    }
+    function deleteNode(id) {
+      delete PL.g.nodes[id]; delete PL.g.layout[id];
+      for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id);
+      if (PL.sel === id) PL.sel = null; renderCanvas(); renderInspector();
     }
     function drawEdges() {
       const svg = $('pl-edges'); svg.innerHTML = '';
@@ -2311,6 +2340,9 @@
       for (const m of ['claude', 'shell']) { const o = document.createElement('option'); o.value = m; o.textContent = m === 'claude' ? 'agent (forge -p)' : 'shell'; if (n.mode === m) o.selected = true; modeSel.appendChild(o); }
       modeSel.onchange = () => { n.mode = modeSel.value; renderCanvas(); renderInspector(); };
       row('mode', modeSel);
+      const pjIn = document.createElement('input'); pjIn.value = n.project || ''; pjIn.placeholder = 'e.g. {{input.project}} or a path (optional)';
+      pjIn.oninput = () => { n.project = pjIn.value; renderCanvas(); };
+      row('project / cwd', pjIn);
       const pr = document.createElement('textarea'); pr.value = n.prompt || '';
       pr.oninput = () => { n.prompt = pr.value; const b = document.querySelector('#pln-' + id + ' .nbody'); if (b) b.textContent = pr.value.slice(0, 90); };
       row(n.mode === 'shell' ? 'command' : 'prompt', pr);
@@ -2334,7 +2366,7 @@
         row('depends on', dw);
       }
       const del = document.createElement('button'); del.className = 'btn btn-ghost btn-sm'; del.textContent = 'Delete node'; del.style.color = 'var(--danger,#e5484d)';
-      del.onclick = () => { delete PL.g.nodes[id]; delete PL.g.layout[id]; for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id); PL.sel = null; renderCanvas(); renderInspector(); };
+      del.onclick = () => deleteNode(id);
       box.appendChild(del);
     }
     function renameNode(oldId, nid) {
