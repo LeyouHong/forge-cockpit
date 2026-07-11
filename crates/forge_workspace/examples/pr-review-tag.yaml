@@ -55,13 +55,17 @@ nodes:
       set -e
       REVIEW={{nodes.review.outputs.findings}}
       if printf '%s' "$REVIEW" | head -1 | grep -q NEEDS_FIX; then
-        # make sure the label exists, then tag + post the findings
+        # needs fixes: make sure the label exists, tag the PR, post the findings
         gh label create {{vars.label}} --repo {{vars.repo}} --color FBCA04 2>/dev/null || true
         gh pr edit {{input.pr}} --repo {{vars.repo}} --add-label {{vars.label}}
-        gh pr comment {{input.pr}} --repo {{vars.repo}} --body "$REVIEW"
-        echo "NEEDS_FIX -> labelled {{vars.label}} and commented"
+        gh pr comment {{input.pr}} --repo {{vars.repo}} --body "🤖 Automated review — **needs fixes**:
+
+      $REVIEW"
+        echo "NEEDS_FIX -> commented + labelled {{vars.label}}"
       else
-        echo "LGTM -> no changes"
+        # clean: still leave an approval comment so the review is always visible
+        gh pr comment {{input.pr}} --repo {{vars.repo}} --body "🤖 Automated review — ✅ LGTM, no issues found."
+        echo "LGTM -> commented (no label)"
       fi
     outputs:
       - name: result
