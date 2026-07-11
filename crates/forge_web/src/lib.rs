@@ -144,8 +144,13 @@ where
             "/api/pipeline/file",
             get(pipeline::read_file::<A>).put(pipeline::save_file::<A>),
         )
+        .route(
+            "/api/pipeline/graph",
+            get(pipeline::read_graph::<A>).put(pipeline::save_graph::<A>),
+        )
         .route("/api/pipeline/file/delete", post(pipeline::delete_file::<A>))
         .route("/api/pipeline/validate", post(pipeline::validate_content::<A>))
+        .route("/api/pipeline/validate-graph", post(pipeline::validate_graph::<A>))
         .route("/api/pipeline/run", post(pipeline::run_pipeline::<A>))
         .route("/api/pipeline/runs", get(pipeline::list_runs::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));

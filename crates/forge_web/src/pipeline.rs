@@ -233,6 +233,58 @@ pub(crate) async fn delete_file<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// The layout sidecar next to a pipeline: `<name>.layout.json` holding node xy.
+fn layout_path(project: &str, file: &str) -> Result<PathBuf, AppError> {
+    Ok(pipeline_file(project, file)?.with_extension("layout.json"))
+}
+
+/// GET /api/pipeline/graph?project=&name= — the workflow as JSON (for the visual
+/// editor), plus validation and the saved node layout. YAML→JSON is done here so
+/// the browser never needs a YAML parser.
+pub(crate) async fn read_graph<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<FileQuery>,
+) -> Result<Json<Value>, AppError> {
+    let path = pipeline_file(&q.project, &q.name)?;
+    let content = std::fs::read_to_string(&path).map_err(|_| AppError::not_found("no such pipeline"))?;
+    let workflow: Value = serde_yml::from_str(&content).unwrap_or_else(|_| json!({}));
+    let (valid, error) = validate(&content);
+    let layout: Value = layout_path(&q.project, &q.name)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    Ok(Json(json!({ "workflow": workflow, "valid": valid, "error": error, "layout": layout })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GraphSave {
+    project: String,
+    name: String,
+    workflow: Value,
+    layout: Option<Value>,
+}
+
+/// PUT /api/pipeline/graph — the visual editor's workflow JSON, serialized to
+/// YAML (JSON→YAML here) and written; the node layout goes to the sidecar.
+pub(crate) async fn save_graph<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<GraphSave>,
+) -> Result<Json<Value>, AppError> {
+    let path = pipeline_file(&body.project, &body.name)?;
+    let yaml = serde_yml::to_string(&body.workflow)
+        .map_err(|e| AppError::bad_request(format!("serialize workflow to yaml: {e}")))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, &yaml)?;
+    if let (Some(layout), Ok(lp)) = (&body.layout, layout_path(&body.project, &body.name)) {
+        let _ = std::fs::write(lp, serde_json::to_string_pretty(layout).unwrap_or_default());
+    }
+    let (valid, error) = validate(&yaml);
+    Ok(Json(json!({ "ok": true, "valid": valid, "error": error, "yaml": yaml })))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct ValidateBody {
     content: String,
@@ -245,6 +297,26 @@ pub(crate) async fn validate_content<A: API>(
 ) -> Json<Value> {
     let (valid, error) = validate(&body.content);
     Json(json!({ "valid": valid, "error": error }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GraphBody {
+    workflow: Value,
+}
+
+/// POST /api/pipeline/validate-graph — validate the visual editor's JSON
+/// workflow (serialize to YAML, parse-check) without writing anything.
+pub(crate) async fn validate_graph<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<GraphBody>,
+) -> Json<Value> {
+    match serde_yml::to_string(&body.workflow) {
+        Ok(yaml) => {
+            let (valid, error) = validate(&yaml);
+            Json(json!({ "valid": valid, "error": error, "yaml": yaml }))
+        }
+        Err(e) => Json(json!({ "valid": false, "error": format!("serialize: {e}") })),
+    }
 }
 
 fn validate(content: &str) -> (bool, Option<String>) {

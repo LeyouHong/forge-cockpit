@@ -494,6 +494,37 @@
     .pl-picker-row .git { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 5px; }
     .pl-picker-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
     .pl-picker-foot #pl-picker-cur { font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+    /* Visual pipeline builder */
+    .pl-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-left: 10px; }
+    .pl-tab { font: inherit; font-size: 12px; padding: 3px 12px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
+    .pl-tab.active { background: var(--hover); color: var(--text); font-weight: 600; }
+    .pl-palette { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .pl-canvas-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 10px; align-items: stretch; }
+    .pl-canvas { position: relative; height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background:
+      radial-gradient(circle, rgba(127,127,127,.18) 1px, transparent 1px) 0 0 / 18px 18px; }
+    .pl-edges { position: absolute; inset: 0; width: 3000px; height: 2000px; pointer-events: none; overflow: visible; }
+    .pl-edges path { stroke: #8a8f98; stroke-width: 2; fill: none; }
+    .pl-edges path.hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+    .pl-node { position: absolute; width: 168px; background: var(--bg, #fff); border: 1.5px solid var(--border); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 12px; user-select: none; }
+    .pl-node.sel { border-color: #7c5cff; box-shadow: 0 0 0 2px rgba(124,92,255,.25); }
+    .pl-node .nh { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); cursor: grab; border-radius: 9px 9px 0 0; }
+    .pl-node .nh .badge { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #fff; border-radius: 5px; padding: 1px 5px; }
+    .pl-node .nh .badge.shell { background: #0ea5a4; }
+    .pl-node .nh .badge.claude { background: #7c5cff; }
+    .pl-node .nh .nid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nbody { padding: 6px 8px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; max-height: 46px; overflow: hidden; }
+    .pl-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #8a8f98; background: var(--bg, #fff); left: 50%; transform: translateX(-50%); cursor: crosshair; }
+    .pl-port.in { top: -7px; }
+    .pl-port.out { bottom: -7px; background: #8a8f98; }
+    .pl-port.out:hover, .pl-port.in.tgt { border-color: #7c5cff; background: #7c5cff; }
+    .pl-inspector { border: 1px solid var(--border); border-radius: 10px; padding: 10px; overflow-y: auto; height: 460px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }
+    .pl-insp-row { display: flex; flex-direction: column; gap: 3px; }
+    .pl-insp-row label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .pl-inspector input, .pl-inspector select, .pl-inspector textarea { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
+    .pl-inspector textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; min-height: 90px; resize: vertical; }
+    .pl-out-row { display: flex; gap: 4px; }
+    .pl-out-row input { flex: 1; }
+    @media (max-width: 900px) { .pl-canvas-wrap { grid-template-columns: 1fr; } .pl-inspector { height: auto; max-height: 300px; } }
   </style>
 </head>
 <body>
@@ -648,12 +679,30 @@
           <div class="pl-right">
             <div class="pl-editor-head">
               <span id="pl-editing" class="sl">no pipeline open</span>
+              <div class="pl-tabs">
+                <button class="pl-tab active" id="pl-tab-visual">Visual</button>
+                <button class="pl-tab" id="pl-tab-yaml">YAML</button>
+              </div>
               <div style="flex:1"></div>
               <button class="btn btn-sm" id="pl-validate">Validate</button>
               <button class="btn btn-primary btn-sm" id="pl-save">Save</button>
               <button class="btn btn-sm" id="pl-run" title="Run this pipeline">▶ Run</button>
             </div>
-            <textarea id="pl-editor" class="pl-editor" spellcheck="false" placeholder="Select or create a pipeline to edit its YAML…"></textarea>
+            <div id="pl-visual" class="pl-visual">
+              <div class="pl-palette">
+                <button class="btn btn-sm" id="pl-add-shell">+ Shell node</button>
+                <button class="btn btn-sm" id="pl-add-agent">+ Agent node</button>
+                <button class="btn btn-ghost btn-sm" id="pl-auto">Auto-layout</button>
+                <span class="sl pl-hint">drag a node's ● out-port onto another node's ○ in-port to link (dependency)</span>
+              </div>
+              <div class="pl-canvas-wrap">
+                <div id="pl-canvas" class="pl-canvas">
+                  <svg id="pl-edges" class="pl-edges"></svg>
+                </div>
+                <div id="pl-inspector" class="pl-inspector"><span class="sl">select a node to edit it</span></div>
+              </div>
+            </div>
+            <textarea id="pl-editor" class="pl-editor" style="display:none" spellcheck="false"></textarea>
             <div id="pl-status" class="pl-status"></div>
           </div>
         </div>
@@ -1956,7 +2005,12 @@
     $('pipeline-open').onclick = openPipeline;
     $('pipeline-close').onclick = () => $('pipeline-overlay').classList.remove('open');
     $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
-    function plSetEditor(content, label) { $('pl-editor').value = content; $('pl-editing').textContent = label; $('pl-status').textContent = ''; $('pl-status').className = 'pl-status'; }
+    function plSetEditor(content, label) {
+      $('pl-editing').textContent = label; $('pl-editor').value = content;
+      if (label === 'no pipeline open') { PL.file = null; PL.g = null; PL.sel = null; }
+      [...$('pl-canvas').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = '';
+      renderInspector(); $('pl-status').textContent = ''; $('pl-status').className = 'pl-status';
+    }
     function plStatus(msg, err) { const s = $('pl-status'); s.textContent = msg; s.className = 'pl-status ' + (err ? 'err' : 'ok'); }
     function plShowValid(d) { if (d.valid) plStatus('✓ valid workflow', false); else plStatus('✗ ' + (d.error || 'invalid'), true); }
     const plBody = (o) => ({ method: o.m || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o.b) });
@@ -2025,32 +2079,103 @@
         row.appendChild(nm); row.appendChild(rm); box.appendChild(row);
       }
     }
+    /* ---- graph model + visual node editor ----
+       PL.g = { name, vars, input,
+                nodes: { id: {mode, prompt, project, retries, depends_on:[], outputs:[{name,extract}]} },
+                layout: { id: {x,y} } } */
+    PL.tab = PL.tab || 'visual';
     async function openFile(name) {
-      const d = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
-      PL.file = name; plSetEditor(d.content || '', name); plShowValid(d); loadFiles();
+      PL.file = name; PL.sel = null; $('pl-editing').textContent = name;
+      const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
+      PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
+      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
+      $('pl-editor').value = f.content || '';
+      plShowValid(d); setTab(PL.tab); renderCanvas(); renderInspector(); loadFiles();
     }
+    function graphFromWorkflow(wf, layout) {
+      const nodes = {}; const raw = wf.nodes || {};
+      for (const id of Object.keys(raw)) {
+        const n = raw[id] || {};
+        nodes[id] = {
+          mode: n.mode || 'claude', prompt: n.prompt || '', project: n.project || '', retries: n.retries || 0,
+          depends_on: Array.isArray(n.depends_on) ? n.depends_on.slice() : [],
+          outputs: Array.isArray(n.outputs) ? n.outputs.map((o) => ({ name: o.name || 'out', extract: o.extract || 'result' })) : [],
+        };
+      }
+      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout) };
+      ensureLayout(g); return g;
+    }
+    function ensureLayout(g) {
+      const ids = Object.keys(g.nodes); const depth = {}; for (const id of ids) depth[id] = 0;
+      let changed = true; for (let k = 0; k < ids.length && changed; k++) { changed = false; for (const id of ids) for (const d of g.nodes[id].depends_on) if (g.nodes[d] && depth[d] + 1 > depth[id]) { depth[id] = depth[d] + 1; changed = true; } }
+      const perCol = {};
+      for (const id of ids) { if (g.layout[id] && typeof g.layout[id].x === 'number') continue; const c = depth[id]; perCol[c] = perCol[c] || 0; g.layout[id] = { x: 30 + c * 210, y: 24 + perCol[c] * 120 }; perCol[c]++; }
+    }
+    function newNodeId(g) { let i = 1; while (g.nodes['node' + i]) i++; return 'node' + i; }
+    function buildWorkflow() {
+      const g = PL.g; const nodes = {};
+      for (const id of Object.keys(g.nodes)) {
+        const n = g.nodes[id]; const o = { prompt: n.prompt };
+        if (n.mode && n.mode !== 'claude') o.mode = n.mode;
+        if (n.project) o.project = n.project;
+        if (n.retries) o.retries = n.retries;
+        if (n.depends_on && n.depends_on.length) o.depends_on = n.depends_on;
+        if (n.outputs && n.outputs.length) o.outputs = n.outputs;
+        nodes[id] = o;
+      }
+      const wf = { name: g.name || 'workflow', input: g.input || {}, nodes };
+      if (g.vars && Object.keys(g.vars).length) wf.vars = g.vars;
+      return wf;
+    }
+
     $('pl-new').onclick = async () => {
       if (!PL.project) { plStatus('add a project first', true); return; }
       let name = prompt('New pipeline file name:', 'my-flow.yaml'); if (!name) return;
       if (!/\.(ya?ml)$/.test(name)) name += '.yaml';
       const base = name.replace(/\.(ya?ml)$/, '');
-      const tmpl = 'name: ' + base + '\ninput: {}\nnodes:\n  hello:\n    mode: shell\n    prompt: "echo hello from the pipeline"\n    outputs:\n      - name: out\n        extract: stdout\n';
-      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name, content: tmpl } }));
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
       if (!r.ok) { const d = await r.json(); plStatus(d.error || 'create failed', true); return; }
-      PL.file = name; plSetEditor(tmpl, name); loadFiles();
+      await openFile(name); loadFiles();
     };
-    $('pl-validate').onclick = async () => {
-      const d = await (await api('/api/pipeline/validate', plBody({ b: { content: $('pl-editor').value } }))).json();
-      plShowValid(d);
+
+    /* tabs: Visual ↔ YAML (switching saves the current side, then loads the other from the file) */
+    function setTab(t) {
+      PL.tab = t;
+      $('pl-tab-visual').classList.toggle('active', t === 'visual');
+      $('pl-tab-yaml').classList.toggle('active', t === 'yaml');
+      $('pl-visual').style.display = t === 'visual' ? '' : 'none';
+      $('pl-editor').style.display = t === 'yaml' ? '' : 'none';
+    }
+    $('pl-tab-visual').onclick = async () => { if (PL.tab === 'visual' || !PL.file) { setTab('visual'); return; } await plSaveYaml(); await openFile(PL.file); setTab('visual'); };
+    $('pl-tab-yaml').onclick = async () => {
+      if (PL.tab === 'yaml' || !PL.file) { setTab('yaml'); return; }
+      await plSaveGraph();
+      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
+      $('pl-editor').value = f.content || ''; setTab('yaml');
     };
-    async function plSave() {
+
+    async function plSaveGraph() {
+      if (!PL.file || !PL.g) return { ok: false };
+      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
+      return { r, d: await r.json() };
+    }
+    async function plSaveYaml() {
       const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, content: $('pl-editor').value } }));
       return { r, d: await r.json() };
     }
+    async function plSave() { return PL.tab === 'visual' ? plSaveGraph() : plSaveYaml(); }
+
+    $('pl-validate').onclick = async () => {
+      if (!PL.file) return;
+      const d = PL.tab === 'visual'
+        ? await (await api('/api/pipeline/validate-graph', plBody({ b: { workflow: buildWorkflow() } }))).json()
+        : await (await api('/api/pipeline/validate', plBody({ b: { content: $('pl-editor').value } }))).json();
+      plShowValid(d);
+    };
     $('pl-save').onclick = async () => {
       if (!PL.file) { plStatus('open or create a pipeline first', true); return; }
       const { r, d } = await plSave();
-      if (!r.ok) { plStatus(d.error || 'save failed', true); return; }
+      if (!r || !r.ok) { plStatus((d && d.error) || 'save failed', true); return; }
       plStatus(d.valid ? '✓ saved · valid' : '⚠ saved · ✗ ' + (d.error || 'invalid'), !d.valid);
     };
     $('pl-run').onclick = async () => {
@@ -2063,6 +2188,18 @@
       plStatus('▶ run started — watch "Recent runs" (agent nodes take a bit)', false);
       let n = 0; const t = setInterval(() => { loadRuns(); if (++n > 48 || !$('pipeline-overlay').classList.contains('open')) clearInterval(t); }, 2500);
     };
+
+    /* palette */
+    $('pl-add-shell').onclick = () => addNode('shell');
+    $('pl-add-agent').onclick = () => addNode('claude');
+    $('pl-auto').onclick = () => { if (!PL.g) return; PL.g.layout = {}; ensureLayout(PL.g); renderCanvas(); };
+    function addNode(mode) {
+      if (!PL.g) { plStatus('open or create a pipeline first', true); return; }
+      const id = newNodeId(PL.g);
+      PL.g.nodes[id] = { mode, prompt: mode === 'shell' ? 'echo hello' : 'Describe the task…', project: '', retries: 0, depends_on: [], outputs: [] };
+      const c = $('pl-canvas'); PL.g.layout[id] = { x: (c.scrollLeft || 0) + 40, y: (c.scrollTop || 0) + 40 };
+      PL.sel = id; renderCanvas(); renderInspector();
+    }
     async function loadRuns() {
       if (!PL.project) return;
       const box = $('pl-runs');
@@ -2081,6 +2218,131 @@
       }
     }
 
+    /* ---- canvas rendering ---- */
+    function nodePorts(id) {
+      const el = document.getElementById('pln-' + id); if (!el || !PL.g.layout[id]) return null;
+      const x = PL.g.layout[id].x, y = PL.g.layout[id].y, w = el.offsetWidth || 168, h = el.offsetHeight || 60;
+      return { inX: x + w / 2, inY: y, outX: x + w / 2, outY: y + h };
+    }
+    function renderCanvas() {
+      const canvas = $('pl-canvas'); if (!canvas || !PL.g) return;
+      [...canvas.querySelectorAll('.pl-node')].forEach((n) => n.remove());
+      for (const id of Object.keys(PL.g.nodes)) canvas.appendChild(nodeEl(id));
+      drawEdges();
+    }
+    function nodeEl(id) {
+      const n = PL.g.nodes[id], pos = PL.g.layout[id];
+      const el = document.createElement('div'); el.className = 'pl-node' + (PL.sel === id ? ' sel' : ''); el.id = 'pln-' + id;
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const pin = document.createElement('div'); pin.className = 'pl-port in'; pin.dataset.id = id;
+      const head = document.createElement('div'); head.className = 'nh';
+      const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'sh' : 'ai';
+      const nid = document.createElement('span'); nid.className = 'nid'; nid.textContent = id;
+      head.appendChild(badge); head.appendChild(nid);
+      const body = document.createElement('div'); body.className = 'nbody'; body.textContent = (n.prompt || '').slice(0, 90);
+      const pout = document.createElement('div'); pout.className = 'pl-port out'; pout.dataset.id = id;
+      el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
+      head.onmousedown = (e) => startDrag(e, id);
+      head.onclick = (e) => { e.stopPropagation(); PL.sel = id; renderCanvas(); renderInspector(); };
+      pout.onmousedown = (e) => startLink(e, id);
+      return el;
+    }
+    function drawEdges() {
+      const svg = $('pl-edges'); svg.innerHTML = '';
+      for (const id of Object.keys(PL.g.nodes)) for (const dep of PL.g.nodes[id].depends_on) {
+        const a = nodePorts(dep), b = nodePorts(id); if (!a || !b) continue;
+        svg.appendChild(edgePath(a.outX, a.outY, b.inX, b.inY, dep, id));
+      }
+    }
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    function edgePath(x1, y1, x2, y2, dep, id) {
+      const dy = Math.max(30, Math.abs(y2 - y1) / 2);
+      const d = 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + (y1 + dy) + ' ' + x2 + ',' + (y2 - dy) + ' ' + x2 + ',' + y2;
+      const g = document.createElementNS(SVGNS, 'g');
+      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d);
+      const hit = document.createElementNS(SVGNS, 'path'); hit.setAttribute('d', d); hit.setAttribute('class', 'hit');
+      hit.onclick = () => { PL.g.nodes[id].depends_on = PL.g.nodes[id].depends_on.filter((x) => x !== dep); renderCanvas(); renderInspector(); };
+      g.appendChild(p); g.appendChild(hit); return g;
+    }
+    /* ---- node drag ---- */
+    let plDrag = null;
+    function startDrag(e, id) { e.preventDefault(); const p = PL.g.layout[id]; plDrag = { id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }; document.onmousemove = onDragMove; document.onmouseup = endDrag; }
+    function onDragMove(e) {
+      if (!plDrag) return;
+      const nx = Math.max(0, plDrag.ox + (e.clientX - plDrag.sx)), ny = Math.max(0, plDrag.oy + (e.clientY - plDrag.sy));
+      PL.g.layout[plDrag.id] = { x: nx, y: ny };
+      const el = document.getElementById('pln-' + plDrag.id); if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
+      drawEdges();
+    }
+    function endDrag() { plDrag = null; document.onmousemove = null; document.onmouseup = null; }
+    /* ---- port linking (drag out→in to add a dependency) ---- */
+    let plLink = null;
+    function startLink(e, id) { e.preventDefault(); e.stopPropagation(); plLink = { from: id }; document.onmousemove = onLinkMove; document.onmouseup = endLink; }
+    function onLinkMove(e) {
+      if (!plLink) return;
+      document.querySelectorAll('.pl-port.in.tgt').forEach((p) => p.classList.remove('tgt'));
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      if (over && over.classList.contains('pl-port') && over.classList.contains('in')) over.classList.add('tgt');
+      const from = nodePorts(plLink.from); if (!from) return;
+      const c = $('pl-canvas'), rect = c.getBoundingClientRect();
+      const mx = e.clientX - rect.left + c.scrollLeft, my = e.clientY - rect.top + c.scrollTop;
+      drawEdges();
+      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', 'M' + from.outX + ',' + from.outY + ' L' + mx + ',' + my); p.setAttribute('stroke-dasharray', '5,4'); $('pl-edges').appendChild(p);
+    }
+    function endLink(e) {
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      if (plLink && over && over.classList.contains('pl-port') && over.classList.contains('in')) {
+        const to = over.dataset.id;
+        if (to && to !== plLink.from && PL.g.nodes[to] && !PL.g.nodes[to].depends_on.includes(plLink.from)) PL.g.nodes[to].depends_on.push(plLink.from);
+      }
+      plLink = null; document.querySelectorAll('.pl-port.in.tgt').forEach((p) => p.classList.remove('tgt'));
+      document.onmousemove = null; document.onmouseup = null; renderCanvas(); renderInspector();
+    }
+    /* ---- inspector ---- */
+    function renderInspector() {
+      const box = $('pl-inspector'); if (!box) return; box.innerHTML = '';
+      if (!PL.g || !PL.sel || !PL.g.nodes[PL.sel]) { box.innerHTML = '<span class="sl">select a node to edit it</span>'; return; }
+      const id = PL.sel, n = PL.g.nodes[id];
+      const row = (label, el) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(el); box.appendChild(r); };
+      const idIn = document.createElement('input'); idIn.value = id;
+      idIn.onchange = () => { const nid = idIn.value.trim(); if (!nid || nid === id || PL.g.nodes[nid]) { idIn.value = id; return; } renameNode(id, nid); };
+      row('id', idIn);
+      const modeSel = document.createElement('select');
+      for (const m of ['claude', 'shell']) { const o = document.createElement('option'); o.value = m; o.textContent = m === 'claude' ? 'agent (forge -p)' : 'shell'; if (n.mode === m) o.selected = true; modeSel.appendChild(o); }
+      modeSel.onchange = () => { n.mode = modeSel.value; renderCanvas(); renderInspector(); };
+      row('mode', modeSel);
+      const pr = document.createElement('textarea'); pr.value = n.prompt || '';
+      pr.oninput = () => { n.prompt = pr.value; const b = document.querySelector('#pln-' + id + ' .nbody'); if (b) b.textContent = pr.value.slice(0, 90); };
+      row(n.mode === 'shell' ? 'command' : 'prompt', pr);
+      const outWrap = document.createElement('div');
+      const renderOuts = () => {
+        outWrap.innerHTML = '';
+        (n.outputs || []).forEach((o, i) => {
+          const r = document.createElement('div'); r.className = 'pl-out-row';
+          const nm = document.createElement('input'); nm.value = o.name; nm.placeholder = 'name'; nm.oninput = () => (o.name = nm.value);
+          const ex = document.createElement('select'); for (const x of ['result', 'stdout', 'git_diff']) { const op = document.createElement('option'); op.value = x; op.textContent = x; if (o.extract === x) op.selected = true; ex.appendChild(op); } ex.onchange = () => (o.extract = ex.value);
+          const rm = document.createElement('button'); rm.className = 'btn btn-ghost btn-sm'; rm.textContent = '✕'; rm.onclick = () => { n.outputs.splice(i, 1); renderOuts(); };
+          r.appendChild(nm); r.appendChild(ex); r.appendChild(rm); outWrap.appendChild(r);
+        });
+        const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ output'; add.onclick = () => { n.outputs = n.outputs || []; n.outputs.push({ name: 'out', extract: n.mode === 'shell' ? 'stdout' : 'result' }); renderOuts(); };
+        outWrap.appendChild(add);
+      };
+      renderOuts(); row('outputs', outWrap);
+      if (n.depends_on && n.depends_on.length) {
+        const dw = document.createElement('div'); dw.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px';
+        n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); renderInspector(); }; dw.appendChild(t); });
+        row('depends on', dw);
+      }
+      const del = document.createElement('button'); del.className = 'btn btn-ghost btn-sm'; del.textContent = 'Delete node'; del.style.color = 'var(--danger,#e5484d)';
+      del.onclick = () => { delete PL.g.nodes[id]; delete PL.g.layout[id]; for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id); PL.sel = null; renderCanvas(); renderInspector(); };
+      box.appendChild(del);
+    }
+    function renameNode(oldId, nid) {
+      const g = PL.g; g.nodes[nid] = g.nodes[oldId]; delete g.nodes[oldId];
+      g.layout[nid] = g.layout[oldId]; delete g.layout[oldId];
+      for (const k of Object.keys(g.nodes)) g.nodes[k].depends_on = g.nodes[k].depends_on.map((x) => (x === oldId ? nid : x));
+      PL.sel = nid; renderCanvas(); renderInspector();
+    }
 
     // Renders one framed stats card per connected platform, each with a small
     // row of KPI tiles fetched from its board endpoint.
