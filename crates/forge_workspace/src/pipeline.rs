@@ -386,6 +386,21 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
             };
             println!("  → {node_id} [{mode:?}] attempt {attempt}{}", if cfg.dry_run { " (dry-run)" } else { "" });
 
+            // For a `claude` node with a `result` output, provision an output
+            // contract file: the agent is told to write its final answer there,
+            // and we read it back (falling back to cleaned stdout). This makes
+            // agent-text passing reliable despite forge -p's mixed stdout.
+            let result_file = if !cfg.dry_run
+                && mode == NodeMode::Claude
+                && outputs.iter().any(|o| o.extract == Extract::Result)
+            {
+                let dir = cfg.workspace.join("pipelines").join(".out").join(&id);
+                let _ = std::fs::create_dir_all(&dir);
+                Some(dir.join(format!("{node_id}.txt")))
+            } else {
+                None
+            };
+
             running += 1;
             let tx = tx.clone();
             let forge = cfg.forge.clone();
@@ -397,7 +412,7 @@ pub fn run(wf: &Workflow, input: BTreeMap<String, String>, cfg: &RunConfig) -> R
                     std::thread::sleep(Duration::from_millis(50));
                     Ok(outputs.iter().map(|o| (o.name.clone(), format!("<dry:{}>", o.name))).collect())
                 } else {
-                    exec_node(mode, &resolved_prompt, &project_dir, &outputs, &forge, home.as_deref(), timeout)
+                    exec_node(mode, &resolved_prompt, &project_dir, &outputs, &forge, home.as_deref(), timeout, result_file.as_deref())
                 };
                 let _ = tx.send(Done { id: node_id, result });
             });
@@ -506,11 +521,28 @@ fn exec_node(
     forge: &Path,
     home: Option<&Path>,
     timeout: Duration,
+    result_file: Option<&Path>,
 ) -> std::result::Result<BTreeMap<String, String>, String> {
     let raw_stdout = match mode {
         NodeMode::Claude => {
+            // Append the output contract when we're capturing a `result`, and
+            // clear any stale file so a fallback can't read a previous run.
+            let full_prompt = match result_file {
+                Some(rf) => {
+                    let _ = std::fs::remove_file(rf);
+                    format!(
+                        "{prompt}\n\n---\nPIPELINE OUTPUT CONTRACT: as your final action, create a \
+                         NEW file at `{}` containing ONLY your final result — raw text, no \
+                         commentary, no markdown fences. The file does not exist yet, so create it \
+                         fresh (do NOT use overwrite mode). A later pipeline step reads that file \
+                         as your output.",
+                        rf.display()
+                    )
+                }
+                None => prompt.to_string(),
+            };
             let mut cmd = Command::new(forge);
-            cmd.arg("-p").arg(prompt).current_dir(project);
+            cmd.arg("-p").arg(&full_prompt).current_dir(project);
             if let Some(h) = home {
                 cmd.env("FORGE_CONFIG", h);
             }
@@ -526,7 +558,13 @@ fn exec_node(
     let mut out = BTreeMap::new();
     for o in outputs {
         let v = match o.extract {
-            Extract::Result => clean_result(&raw_stdout),
+            // Prefer the contract file (clean agent answer); fall back to the
+            // best-effort cleaned stdout if the agent didn't write it.
+            Extract::Result => result_file
+                .and_then(|rf| std::fs::read_to_string(rf).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| clean_result(&raw_stdout)),
             Extract::Stdout => raw_stdout.clone(),
             Extract::GitDiff => {
                 let mut cmd = Command::new("git");
