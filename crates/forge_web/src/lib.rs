@@ -138,6 +138,7 @@ where
             get(pipeline::list_projects::<A>).post(pipeline::add_project::<A>),
         )
         .route("/api/pipeline/projects/delete", post(pipeline::remove_project::<A>))
+        .route("/api/pipeline/browse", get(pipeline::browse::<A>))
         .route("/api/pipeline/files", get(pipeline::list_files::<A>))
         .route(
             "/api/pipeline/file",

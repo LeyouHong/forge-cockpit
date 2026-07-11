@@ -480,6 +480,20 @@
     .pl-status.ok { color: #2e9e44; }
     .pl-status.err { color: var(--danger, #e5484d); }
     @media (max-width: 820px) { .pl-grid { grid-template-columns: 1fr; } }
+    /* Folder picker */
+    .pl-picker-overlay { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; }
+    .pl-picker-overlay.open { display: flex; }
+    .pl-picker { width: min(560px, 92vw); max-height: 80vh; display: flex; flex-direction: column; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden; }
+    .pl-picker-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .pl-picker-nav { display: flex; gap: 6px; padding: 10px 14px; }
+    .pl-picker-nav #pl-picker-path { flex: 1; font: inherit; font-size: 12.5px; font-family: ui-monospace, Menlo, monospace; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+    .pl-picker-list { flex: 1; overflow-y: auto; padding: 4px 8px 8px; min-height: 180px; }
+    .pl-picker-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+    .pl-picker-row:hover { background: var(--hover); }
+    .pl-picker-row .ic { width: 16px; text-align: center; }
+    .pl-picker-row .git { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 5px; }
+    .pl-picker-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+    .pl-picker-foot #pl-picker-cur { font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
   </style>
 </head>
 <body>
@@ -620,7 +634,7 @@
         <div class="pl-bar">
           <label>Project</label>
           <select id="pl-project" class="repo-select"></select>
-          <input id="pl-newpath" placeholder="/path/to/a/project  (add)" />
+          <input id="pl-newpath" placeholder="…or type a path + Enter" />
           <button class="btn btn-sm" id="pl-addproject">+ Add project</button>
           <button class="btn btn-ghost btn-sm" id="pl-delproject" title="Forget this project">Forget</button>
         </div>
@@ -644,6 +658,27 @@
           </div>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Folder picker (server-side; the server is local) -->
+  <div class="pl-picker-overlay" id="pl-picker">
+    <div class="pl-picker">
+      <div class="pl-picker-head">
+        <b>📁 Choose a project folder</b>
+        <div style="flex:1"></div>
+        <button class="icon-btn" id="pl-picker-close" title="Close">✕</button>
+      </div>
+      <div class="pl-picker-nav">
+        <button class="btn btn-sm" id="pl-picker-up" title="Up one level">↑</button>
+        <input id="pl-picker-path" spellcheck="false" placeholder="/path…" />
+      </div>
+      <div class="pl-picker-list" id="pl-picker-list"></div>
+      <div class="pl-picker-foot">
+        <span class="sl" id="pl-picker-cur"></span>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="pl-picker-use">Use this folder</button>
+      </div>
     </div>
   </div>
 
@@ -1936,12 +1971,40 @@
       } else { PL.project = null; $('pl-files').innerHTML = '<span class="sl">no projects — add one above</span>'; $('pl-runs').innerHTML = ''; }
     }
     $('pl-project').onchange = () => { PL.project = $('pl-project').value; PL.file = null; plSetEditor('', 'no pipeline open'); loadFiles(); loadRuns(); };
-    $('pl-addproject').onclick = async () => {
-      const path = $('pl-newpath').value.trim(); if (!path) return;
-      const r = await api('/api/pipeline/projects', plBody({ b: { path } })); const d = await r.json();
-      if (!r.ok) { plStatus(d.error || 'failed to add project', true); return; }
-      $('pl-newpath').value = ''; PL.project = d.name; loadProjects();
-    };
+    async function addProjectPath(path) {
+      if (!path || !path.trim()) return false;
+      const r = await api('/api/pipeline/projects', plBody({ b: { path: path.trim() } })); const d = await r.json();
+      if (!r.ok) { plStatus(d.error || 'failed to add project', true); return false; }
+      PL.project = d.name; $('pl-newpath').value = ''; loadProjects(); return true;
+    }
+    $('pl-newpath').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addProjectPath($('pl-newpath').value); } };
+    $('pl-addproject').onclick = () => openPicker($('pl-newpath').value.trim() || null);
+
+    /* server-side folder picker (server is local → this is your filesystem) */
+    const PICK = { path: null, parent: null };
+    $('pl-picker-close').onclick = () => $('pl-picker').classList.remove('open');
+    $('pl-picker-up').onclick = () => { if (PICK.parent) browseTo(PICK.parent); };
+    $('pl-picker-path').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); browseTo($('pl-picker-path').value.trim()); } };
+    $('pl-picker-use').onclick = async () => { if (PICK.path && await addProjectPath(PICK.path)) $('pl-picker').classList.remove('open'); };
+    function openPicker(start) { $('pl-picker').classList.add('open'); browseTo(start); }
+    async function browseTo(path) {
+      const url = '/api/pipeline/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
+      const d = await (await api(url)).json().catch(() => null);
+      if (!d) return;
+      PICK.path = d.path; PICK.parent = d.parent;
+      $('pl-picker-path').value = d.path; $('pl-picker-cur').textContent = d.path; $('pl-picker-cur').title = d.path;
+      const list = $('pl-picker-list'); list.innerHTML = '';
+      if (!(d.dirs || []).length) { list.innerHTML = '<div class="sl" style="padding:8px">no sub-folders here</div>'; }
+      for (const dir of (d.dirs || [])) {
+        const row = document.createElement('div'); row.className = 'pl-picker-row';
+        const ic = document.createElement('span'); ic.className = 'ic'; ic.textContent = '📁';
+        const nm = document.createElement('span'); nm.textContent = dir.name;
+        row.appendChild(ic); row.appendChild(nm);
+        if (dir.git) { const g = document.createElement('span'); g.className = 'git'; g.textContent = 'git'; row.appendChild(g); }
+        row.onclick = () => browseTo(d.path.replace(/\/+$/, '') + '/' + dir.name);
+        list.appendChild(row);
+      }
+    }
     $('pl-delproject').onclick = async () => {
       if (!PL.project || !confirm('Forget project "' + PL.project + '"? (files are not deleted)')) return;
       await api('/api/pipeline/projects/delete', plBody({ b: { name: PL.project } }));

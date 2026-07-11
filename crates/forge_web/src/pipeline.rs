@@ -42,6 +42,50 @@ pub(crate) async fn list_projects<A: API>(State(_): State<AppState<A>>) -> Json<
 }
 
 #[derive(Deserialize)]
+pub(crate) struct BrowseQuery {
+    path: Option<String>,
+}
+
+/// GET /api/pipeline/browse?path=DIR — list a folder's subdirectories, for the
+/// server-side folder picker (the server is local, so this is the user's FS).
+/// Defaults to $HOME. Hidden dot-folders are skipped; git repos are flagged.
+pub(crate) async fn browse<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<BrowseQuery>,
+) -> Json<Value> {
+    let start = q
+        .path
+        .map(|p| PathBuf::from(shellexpand(&p)))
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(home_dir);
+    let path = start.canonicalize().unwrap_or_else(|_| home_dir());
+    let mut dirs: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&path) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') {
+                    continue;
+                }
+                dirs.push(json!({ "name": name, "git": p.join(".git").exists() }));
+            }
+        }
+    }
+    dirs.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+    });
+    let parent = path.parent().map(|p| p.to_string_lossy().to_string());
+    Json(json!({ "path": path.to_string_lossy(), "parent": parent, "dirs": dirs }))
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct ProjectAdd {
     path: String,
     name: Option<String>,
