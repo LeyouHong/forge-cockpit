@@ -156,6 +156,10 @@ where
         .route("/api/team", get(pipeline::team_board::<A>))
         .route("/api/team/run", post(pipeline::team_run::<A>))
         .route("/api/team/stop", post(pipeline::team_stop::<A>))
+        .route(
+            "/api/team/agents",
+            get(pipeline::team_agents_get::<A>).put(pipeline::team_agents_set::<A>),
+        )
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()

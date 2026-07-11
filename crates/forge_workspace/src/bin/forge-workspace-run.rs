@@ -95,6 +95,19 @@ struct Cfg {
     /// When set (via --isolate-mcp), spawned agents run with FORGE_CONFIG=this,
     /// an isolated base_path exposing ONLY the workspace MCP.
     home: Option<PathBuf>,
+    /// Optional per-role forge agent (role name → agent id), loaded from
+    /// `<workspace>/.team-agents.json`. When a role has one, its `forge -p` gets
+    /// `--agent <id>` — that's how a role picks a different model/persona.
+    agents: HashMap<String, String>,
+}
+
+/// Load the role→agent map from `<workspace>/.team-agents.json` (if present).
+fn load_role_agents(workspace: &Path) -> HashMap<String, String> {
+    std::fs::read_to_string(workspace.join(".team-agents.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        .map(|m| m.into_iter().filter(|(_, v)| !v.trim().is_empty()).collect())
+        .unwrap_or_default()
 }
 
 fn pending(r: &RequestDocument) -> bool {
@@ -132,6 +145,7 @@ fn run() -> anyhow::Result<()> {
 
     let isolate = has(&mut args, "--isolate-mcp");
     let home = if isolate { Some(setup_isolated_home(&workspace, &mcp_bin)?) } else { None };
+    let agents = load_role_agents(&workspace);
     let cfg = Cfg {
         project,
         workspace,
@@ -148,6 +162,7 @@ fn run() -> anyhow::Result<()> {
         goal: flag(&mut args, "--goal").filter(|g| !g.trim().is_empty()),
         plan_only: has(&mut args, "--plan-only"),
         home,
+        agents,
     };
 
     // With an isolated base_path the workspace MCP is provided there; otherwise
@@ -336,6 +351,9 @@ fn run_coordinator(cfg: &Cfg, goal: &str) {
     );
     let mut cmd = Command::new(&cfg.forge);
     cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
+    if let Some(agent) = cfg.agents.get("coordinator") {
+        cmd.arg("--agent").arg(agent);
+    }
     if let Some(home) = &cfg.home {
         cmd.env("FORGE_CONFIG", home);
     }
@@ -364,6 +382,9 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, ro
             );
             let mut cmd = Command::new(&cfg.forge);
             cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
+            if let Some(agent) = cfg.agents.get(role) {
+                cmd.arg("--agent").arg(agent);
+            }
             if let Some(home) = &cfg.home {
                 cmd.env("FORGE_CONFIG", home);
             }

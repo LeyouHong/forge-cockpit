@@ -2618,7 +2618,15 @@
       await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
       $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
     }
-    function startTeamPoll() { tmStopPoll(); loadTeam(); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    async function tmLoadAgents() {
+      const [al, am] = await Promise.all([
+        api('/api/agents').then((r) => r.json()).catch(() => []),
+        api('/api/team/agents?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ agents: {} })),
+      ]);
+      TEAM.agentList = Array.isArray(al) ? al : [];
+      TEAM.agentMap = (am && am.agents) || {};
+    }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadAgents().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
       const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
@@ -2629,6 +2637,11 @@
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
       $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
+      // Only rebuild the canvas when the board data actually changed, so an open
+      // agent dropdown isn't reset by the 3s poll.
+      const sig = JSON.stringify([reqs, msgs]);
+      if (sig === TEAM._sig) return;
+      TEAM._sig = sig;
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
       const ab = $('tm-alerts'); ab.innerHTML = '';
       for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
@@ -2652,6 +2665,15 @@
       else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); tb.appendChild(q); }
       el.appendChild(th); el.appendChild(tb);
       if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
+      if (role.key !== 'done') {
+        const af = document.createElement('div'); af.className = 'tf';
+        const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
+        const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
+        const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
+        for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if ((TEAM.agentMap || {})[role.key] === a.id) o.selected = true; sel.appendChild(o); }
+        sel.onchange = async () => { TEAM.agentMap = TEAM.agentMap || {}; TEAM.agentMap[role.key] = sel.value; await api('/api/team/agents', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, agents: TEAM.agentMap }) }); };
+        af.appendChild(sel); el.appendChild(af);
+      }
       return el;
     }
     function tmEdges() {

@@ -437,6 +437,48 @@ pub(crate) async fn team_run<A: API>(
     }
 }
 
+/// GET /api/team/agents?project=NAME — the role→agent map for this project.
+pub(crate) async fn team_agents_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let map: Value = std::fs::read_to_string(project.join(".forge-workspace").join(".team-agents.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    Ok(Json(json!({ "agents": map })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamAgentsSet {
+    project: String,
+    agents: Value,
+}
+
+/// PUT /api/team/agents — save the role→agent map (used by the orchestrator to
+/// pass `--agent` per role). Empty values are dropped.
+pub(crate) async fn team_agents_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamAgentsSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    std::fs::create_dir_all(&ws)?;
+    let clean: serde_json::Map<String, Value> = body
+        .agents
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    std::fs::write(ws.join(".team-agents.json"), serde_json::to_string_pretty(&clean).unwrap_or_default())?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 /// POST /api/team/stop — stop the orchestrator running for a project.
 pub(crate) async fn team_stop<A: API>(
     State(_): State<AppState<A>>,
