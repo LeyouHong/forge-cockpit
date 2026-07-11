@@ -162,5 +162,6 @@ forge_test_kit = { path = "crates/forge_test_kit" }
 forge_markdown_stream = { path = "crates/forge_markdown_stream" }
 forge_config = { path = "crates/forge_config" }
 forge_web = { path = "crates/forge_web" }
+forge_workspace = { path = "crates/forge_workspace" }
 forge_eventsource = { path = "crates/forge_eventsource" }
 forge_eventsource_stream = { path = "crates/forge_eventsource_stream" }

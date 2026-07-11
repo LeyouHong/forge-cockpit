@@ -12,6 +12,7 @@
 mod board;
 mod dto;
 mod live;
+mod pipeline;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -132,6 +133,20 @@ where
             put(board::update_todo::<A>).delete(board::delete_todo::<A>),
         )
         .route("/api/pipelines", get(board::running_pipelines::<A>))
+        .route(
+            "/api/pipeline/projects",
+            get(pipeline::list_projects::<A>).post(pipeline::add_project::<A>),
+        )
+        .route("/api/pipeline/projects/delete", post(pipeline::remove_project::<A>))
+        .route("/api/pipeline/files", get(pipeline::list_files::<A>))
+        .route(
+            "/api/pipeline/file",
+            get(pipeline::read_file::<A>).put(pipeline::save_file::<A>),
+        )
+        .route("/api/pipeline/file/delete", post(pipeline::delete_file::<A>))
+        .route("/api/pipeline/validate", post(pipeline::validate_content::<A>))
+        .route("/api/pipeline/run", post(pipeline::run_pipeline::<A>))
+        .route("/api/pipeline/runs", get(pipeline::list_runs::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
