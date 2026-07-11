@@ -153,6 +153,7 @@ where
         .route("/api/pipeline/validate-graph", post(pipeline::validate_graph::<A>))
         .route("/api/pipeline/run", post(pipeline::run_pipeline::<A>))
         .route("/api/pipeline/runs", get(pipeline::list_runs::<A>))
+        .route("/api/team", get(pipeline::team_board::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()

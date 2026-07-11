@@ -529,6 +529,29 @@
     .pl-node.run-skipped { opacity: .55; }
     .pl-node.run-skipped .nstat { background: #9ca3af; }
     @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    /* Team canvas */
+    .tm-alerts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+    .tm-alert { border-left: 3px solid #e5484d; background: #fff5f5; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+    .tm-alert b { color: #e5484d; }
+    :root[data-theme="dark"] .tm-alert { background: rgba(229,72,77,.12); }
+    .tm-canvas { position: relative; height: 340px; border: 1px solid var(--border); border-radius: 10px; overflow: auto;
+      background: radial-gradient(circle, rgba(127,127,127,.16) 1px, transparent 1px) 0 0 / 18px 18px; }
+    .tm-edges { position: absolute; inset: 0; width: 1400px; height: 340px; pointer-events: none; overflow: visible; }
+    .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
+    .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
+    .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
+    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .tm-card .th { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+    .tm-card .th .ico { font-size: 16px; }
+    .tm-card .th .nm { font-weight: 700; }
+    .tm-card .th .cnt { margin-left: auto; font-size: 11px; font-weight: 700; color: #fff; background: #7c5cff; border-radius: 10px; padding: 1px 8px; }
+    .tm-card .th .cnt.zero { background: #c7c7c7; }
+    .tm-card .tb { padding: 6px 10px; display: flex; flex-direction: column; gap: 3px; min-height: 30px; }
+    .tm-card .tb .rq { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tm-card .tb .rq .dot { color: #3b82f6; }
+    .tm-card .tb .none { font-size: 10.5px; color: #b8b8b8; font-style: italic; }
+    .tm-card .tf { border-top: 1px solid var(--border); padding: 5px 10px; font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+    .tm-card .tf .box { color: #e5484d; font-weight: 600; }
     .pl-foreach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
     .pl-foreach .pl-fe-toggle { display: flex; align-items: center; gap: 5px; font-weight: 600; }
     .pl-foreach .pl-fe-field { display: flex; align-items: center; gap: 5px; }
@@ -573,6 +596,7 @@
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
+      <button class="icon-btn" id="team-open" title="Team — the resident agent team (engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -741,6 +765,25 @@
             <div id="pl-status" class="pl-status"></div>
           </div>
         </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Team (resident agent team) page -->
+  <div class="kanban-overlay" id="team-overlay">
+    <div class="kanban-head">
+      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — engineer → reviewer → qa</span></span>
+      <div style="flex:1"></div>
+      <label class="sl" style="margin-right:6px">Project</label>
+      <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
+      <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
+      <button class="icon-btn" id="team-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div id="tm-alerts" class="tm-alerts"></div>
+        <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
+        <div id="tm-empty" class="sl" style="margin-top:10px"></div>
       </section>
     </div>
   </div>
@@ -2520,6 +2563,87 @@
       g.layout[nid] = g.layout[oldId]; delete g.layout[oldId];
       for (const k of Object.keys(g.nodes)) g.nodes[k].depends_on = g.nodes[k].depends_on.map((x) => (x === oldId ? nid : x));
       PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
+    }
+
+    /* ---------- team (resident agent team) page ---------- */
+    const TEAM = { project: null, poll: null };
+    const TM_ROLES = [
+      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [] },
+      { key: 'engineer', name: 'Engineer', ico: '🔨', statuses: ['open', 'in_progress'] },
+      { key: 'reviewer', name: 'Reviewer', ico: '🔍', statuses: ['review'] },
+      { key: 'qa', name: 'QA', ico: '✅', statuses: ['qa'] },
+      { key: 'done', name: 'Done', ico: '🏁', statuses: ['done', 'rejected'] },
+    ];
+    const TM_ORDER = ['coordinator', 'engineer', 'reviewer', 'qa', 'done'];
+    const TM_POS = { coordinator: { x: 24, y: 90 }, engineer: { x: 268, y: 90 }, reviewer: { x: 512, y: 90 }, qa: { x: 756, y: 90 }, done: { x: 1000, y: 90 } };
+    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
+    $('team-open').onclick = openTeam;
+    $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
+    $('tm-refresh').onclick = () => loadTeam();
+    function tmStopPoll() { if (TEAM.poll) { clearInterval(TEAM.poll); TEAM.poll = null; } }
+    async function tmLoadProjects() {
+      const d = await (await api('/api/pipeline/projects')).json().catch(() => ({ projects: [] }));
+      const sel = $('tm-project'); sel.innerHTML = '';
+      for (const p of (d.projects || [])) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name; sel.appendChild(o); }
+      if ((d.projects || []).length) {
+        if (!TEAM.project || !d.projects.find((p) => p.name === TEAM.project)) TEAM.project = d.projects[0].name;
+        sel.value = TEAM.project; startTeamPoll();
+      } else {
+        TEAM.project = null; [...$('tm-canvas').querySelectorAll('.tm-card')].forEach((c) => c.remove());
+        $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — add one on the 🧬 Pipeline page first.';
+      }
+    }
+    $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
+    function startTeamPoll() { tmStopPoll(); loadTeam(); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    async function loadTeam() {
+      if (!TEAM.project) return;
+      const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
+      if (d) renderTeam(d);
+    }
+    function renderTeam(d) {
+      const reqs = d.requests || [], msgs = d.messages || [];
+      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — start the team with:  forge-workspace-run --project <this dir> --goal "…"';
+      const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
+      const ab = $('tm-alerts'); ab.innerHTML = '';
+      for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
+      const canvas = $('tm-canvas'); [...canvas.querySelectorAll('.tm-card')].forEach((c) => c.remove());
+      for (const role of TM_ROLES) canvas.appendChild(tmCard(role, reqs, msgs));
+      tmEdges();
+    }
+    function tmCard(role, reqs, msgs) {
+      const pos = TM_POS[role.key];
+      const mine = role.key === 'coordinator' ? [] : reqs.filter((r) => role.statuses.includes(r.status));
+      const cnt = role.key === 'coordinator' ? reqs.length : mine.length;
+      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(role.key) === 0);
+      const inbox = msgs.filter((m) => m.to === role.key + '-1' && !m.read && m.category === 'ticket').length;
+      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + role.key;
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const th = document.createElement('div'); th.className = 'th';
+      th.innerHTML = '<span class="ico">' + role.ico + '</span><span class="nm">' + role.name + '</span><span class="cnt' + (cnt ? '' : ' zero') + '">' + cnt + '</span>';
+      const tb = document.createElement('div'); tb.className = 'tb';
+      if (role.key === 'coordinator') { const s = document.createElement('div'); s.className = 'rq'; s.textContent = 'plans goals → requests'; tb.appendChild(s); }
+      else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
+      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); tb.appendChild(q); }
+      el.appendChild(th); el.appendChild(tb);
+      if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
+      return el;
+    }
+    function tmEdges() {
+      const svg = $('tm-edges'); svg.innerHTML = '';
+      const dims = (k) => { const el = document.getElementById('tm-' + k), p = TM_POS[k]; return { x: p.x, y: p.y, w: el ? el.offsetWidth : 200, h: el ? el.offsetHeight : 80 }; };
+      const path = (d, cls) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); if (cls) p.setAttribute('class', cls); svg.appendChild(p); };
+      for (let i = 0; i < TM_ORDER.length - 1; i++) {
+        const a = dims(TM_ORDER[i]), b = dims(TM_ORDER[i + 1]);
+        const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
+        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
+      }
+      // rework back-edges (dashed) from reviewer/qa down to engineer
+      const eng = dims('engineer');
+      for (const from of ['reviewer', 'qa']) {
+        const f = dims(from);
+        const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
+        path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+      }
     }
 
     // Renders one framed stats card per connected platform, each with a small

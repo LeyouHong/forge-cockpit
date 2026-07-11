@@ -373,6 +373,44 @@ pub(crate) async fn run_pipeline<A: API>(
     Ok(Json(json!({ "started": true, "log": log.to_string_lossy() })))
 }
 
+/// GET /api/team?project=NAME — the resident team's board: work requests (with
+/// their pipeline stage + who claimed them) and the message-bus inbox, read from
+/// `<project>/.forge-workspace` (what `forge-workspace-run` writes). Pure read.
+pub(crate) async fn team_board<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let reqs = forge_workspace::list_requests(&ws, None).unwrap_or_default();
+    let msgs = forge_workspace::list_messages(&ws).unwrap_or_default();
+    let requests: Vec<Value> = reqs
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "title": r.title,
+                "status": serde_json::to_value(r.status).unwrap_or_else(|_| json!("")),
+                "claimed_by": r.claimed_by,
+            })
+        })
+        .collect();
+    let messages: Vec<Value> = msgs
+        .iter()
+        .take(60)
+        .map(|m| {
+            json!({
+                "from": m.from,
+                "to": m.to,
+                "category": serde_json::to_value(m.category).unwrap_or_else(|_| json!("")),
+                "body": m.body,
+                "read": m.read,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "workspace": ws.to_string_lossy(), "requests": requests, "messages": messages })))
+}
+
 /// GET /api/pipeline/runs?project=NAME — recent runs with per-node DAG status.
 pub(crate) async fn list_runs<A: API>(
     State(_): State<AppState<A>>,
