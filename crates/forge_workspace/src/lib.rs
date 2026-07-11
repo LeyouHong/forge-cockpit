@@ -13,6 +13,7 @@
 //! runner that drives agent sessions) build on top of this.
 
 pub mod message;
+pub mod pipeline;
 pub mod request;
 
 pub use message::{get_inbox, list_messages, send_message, Category, Message};

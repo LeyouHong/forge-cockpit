@@ -456,6 +456,103 @@
         box-shadow: -6px 0 24px rgba(0,0,0,.3);
       }
     }
+    /* Pipeline page */
+    .pl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .pl-bar label { font-size: 12px; color: var(--muted); }
+    .pl-bar #pl-project { border: 1px solid var(--border); padding: 4px 22px 4px 8px; color: var(--text); min-width: 140px; }
+    .pl-bar #pl-newpath { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; min-width: 240px; flex: 1; }
+    .pl-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+    .pl-subhead { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+    .pl-files, .pl-runs { display: flex; flex-direction: column; gap: 4px; }
+    .pl-file { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; font-size: 12.5px; }
+    .pl-file:hover { background: var(--hover); }
+    .pl-file.active { border-color: var(--accent, #7c5cff); background: var(--hover); }
+    .pl-file .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-file .rm { color: var(--muted); padding: 0 3px; border-radius: 4px; }
+    .pl-file .rm:hover { color: var(--danger); background: var(--hover); }
+    .pl-run { border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-size: 11px; }
+    .pl-run .rh { display: flex; gap: 6px; align-items: baseline; font-weight: 600; }
+    .pl-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .pl-pill { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: #fff; }
+    .pl-editor-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .pl-editor { width: 100%; min-height: 340px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--panel, rgba(127,127,127,.06)); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; box-sizing: border-box; tab-size: 2; }
+    .pl-status { margin-top: 8px; font-size: 12px; white-space: pre-wrap; }
+    .pl-status.ok { color: #2e9e44; }
+    .pl-status.err { color: var(--danger, #e5484d); }
+    @media (max-width: 820px) { .pl-grid { grid-template-columns: 1fr; } }
+    /* Folder picker */
+    .pl-picker-overlay { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; }
+    .pl-picker-overlay.open { display: flex; }
+    .pl-picker { width: min(560px, 92vw); max-height: 80vh; display: flex; flex-direction: column; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden; }
+    .pl-picker-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .pl-picker-nav { display: flex; gap: 6px; padding: 10px 14px; }
+    .pl-picker-nav #pl-picker-path { flex: 1; font: inherit; font-size: 12.5px; font-family: ui-monospace, Menlo, monospace; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+    .pl-picker-list { flex: 1; overflow-y: auto; padding: 4px 8px 8px; min-height: 180px; }
+    .pl-picker-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+    .pl-picker-row:hover { background: var(--hover); }
+    .pl-picker-row .ic { width: 16px; text-align: center; }
+    .pl-picker-row .git { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 5px; }
+    .pl-picker-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+    .pl-picker-foot #pl-picker-cur { font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+    /* Visual pipeline builder */
+    .pl-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-left: 10px; }
+    .pl-tab { font: inherit; font-size: 12px; padding: 3px 12px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
+    .pl-tab.active { background: var(--hover); color: var(--text); font-weight: 600; }
+    .pl-palette { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .pl-canvas-wrap { display: block; }
+    .pl-node-modal { width: min(480px, 94vw); }
+    .pl-nm-body { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; }
+    .pl-canvas { position: relative; height: 460px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; cursor: grab; background:
+      radial-gradient(circle, rgba(127,127,127,.18) 1px, transparent 1px) 0 0 / 18px 18px; }
+    .pl-canvas.panning { cursor: grabbing; }
+    .pl-viewport { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+    .pl-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+    .pl-zoom .btn { width: 26px; padding: 2px 0; }
+    .pl-edges { position: absolute; inset: 0; width: 4000px; height: 3000px; pointer-events: none; overflow: visible; }
+    .pl-edges path { stroke: #8a8f98; stroke-width: 2; fill: none; }
+    .pl-edges path.hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+    .pl-node { position: absolute; width: 210px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; user-select: none; }
+    .pl-node.sel { border-color: #7c5cff; box-shadow: 0 0 0 2px rgba(124,92,255,.3); }
+    .pl-node .nh { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-bottom: 1px solid var(--border); cursor: grab; border-radius: 9px 9px 0 0; }
+    .pl-node .nh .badge { font-size: 8.5px; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; color: #fff; border-radius: 4px; padding: 1px 5px; }
+    .pl-node .nh .badge.shell { background: #c98a2b; }
+    .pl-node .nh .badge.claude { background: #7c5cff; }
+    .pl-node .nh .badge.setup { background: #3b82f6; }
+    .pl-node .nh .nstat { width: 9px; height: 9px; border-radius: 50%; background: transparent; flex: 0 0 auto; transition: background .2s; }
+    .pl-node.run-pending .nstat { background: #c7c7c7; }
+    .pl-node.run-running { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .pl-node.run-running .nstat { background: #3b82f6; animation: plpulse 1s ease-in-out infinite; }
+    .pl-node.run-done { border-color: #2e9e44; }
+    .pl-node.run-done .nstat { background: #2e9e44; }
+    .pl-node.run-failed { border-color: #e5484d; box-shadow: 0 0 0 2px rgba(229,72,77,.22); }
+    .pl-node.run-failed .nstat { background: #e5484d; }
+    .pl-node.run-skipped { opacity: .55; }
+    .pl-node.run-skipped .nstat { background: #9ca3af; }
+    @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    .pl-foreach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+    .pl-foreach .pl-fe-toggle { display: flex; align-items: center; gap: 5px; font-weight: 600; }
+    .pl-foreach .pl-fe-field { display: flex; align-items: center; gap: 5px; }
+    .pl-foreach .pl-fe-field > label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .pl-foreach input, .pl-foreach select { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+    .pl-foreach input { min-width: 12ch; }
+    .pl-node .nh .nid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nh .acts { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+    .pl-node .nh .acts .e { font-size: 10px; color: #7c5cff; cursor: pointer; }
+    .pl-node .nh .acts .x { font-size: 10px; color: #e5484d; cursor: pointer; }
+    .pl-node .nbody { padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; }
+    .pl-node .nproj { font-size: 9.5px; color: #7c5cff; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nprompt { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nouts { font-size: 9px; color: #2e9e44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #8a8f98; background: var(--bg, #fff); left: 50%; transform: translateX(-50%); cursor: crosshair; }
+    .pl-port.in { top: -7px; }
+    .pl-port.out { bottom: -7px; background: #8a8f98; }
+    .pl-port.out:hover, .pl-port.in.tgt { border-color: #7c5cff; background: #7c5cff; }
+    .pl-insp-row { display: flex; flex-direction: column; gap: 3px; }
+    .pl-insp-row label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .pl-nm-body input, .pl-nm-body select, .pl-nm-body textarea { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
+    .pl-nm-body textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; min-height: 110px; resize: vertical; }
+    .pl-out-row { display: flex; gap: 4px; }
+    .pl-out-row input { flex: 1; }
   </style>
 </head>
 <body>
@@ -475,6 +572,7 @@
       <button class="icon-btn" id="tasks-toggle" title="Activity &amp; TODO — pipelines, tasks, recent runs">⏱</button>
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
+      <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -581,6 +679,105 @@
     </div>
   </div>
 
+
+  <!-- Pipeline builder (its own page) -->
+  <div class="kanban-overlay" id="pipeline-overlay">
+    <div class="kanban-head">
+      <span><b>🧬 Pipeline</b> <span class="drawer-hint">build &amp; run workflows per project</span></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="pl-refresh">Refresh</button>
+      <button class="icon-btn" id="pipeline-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div class="pl-bar">
+          <label>Project</label>
+          <select id="pl-project" class="repo-select"></select>
+          <input id="pl-newpath" placeholder="…or type a path + Enter" />
+          <button class="btn btn-sm" id="pl-addproject">+ Add project</button>
+          <button class="btn btn-ghost btn-sm" id="pl-delproject" title="Forget this project">Forget</button>
+        </div>
+        <div class="pl-grid">
+          <div class="pl-left">
+            <div class="pl-subhead"><span>Pipelines</span><button class="btn btn-sm" id="pl-new">+ New</button></div>
+            <div id="pl-files" class="pl-files"></div>
+            <div class="pl-subhead" style="margin-top:14px"><span>Recent runs</span></div>
+            <div id="pl-runs" class="pl-runs"></div>
+          </div>
+          <div class="pl-right">
+            <div class="pl-editor-head">
+              <span id="pl-editing" class="sl">no pipeline open</span>
+              <div class="pl-tabs">
+                <button class="pl-tab active" id="pl-tab-visual">Visual</button>
+                <button class="pl-tab" id="pl-tab-yaml">YAML</button>
+              </div>
+              <div style="flex:1"></div>
+              <button class="btn btn-sm" id="pl-validate">Validate</button>
+              <button class="btn btn-primary btn-sm" id="pl-save">Save</button>
+              <button class="btn btn-sm" id="pl-run" title="Run this pipeline">▶ Run</button>
+            </div>
+            <div id="pl-visual" class="pl-visual">
+              <div class="pl-palette">
+                <button class="btn btn-sm" id="pl-add-shell">+ Shell node</button>
+                <button class="btn btn-sm" id="pl-add-agent">+ Agent node</button>
+                <button class="btn btn-ghost btn-sm" id="pl-auto">Auto-layout</button>
+                <span class="sl pl-hint">drag a node's ● out-port onto another node's ○ in-port to link (dependency)</span>
+              </div>
+              <div class="pl-foreach" id="pl-foreach"></div>
+              <div class="pl-canvas-wrap">
+                <div id="pl-canvas" class="pl-canvas">
+                  <div id="pl-viewport" class="pl-viewport">
+                    <svg id="pl-edges" class="pl-edges"></svg>
+                  </div>
+                  <div class="pl-zoom">
+                    <button class="btn btn-sm" id="pl-zin" title="Zoom in">+</button>
+                    <button class="btn btn-sm" id="pl-zout" title="Zoom out">−</button>
+                    <button class="btn btn-sm" id="pl-zfit" title="Reset view">⤢</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <textarea id="pl-editor" class="pl-editor" style="display:none" spellcheck="false"></textarea>
+            <div id="pl-status" class="pl-status"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Node edit modal -->
+  <div class="pl-picker-overlay" id="pl-nodemodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b>✏️ Edit node</b><div style="flex:1"></div><button class="icon-btn" id="pl-nm-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="pl-nm-body"></div>
+      <div class="pl-picker-foot">
+        <button class="btn btn-ghost btn-sm" id="pl-nm-del" style="color:var(--danger,#e5484d)">Delete node</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="pl-nm-done">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Folder picker (server-side; the server is local) -->
+  <div class="pl-picker-overlay" id="pl-picker">
+    <div class="pl-picker">
+      <div class="pl-picker-head">
+        <b>📁 Choose a project folder</b>
+        <div style="flex:1"></div>
+        <button class="icon-btn" id="pl-picker-close" title="Close">✕</button>
+      </div>
+      <div class="pl-picker-nav">
+        <button class="btn btn-sm" id="pl-picker-up" title="Up one level">↑</button>
+        <input id="pl-picker-path" spellcheck="false" placeholder="/path…" />
+      </div>
+      <div class="pl-picker-list" id="pl-picker-list"></div>
+      <div class="pl-picker-foot">
+        <span class="sl" id="pl-picker-cur"></span>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="pl-picker-use">Use this folder</button>
+      </div>
+    </div>
+  </div>
 
   <!-- AI providers / sign-in drawer -->
   <div class="drawer-overlay" id="drawer-overlay">
@@ -1338,7 +1535,6 @@
     const SENTRY_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#362D59"/><path fill="#fff" d="M16 8.5c-.5 0-1 .27-1.27.73l-1.8 3.1.98.57a8.9 8.9 0 0 1 4.32 6.94h-1.9a7 7 0 0 0-3.36-5.32l-1.8 3.12.86.5a3.5 3.5 0 0 1 1.64 2.5H9.1a.28.28 0 0 1-.24-.42l.98-1.7-.98-.57-1 1.7A1.15 1.15 0 0 0 8.86 21h4.7a5.2 5.2 0 0 0-2.28-4.32l.83-1.43a6.8 6.8 0 0 1 2.94 5.75h5.1a10.6 10.6 0 0 0-5.2-9.14l.83-1.43c.05-.09.18-.09.23 0l5.75 9.96a.28.28 0 0 1-.24.42h-1.55c.02.38.03.76.03 1.15h1.52c.88 0 1.43-.96 1-1.72l-5.76-9.96A1.46 1.46 0 0 0 16 8.5z"/></svg>';
     const GCAL_LOGO = '<svg class="gh-logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="6" width="20" height="20" rx="3" fill="#fff" stroke="#4285F4" stroke-width="2"/><rect x="6" y="6" width="20" height="6" rx="3" fill="#4285F4"/><text x="16" y="24" font-size="10" font-weight="700" fill="#4285F4" text-anchor="middle" font-family="-apple-system,Arial,sans-serif">31</text></svg>';
     const GHA_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#2088FF"/><path fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5l3 3 7-7"/></svg>';
-    const WS_LOGO = '<svg class="gh-logo" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#7c5cff"/><circle cx="8" cy="8" r="2.3" fill="#fff"/><circle cx="16" cy="8" r="2.3" fill="#fff"/><circle cx="12" cy="16" r="2.3" fill="#fff"/><path fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" d="M8 10.2v1.3a1.5 1.5 0 0 0 1.5 1.5h5a1.5 1.5 0 0 0 1.5-1.5v-1.3M12 13v1"/></svg>';
     const SLACK_LOGO = '<svg class="gh-logo" viewBox="0 0 122.8 122.8" aria-hidden="true"><path d="M25.8 77.6c0 7.1-5.8 12.9-12.9 12.9S0 84.7 0 77.6s5.8-12.9 12.9-12.9h12.9v12.9z" fill="#e01e5a"/><path d="M32.3 77.6c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9v32.3c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V77.6z" fill="#e01e5a"/><path d="M45.2 25.8c-7.1 0-12.9-5.8-12.9-12.9S38.1 0 45.2 0s12.9 5.8 12.9 12.9v12.9H45.2z" fill="#36c5f0"/><path d="M45.2 32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H12.9C5.8 58.1 0 52.3 0 45.2s5.8-12.9 12.9-12.9h32.3z" fill="#36c5f0"/><path d="M97 45.2c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9-5.8 12.9-12.9 12.9H97V45.2z" fill="#2eb67d"/><path d="M90.5 45.2c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V12.9C64.7 5.8 70.5 0 77.6 0s12.9 5.8 12.9 12.9v32.3z" fill="#2eb67d"/><path d="M77.6 97c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9-12.9-5.8-12.9-12.9V97h12.9z" fill="#ecb22e"/><path d="M77.6 90.5c-7.1 0-12.9-5.8-12.9-12.9s5.8-12.9 12.9-12.9h32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H77.6z" fill="#ecb22e"/></svg>';
     const GMAIL_LOGO = '<svg class="gh-logo" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4caf50" d="M45 16.2l-5 2.75-5 4.75L35 40h7c1.657 0 3-1.343 3-3V16.2z"/><path fill="#1e88e5" d="M3 16.2l3.614 1.71L13 23.7V40H6c-1.657 0-3-1.343-3-3V16.2z"/><polygon fill="#e53935" points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"/><path fill="#c62828" d="M3 12.298V16.2l10 7.5V11.2L9.876 8.859C9.132 8.301 8.228 8 7.298 8C4.924 8 3 9.924 3 12.298z"/><path fill="#fbc02d" d="M45 12.298V16.2l-10 7.5V11.2l3.124-2.341C38.868 8.301 39.772 8 40.702 8C43.076 8 45 9.924 45 12.298z"/></svg>';
 
@@ -1832,7 +2028,6 @@
 
     /* ---------- boards (kanban) ---------- */
     const KB_PLATFORMS = [
-      { key: 'workspace', name: 'Workspace Team', logo: WS_LOGO },
       { key: 'github', name: 'GitHub', logo: GH_LOGO },
       { key: 'gha', name: 'GitHub Actions', logo: GHA_LOGO },
       { key: 'jira', name: 'Jira', logo: JIRA_LOGO },
@@ -1851,6 +2046,481 @@
     $('integrations-close').onclick = () => $('integrations-overlay').classList.remove('open');
     $('integrations-refresh').onclick = loadMcp;
 
+    /* ---------- pipeline page ---------- */
+    const PL = { project: null, file: null };
+    const PL_COLOR = { done: '#2e9e44', running: '#3b82f6', failed: '#e5484d', skipped: '#9ca3af', pending: '#c7c7c7' };
+    function openPipeline() { $('pipeline-overlay').classList.add('open'); loadProjects(); }
+    $('pipeline-open').onclick = openPipeline;
+    $('pipeline-close').onclick = () => { stopRunPoll(); $('pipeline-overlay').classList.remove('open'); };
+    $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
+    function plSetEditor(content, label) {
+      $('pl-editing').textContent = label; $('pl-editor').value = content; closeNodeModal();
+      if (label === 'no pipeline open') { PL.file = null; PL.g = null; PL.sel = null; }
+      [...$('pl-viewport').querySelectorAll('.pl-node')].forEach((n) => n.remove()); $('pl-edges').innerHTML = ''; $('pl-foreach').innerHTML = '';
+      $('pl-status').textContent = ''; $('pl-status').className = 'pl-status';
+    }
+    function plStatus(msg, err) { const s = $('pl-status'); s.textContent = msg; s.className = 'pl-status ' + (err ? 'err' : 'ok'); }
+    function plShowValid(d) { if (d.valid) plStatus('✓ valid workflow', false); else plStatus('✗ ' + (d.error || 'invalid'), true); }
+    const plBody = (o) => ({ method: o.m || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o.b) });
+
+    async function loadProjects() {
+      const d = await (await api('/api/pipeline/projects')).json().catch(() => ({ projects: [] }));
+      const sel = $('pl-project'); sel.innerHTML = '';
+      for (const p of (d.projects || [])) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + '  ·  ' + p.path; sel.appendChild(o); }
+      if ((d.projects || []).length) {
+        if (!PL.project || !d.projects.find((p) => p.name === PL.project)) PL.project = d.projects[0].name;
+        sel.value = PL.project; loadFiles(); loadRuns();
+      } else { PL.project = null; $('pl-files').innerHTML = '<span class="sl">no projects — add one above</span>'; $('pl-runs').innerHTML = ''; }
+    }
+    $('pl-project').onchange = () => { PL.project = $('pl-project').value; PL.file = null; plSetEditor('', 'no pipeline open'); loadFiles(); loadRuns(); };
+    async function addProjectPath(path) {
+      if (!path || !path.trim()) return false;
+      const r = await api('/api/pipeline/projects', plBody({ b: { path: path.trim() } })); const d = await r.json();
+      if (!r.ok) { plStatus(d.error || 'failed to add project', true); return false; }
+      PL.project = d.name; $('pl-newpath').value = ''; loadProjects(); return true;
+    }
+    $('pl-newpath').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addProjectPath($('pl-newpath').value); } };
+    $('pl-addproject').onclick = () => openPicker($('pl-newpath').value.trim() || null);
+
+    /* server-side folder picker (server is local → this is your filesystem) */
+    const PICK = { path: null, parent: null };
+    $('pl-picker-close').onclick = () => $('pl-picker').classList.remove('open');
+    $('pl-picker-up').onclick = () => { if (PICK.parent) browseTo(PICK.parent); };
+    $('pl-picker-path').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); browseTo($('pl-picker-path').value.trim()); } };
+    $('pl-picker-use').onclick = async () => { if (PICK.path && await addProjectPath(PICK.path)) $('pl-picker').classList.remove('open'); };
+    function openPicker(start) { $('pl-picker').classList.add('open'); browseTo(start); }
+    async function browseTo(path) {
+      const url = '/api/pipeline/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
+      const d = await (await api(url)).json().catch(() => null);
+      if (!d) return;
+      PICK.path = d.path; PICK.parent = d.parent;
+      $('pl-picker-path').value = d.path; $('pl-picker-cur').textContent = d.path; $('pl-picker-cur').title = d.path;
+      const list = $('pl-picker-list'); list.innerHTML = '';
+      if (!(d.dirs || []).length) { list.innerHTML = '<div class="sl" style="padding:8px">no sub-folders here</div>'; }
+      for (const dir of (d.dirs || [])) {
+        const row = document.createElement('div'); row.className = 'pl-picker-row';
+        const ic = document.createElement('span'); ic.className = 'ic'; ic.textContent = '📁';
+        const nm = document.createElement('span'); nm.textContent = dir.name;
+        row.appendChild(ic); row.appendChild(nm);
+        if (dir.git) { const g = document.createElement('span'); g.className = 'git'; g.textContent = 'git'; row.appendChild(g); }
+        row.onclick = () => browseTo(d.path.replace(/\/+$/, '') + '/' + dir.name);
+        list.appendChild(row);
+      }
+    }
+    $('pl-delproject').onclick = async () => {
+      if (!PL.project || !confirm('Forget project "' + PL.project + '"? (files are not deleted)')) return;
+      await api('/api/pipeline/projects/delete', plBody({ b: { name: PL.project } }));
+      PL.project = null; PL.file = null; plSetEditor('', 'no pipeline open'); loadProjects();
+    };
+
+    async function loadFiles() {
+      if (!PL.project) return;
+      const box = $('pl-files'); box.innerHTML = '<span class="sl">…</span>';
+      const d = await (await api('/api/pipeline/files?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ files: [] }));
+      box.innerHTML = '';
+      if (!(d.files || []).length) { box.innerHTML = '<span class="sl">no pipelines yet — + New</span>'; return; }
+      for (const f of d.files) {
+        const row = document.createElement('div'); row.className = 'pl-file' + (f === PL.file ? ' active' : '');
+        const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = f; nm.onclick = () => openFile(f);
+        const rm = document.createElement('span'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'delete';
+        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { project: PL.project, name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
+        row.appendChild(nm); row.appendChild(rm); box.appendChild(row);
+      }
+    }
+    /* ---- graph model + visual node editor ----
+       PL.g = { name, vars, input,
+                nodes: { id: {mode, prompt, project, retries, depends_on:[], outputs:[{name,extract}]} },
+                layout: { id: {x,y} } } */
+    PL.tab = PL.tab || 'visual';
+    async function openFile(name) {
+      PL.file = name; PL.sel = null; closeNodeModal(); stopRunPoll(); $('pl-editing').textContent = name;
+      const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
+      PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
+      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
+      $('pl-editor').value = f.content || '';
+      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles();
+    }
+    const PL_NODE_KEYS = ['mode', 'prompt', 'project', 'retries', 'depends_on', 'outputs'];
+    const PL_WF_KEYS = ['name', 'vars', 'input', 'nodes'];
+    function graphFromWorkflow(wf, layout) {
+      const nodes = {}; const raw = wf.nodes || {};
+      for (const id of Object.keys(raw)) {
+        const n = raw[id] || {};
+        // Preserve node fields the visual editor doesn't model (verify, branch, …).
+        const extra = {}; for (const k of Object.keys(n)) if (!PL_NODE_KEYS.includes(k)) extra[k] = n[k];
+        nodes[id] = {
+          mode: n.mode || 'claude', prompt: n.prompt || '', project: n.project || '', retries: n.retries || 0,
+          depends_on: Array.isArray(n.depends_on) ? n.depends_on.slice() : [],
+          outputs: Array.isArray(n.outputs) ? n.outputs.map((o) => ({ name: o.name || 'out', extract: o.extract || 'result' })) : [],
+          _extra: extra,
+        };
+      }
+      // Preserve top-level keys we don't model (description, git_push…); pull
+      // for_each out into an editable model.
+      const wfExtra = {}; for (const k of Object.keys(wf)) if (!PL_WF_KEYS.includes(k)) wfExtra[k] = wf[k];
+      let forEach = null; const fe = wfExtra.for_each;
+      if (fe) {
+        forEach = {
+          source: Array.isArray(fe.source) ? fe.source.join(', ') : (fe.source || ''),
+          as: fe.as || 'item', on_failure: fe.on_failure || 'continue',
+          before: Array.isArray(fe.before) ? fe.before.slice() : (Array.isArray(fe.setup) ? fe.setup.slice() : []),
+        };
+        delete wfExtra.for_each;
+      }
+      const g = { name: wf.name || (PL.file || '').replace(/\.(ya?ml)$/, ''), vars: wf.vars || {}, input: wf.input || {}, nodes, layout: Object.assign({}, layout), extra: wfExtra, forEach };
+      ensureLayout(g); return g;
+    }
+    function ensureLayout(g) {
+      const ids = Object.keys(g.nodes); const depth = {}; for (const id of ids) depth[id] = 0;
+      let changed = true; for (let k = 0; k < ids.length && changed; k++) { changed = false; for (const id of ids) for (const d of g.nodes[id].depends_on) if (g.nodes[d] && depth[d] + 1 > depth[id]) { depth[id] = depth[d] + 1; changed = true; } }
+      // Top-to-bottom: y grows with dependency depth; siblings at the same
+      // depth spread horizontally. Matches the reference's vertical flow.
+      const perRow = {};
+      for (const id of ids) { if (g.layout[id] && typeof g.layout[id].x === 'number') continue; const r = depth[id]; perRow[r] = perRow[r] || 0; g.layout[id] = { x: 60 + perRow[r] * 240, y: 24 + r * 150 }; perRow[r]++; }
+    }
+    function newNodeId(g) { let i = 1; while (g.nodes['node' + i]) i++; return 'node' + i; }
+    function buildWorkflow() {
+      const g = PL.g; const nodes = {};
+      for (const id of Object.keys(g.nodes)) {
+        const n = g.nodes[id]; const o = Object.assign({}, n._extra || {}); o.prompt = n.prompt;
+        if (n.mode && n.mode !== 'claude') o.mode = n.mode;
+        if (n.project) o.project = n.project;
+        if (n.retries) o.retries = n.retries;
+        if (n.depends_on && n.depends_on.length) o.depends_on = n.depends_on;
+        if (n.outputs && n.outputs.length) o.outputs = n.outputs;
+        nodes[id] = o;
+      }
+      // Start from preserved top-level extras (description…), then set ours.
+      const wf = Object.assign({}, g.extra || {}, { name: g.name || 'workflow', input: g.input || {}, nodes });
+      if (g.vars && Object.keys(g.vars).length) wf.vars = g.vars;
+      if (g.forEach) {
+        const fe = { source: g.forEach.source, as: g.forEach.as || 'item' };
+        if (g.forEach.on_failure && g.forEach.on_failure !== 'continue') fe.on_failure = g.forEach.on_failure;
+        if (g.forEach.before && g.forEach.before.length) fe.before = g.forEach.before;
+        wf.for_each = fe;
+      }
+      return wf;
+    }
+
+    $('pl-new').onclick = async () => {
+      if (!PL.project) { plStatus('add a project first', true); return; }
+      let name = prompt('New pipeline file name:', 'my-flow.yaml'); if (!name) return;
+      if (!/\.(ya?ml)$/.test(name)) name += '.yaml';
+      const base = name.replace(/\.(ya?ml)$/, '');
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
+      if (!r.ok) { const d = await r.json(); plStatus(d.error || 'create failed', true); return; }
+      await openFile(name); loadFiles();
+    };
+
+    /* tabs: Visual ↔ YAML (switching saves the current side, then loads the other from the file) */
+    function setTab(t) {
+      PL.tab = t;
+      $('pl-tab-visual').classList.toggle('active', t === 'visual');
+      $('pl-tab-yaml').classList.toggle('active', t === 'yaml');
+      $('pl-visual').style.display = t === 'visual' ? '' : 'none';
+      $('pl-editor').style.display = t === 'yaml' ? '' : 'none';
+    }
+    $('pl-tab-visual').onclick = async () => { if (PL.tab === 'visual' || !PL.file) { setTab('visual'); return; } await plSaveYaml(); await openFile(PL.file); setTab('visual'); };
+    $('pl-tab-yaml').onclick = async () => {
+      if (PL.tab === 'yaml' || !PL.file) { setTab('yaml'); return; }
+      await plSaveGraph();
+      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
+      $('pl-editor').value = f.content || ''; setTab('yaml');
+    };
+
+    async function plSaveGraph() {
+      if (!PL.file || !PL.g) return { ok: false };
+      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
+      return { r, d: await r.json() };
+    }
+    async function plSaveYaml() {
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, content: $('pl-editor').value } }));
+      return { r, d: await r.json() };
+    }
+    async function plSave() { return PL.tab === 'visual' ? plSaveGraph() : plSaveYaml(); }
+
+    $('pl-validate').onclick = async () => {
+      if (!PL.file) return;
+      const d = PL.tab === 'visual'
+        ? await (await api('/api/pipeline/validate-graph', plBody({ b: { workflow: buildWorkflow() } }))).json()
+        : await (await api('/api/pipeline/validate', plBody({ b: { content: $('pl-editor').value } }))).json();
+      plShowValid(d);
+    };
+    $('pl-save').onclick = async () => {
+      if (!PL.file) { plStatus('open or create a pipeline first', true); return; }
+      const { r, d } = await plSave();
+      if (!r || !r.ok) { plStatus((d && d.error) || 'save failed', true); return; }
+      plStatus(d.valid ? '✓ saved · valid' : '⚠ saved · ✗ ' + (d.error || 'invalid'), !d.valid);
+    };
+    $('pl-run').onclick = async () => {
+      if (!PL.file) { plStatus('open a pipeline first', true); return; }
+      const { d: sv } = await plSave();
+      if (sv && sv.valid === false) { plStatus('✗ not valid — fix before running:\n' + (sv.error || ''), true); return; }
+      const r = await api('/api/pipeline/run', plBody({ b: { project: PL.project, name: PL.file } }));
+      const d = await r.json();
+      if (!r.ok) { plStatus(d.error || 'run failed to start', true); return; }
+      plStatus('▶ run started — nodes light up as they run', false);
+      startRunPoll();
+    };
+    /* live run-status coloring on the canvas */
+    function clearRunStatus() {
+      if (!PL.g) return;
+      for (const id of Object.keys(PL.g.nodes)) { const el = document.getElementById('pln-' + id); if (el) el.classList.remove('run-pending', 'run-running', 'run-done', 'run-failed', 'run-skipped'); }
+    }
+    function paintRunStatus(map) {
+      if (!PL.g) return;
+      for (const id of Object.keys(PL.g.nodes)) {
+        const el = document.getElementById('pln-' + id); if (!el) continue;
+        el.classList.remove('run-pending', 'run-running', 'run-done', 'run-failed', 'run-skipped');
+        if (map[id]) el.classList.add('run-' + map[id]);
+      }
+    }
+    async function pollRunOnce() {
+      if (!PL.project || !PL.g) return null;
+      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => null);
+      if (!d) return null;
+      const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+      if (!mine) return null;
+      const map = {}; for (const nd of (mine.nodes || [])) map[nd.id] = nd.status;
+      paintRunStatus(map);
+      return mine.status;
+    }
+    function stopRunPoll() { if (PL.runPoll) { clearInterval(PL.runPoll); PL.runPoll = null; } }
+    function startRunPoll() {
+      stopRunPoll(); clearRunStatus();
+      let n = 0;
+      PL.runPoll = setInterval(async () => {
+        loadRuns();
+        const st = await pollRunOnce();
+        if (st === 'done' || st === 'failed' || ++n > 90 || !$('pipeline-overlay').classList.contains('open')) stopRunPoll();
+      }, 2000);
+    }
+
+    /* palette */
+    $('pl-add-shell').onclick = () => addNode('shell');
+    $('pl-add-agent').onclick = () => addNode('claude');
+    $('pl-auto').onclick = () => { if (!PL.g) return; PL.g.layout = {}; ensureLayout(PL.g); renderCanvas(); };
+    function addNode(mode) {
+      if (!PL.g) { plStatus('open or create a pipeline first', true); return; }
+      const id = newNodeId(PL.g);
+      PL.g.nodes[id] = { mode, prompt: mode === 'shell' ? 'echo hello' : 'Describe the task…', project: '', retries: 0, depends_on: [], outputs: [] };
+      const g = toGraph($('pl-canvas').getBoundingClientRect().left + 60, $('pl-canvas').getBoundingClientRect().top + 60);
+      PL.g.layout[id] = { x: g.x, y: g.y };
+      openNodeModal(id);
+    }
+    async function loadRuns() {
+      if (!PL.project) return;
+      const box = $('pl-runs');
+      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ runs: [] }));
+      box.innerHTML = '';
+      if (!(d.runs || []).length) { box.innerHTML = '<span class="sl">no runs yet</span>'; return; }
+      for (const r of d.runs.slice(0, 8)) {
+        const row = document.createElement('div'); row.className = 'pl-run';
+        const rh = document.createElement('div'); rh.className = 'rh';
+        const wf = document.createElement('span'); wf.textContent = r.workflow;
+        const st = document.createElement('span'); st.className = 'sl'; st.textContent = r.status; st.style.color = PL_COLOR[r.status] || '#888';
+        rh.appendChild(wf); rh.appendChild(st);
+        const pills = document.createElement('div'); pills.className = 'pl-pills';
+        for (const nd of (r.nodes || [])) { const p = document.createElement('span'); p.className = 'pl-pill'; p.textContent = nd.id; p.title = nd.status; p.style.background = PL_COLOR[nd.status] || '#888'; pills.appendChild(p); }
+        row.appendChild(rh); row.appendChild(pills); box.appendChild(row);
+      }
+    }
+
+    /* ---- canvas pan / zoom (infinite-canvas feel) ---- */
+    PL.view = PL.view || { x: 0, y: 0, z: 1 };
+    function applyView() {
+      const v = PL.view;
+      $('pl-viewport').style.transform = 'translate(' + v.x + 'px,' + v.y + 'px) scale(' + v.z + ')';
+      $('pl-canvas').style.backgroundPosition = v.x + 'px ' + v.y + 'px';
+      $('pl-canvas').style.backgroundSize = (18 * v.z) + 'px ' + (18 * v.z) + 'px';
+    }
+    function toGraph(cx, cy) { const r = $('pl-canvas').getBoundingClientRect(); return { x: (cx - r.left - PL.view.x) / PL.view.z, y: (cy - r.top - PL.view.y) / PL.view.z }; }
+    function zoomAt(mx, my, factor) {
+      const old = PL.view.z, nz = Math.min(2, Math.max(0.3, old * factor));
+      PL.view.x = mx - (mx - PL.view.x) * (nz / old); PL.view.y = my - (my - PL.view.y) * (nz / old); PL.view.z = nz; applyView();
+    }
+    (function initCanvasNav() {
+      const c = $('pl-canvas'); if (!c || c.dataset.nav) return; c.dataset.nav = '1';
+      c.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.pl-node') || e.target.closest('.pl-zoom')) return;
+        PL.sel = null; renderInspector(); [...$('pl-viewport').querySelectorAll('.pl-node.sel')].forEach((n) => n.classList.remove('sel'));
+        const pan = { sx: e.clientX, sy: e.clientY, ox: PL.view.x, oy: PL.view.y }; c.classList.add('panning');
+        const move = (ev) => { PL.view.x = pan.ox + (ev.clientX - pan.sx); PL.view.y = pan.oy + (ev.clientY - pan.sy); applyView(); };
+        const up = () => { c.classList.remove('panning'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      });
+      c.addEventListener('wheel', (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89); }, { passive: false });
+      $('pl-zin').onclick = () => { const r = c.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.15); };
+      $('pl-zout').onclick = () => { const r = c.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.87); };
+      $('pl-zfit').onclick = () => { PL.view = { x: 0, y: 0, z: 1 }; applyView(); };
+    })();
+
+    /* ---- canvas rendering ---- */
+    function nodePorts(id) {
+      const el = document.getElementById('pln-' + id); if (!el || !PL.g.layout[id]) return null;
+      const x = PL.g.layout[id].x, y = PL.g.layout[id].y, w = el.offsetWidth || 210, h = el.offsetHeight || 70;
+      return { inX: x + w / 2, inY: y, outX: x + w / 2, outY: y + h };
+    }
+    function renderCanvas() {
+      const vp = $('pl-viewport'); if (!vp || !PL.g) return;
+      [...vp.querySelectorAll('.pl-node')].forEach((n) => n.remove());
+      for (const id of Object.keys(PL.g.nodes)) vp.appendChild(nodeEl(id));
+      drawEdges(); applyView();
+    }
+    /* for_each (batch) config bar */
+    function renderForEach() {
+      const box = $('pl-foreach'); if (!box) return; box.innerHTML = '';
+      if (!PL.g) return;
+      const toggle = document.createElement('label'); toggle.className = 'pl-fe-toggle';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!PL.g.forEach;
+      cb.onchange = () => { PL.g.forEach = cb.checked ? { source: '', as: 'item', on_failure: 'continue', before: [] } : null; renderForEach(); renderCanvas(); };
+      toggle.appendChild(cb); toggle.appendChild(document.createTextNode(' for_each — run the DAG once per item'));
+      box.appendChild(toggle);
+      const fe = PL.g.forEach; if (!fe) return;
+      const field = (label, el) => { const w = document.createElement('span'); w.className = 'pl-fe-field'; const l = document.createElement('label'); l.textContent = label; w.appendChild(l); w.appendChild(el); box.appendChild(w); };
+      const src = document.createElement('input'); src.value = fe.source; src.placeholder = '{{input.ids}} or a,b,c'; src.style.minWidth = '20ch'; src.oninput = () => (fe.source = src.value); field('source', src);
+      const asIn = document.createElement('input'); asIn.value = fe.as; asIn.style.minWidth = '7ch'; asIn.oninput = () => { fe.as = asIn.value || 'item'; }; field('as', asIn);
+      const onf = document.createElement('select'); for (const o of ['continue', 'stop']) { const op = document.createElement('option'); op.value = o; op.textContent = o; if (fe.on_failure === o) op.selected = true; onf.appendChild(op); } onf.onchange = () => (fe.on_failure = onf.value); field('on_failure', onf);
+      const setup = document.createElement('input'); setup.value = (fe.before || []).join(', '); setup.placeholder = 'setup node ids (run once)'; setup.oninput = () => { fe.before = setup.value.split(',').map((s) => s.trim()).filter(Boolean); renderCanvas(); }; field('setup', setup);
+    }
+    function nodeEl(id) {
+      const n = PL.g.nodes[id], pos = PL.g.layout[id];
+      const el = document.createElement('div'); el.className = 'pl-node' + (PL.sel === id ? ' sel' : ''); el.id = 'pln-' + id;
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const pin = document.createElement('div'); pin.className = 'pl-port in'; pin.dataset.id = id;
+      const head = document.createElement('div'); head.className = 'nh';
+      const stat = document.createElement('span'); stat.className = 'nstat';
+      head.appendChild(stat);
+      const badge = document.createElement('span'); badge.className = 'badge ' + n.mode; badge.textContent = n.mode === 'shell' ? 'shell' : 'agent';
+      const nid = document.createElement('span'); nid.className = 'nid'; nid.textContent = id;
+      const acts = document.createElement('span'); acts.className = 'acts';
+      const eb = document.createElement('span'); eb.className = 'e'; eb.textContent = 'edit'; eb.onclick = (e) => { e.stopPropagation(); openNodeModal(id); };
+      const xb = document.createElement('span'); xb.className = 'x'; xb.textContent = '✕'; xb.onclick = (e) => { e.stopPropagation(); deleteNode(id); };
+      acts.appendChild(eb); acts.appendChild(xb);
+      head.appendChild(badge);
+      if (PL.g.forEach && (PL.g.forEach.before || []).includes(id)) { const sb = document.createElement('span'); sb.className = 'badge setup'; sb.textContent = 'setup'; head.appendChild(sb); }
+      head.appendChild(nid); head.appendChild(acts);
+      const body = document.createElement('div'); body.className = 'nbody';
+      if (n.project) { const pj = document.createElement('div'); pj.className = 'nproj'; pj.textContent = n.project; body.appendChild(pj); }
+      const pr = document.createElement('div'); pr.className = 'nprompt'; pr.textContent = ((n.prompt || '').split('\n')[0] || '').slice(0, 60) || 'no prompt'; body.appendChild(pr);
+      if (n.outputs && n.outputs.length) { const ou = document.createElement('div'); ou.className = 'nouts'; ou.textContent = 'outputs: ' + n.outputs.map((o) => o.name).join(', '); body.appendChild(ou); }
+      const pout = document.createElement('div'); pout.className = 'pl-port out'; pout.dataset.id = id;
+      el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
+      const onHead = (e) => !e.target.closest('.acts');
+      head.onmousedown = (e) => { if (onHead(e)) startDrag(e, id); };
+      head.ondblclick = (e) => { if (onHead(e)) { e.stopPropagation(); openNodeModal(id); } };
+      head.onclick = (e) => { if (onHead(e)) { e.stopPropagation(); PL.sel = id; [...$('pl-viewport').querySelectorAll('.pl-node.sel')].forEach((x) => x.classList.remove('sel')); document.getElementById('pln-' + id).classList.add('sel'); } };
+      pout.onmousedown = (e) => startLink(e, id);
+      return el;
+    }
+    function deleteNode(id) {
+      delete PL.g.nodes[id]; delete PL.g.layout[id];
+      for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id);
+      if (PL.sel === id) PL.sel = null; renderCanvas(); renderInspector();
+    }
+    function drawEdges() {
+      const svg = $('pl-edges'); svg.innerHTML = '';
+      for (const id of Object.keys(PL.g.nodes)) for (const dep of PL.g.nodes[id].depends_on) {
+        const a = nodePorts(dep), b = nodePorts(id); if (!a || !b) continue;
+        svg.appendChild(edgePath(a.outX, a.outY, b.inX, b.inY, dep, id));
+      }
+    }
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    function edgePath(x1, y1, x2, y2, dep, id) {
+      const dy = Math.max(30, Math.abs(y2 - y1) / 2);
+      const d = 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + (y1 + dy) + ' ' + x2 + ',' + (y2 - dy) + ' ' + x2 + ',' + y2;
+      const g = document.createElementNS(SVGNS, 'g');
+      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d);
+      const hit = document.createElementNS(SVGNS, 'path'); hit.setAttribute('d', d); hit.setAttribute('class', 'hit');
+      hit.onclick = () => { PL.g.nodes[id].depends_on = PL.g.nodes[id].depends_on.filter((x) => x !== dep); renderCanvas(); renderInspector(); };
+      g.appendChild(p); g.appendChild(hit); return g;
+    }
+    /* ---- node drag ---- */
+    let plDrag = null;
+    function startDrag(e, id) { e.preventDefault(); const p = PL.g.layout[id]; plDrag = { id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }; document.onmousemove = onDragMove; document.onmouseup = endDrag; }
+    function onDragMove(e) {
+      if (!plDrag) return;
+      const nx = plDrag.ox + (e.clientX - plDrag.sx) / PL.view.z, ny = plDrag.oy + (e.clientY - plDrag.sy) / PL.view.z;
+      PL.g.layout[plDrag.id] = { x: nx, y: ny };
+      const el = document.getElementById('pln-' + plDrag.id); if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
+      drawEdges();
+    }
+    function endDrag() { plDrag = null; document.onmousemove = null; document.onmouseup = null; }
+    /* ---- port linking (drag out→in to add a dependency) ---- */
+    let plLink = null;
+    function startLink(e, id) { e.preventDefault(); e.stopPropagation(); plLink = { from: id }; document.onmousemove = onLinkMove; document.onmouseup = endLink; }
+    function onLinkMove(e) {
+      if (!plLink) return;
+      document.querySelectorAll('.pl-port.in.tgt').forEach((p) => p.classList.remove('tgt'));
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      if (over && over.classList.contains('pl-port') && over.classList.contains('in')) over.classList.add('tgt');
+      const from = nodePorts(plLink.from); if (!from) return;
+      const m = toGraph(e.clientX, e.clientY);
+      drawEdges();
+      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', 'M' + from.outX + ',' + from.outY + ' L' + m.x + ',' + m.y); p.setAttribute('stroke-dasharray', '5,4'); $('pl-edges').appendChild(p);
+    }
+    function endLink(e) {
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      if (plLink && over && over.classList.contains('pl-port') && over.classList.contains('in')) {
+        const to = over.dataset.id;
+        if (to && to !== plLink.from && PL.g.nodes[to] && !PL.g.nodes[to].depends_on.includes(plLink.from)) PL.g.nodes[to].depends_on.push(plLink.from);
+      }
+      plLink = null; document.querySelectorAll('.pl-port.in.tgt').forEach((p) => p.classList.remove('tgt'));
+      document.onmousemove = null; document.onmouseup = null; renderCanvas(); renderInspector();
+    }
+    /* ---- inspector ---- */
+    /* node edit modal */
+    function nodeModalOpen() { return $('pl-nodemodal').classList.contains('open'); }
+    function openNodeModal(id) { PL.sel = id; renderCanvas(); $('pl-nodemodal').classList.add('open'); buildNodeForm($('pl-nm-body')); }
+    function closeNodeModal() { $('pl-nodemodal').classList.remove('open'); }
+    // Existing call sites use renderInspector() to "refresh the editor"; now that
+    // means re-rendering the modal body when it's open.
+    function renderInspector() { if (nodeModalOpen() && PL.g && PL.sel && PL.g.nodes[PL.sel]) buildNodeForm($('pl-nm-body')); else if (nodeModalOpen() && !(PL.g && PL.g.nodes[PL.sel])) closeNodeModal(); }
+    $('pl-nm-close').onclick = closeNodeModal;
+    $('pl-nm-done').onclick = closeNodeModal;
+    $('pl-nm-del').onclick = () => { if (PL.sel) deleteNode(PL.sel); closeNodeModal(); };
+    function buildNodeForm(box) {
+      box.innerHTML = ''; const id = PL.sel, n = PL.g && PL.g.nodes[id]; if (!n) return;
+      const row = (label, el) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(el); box.appendChild(r); };
+      const idIn = document.createElement('input'); idIn.value = id;
+      idIn.onchange = () => { const nid = idIn.value.trim(); if (!nid || nid === id || PL.g.nodes[nid]) { idIn.value = id; return; } renameNode(id, nid); };
+      row('node id', idIn);
+      const modeSel = document.createElement('select');
+      for (const m of ['claude', 'shell']) { const o = document.createElement('option'); o.value = m; o.textContent = m === 'claude' ? 'agent (forge -p)' : 'shell'; if (n.mode === m) o.selected = true; modeSel.appendChild(o); }
+      modeSel.onchange = () => { n.mode = modeSel.value; renderCanvas(); buildNodeForm(box); };
+      row('mode', modeSel);
+      const pjIn = document.createElement('input'); pjIn.value = n.project || ''; pjIn.placeholder = 'e.g. {{input.project}} or a path (optional)';
+      pjIn.oninput = () => { n.project = pjIn.value; renderCanvas(); };
+      row('project / cwd', pjIn);
+      const pr = document.createElement('textarea'); pr.value = n.prompt || '';
+      pr.oninput = () => { n.prompt = pr.value; const b = document.querySelector('#pln-' + id + ' .nprompt'); if (b) b.textContent = ((pr.value.split('\n')[0] || '').slice(0, 60)) || 'no prompt'; };
+      row(n.mode === 'shell' ? 'command' : 'prompt', pr);
+      const outWrap = document.createElement('div');
+      const renderOuts = () => {
+        outWrap.innerHTML = '';
+        (n.outputs || []).forEach((o, i) => {
+          const r = document.createElement('div'); r.className = 'pl-out-row';
+          const nm = document.createElement('input'); nm.value = o.name; nm.placeholder = 'name'; nm.oninput = () => { o.name = nm.value; renderCanvas(); };
+          const ex = document.createElement('select'); for (const x of ['result', 'stdout', 'git_diff']) { const op = document.createElement('option'); op.value = x; op.textContent = x; if (o.extract === x) op.selected = true; ex.appendChild(op); } ex.onchange = () => (o.extract = ex.value);
+          const rm = document.createElement('button'); rm.className = 'btn btn-ghost btn-sm'; rm.textContent = '✕'; rm.onclick = () => { n.outputs.splice(i, 1); renderOuts(); renderCanvas(); };
+          r.appendChild(nm); r.appendChild(ex); r.appendChild(rm); outWrap.appendChild(r);
+        });
+        const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ output'; add.onclick = () => { n.outputs = n.outputs || []; n.outputs.push({ name: 'out', extract: n.mode === 'shell' ? 'stdout' : 'result' }); renderOuts(); renderCanvas(); };
+        outWrap.appendChild(add);
+      };
+      renderOuts(); row('outputs', outWrap);
+      if (n.depends_on && n.depends_on.length) {
+        const dw = document.createElement('div'); dw.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px';
+        n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove dependency'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); buildNodeForm(box); }; dw.appendChild(t); });
+        row('depends on (edit on canvas)', dw);
+      }
+    }
+    function renameNode(oldId, nid) {
+      const g = PL.g; g.nodes[nid] = g.nodes[oldId]; delete g.nodes[oldId];
+      g.layout[nid] = g.layout[oldId]; delete g.layout[oldId];
+      for (const k of Object.keys(g.nodes)) g.nodes[k].depends_on = g.nodes[k].depends_on.map((x) => (x === oldId ? nid : x));
+      PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
+    }
 
     // Renders one framed stats card per connected platform, each with a small
     // row of KPI tiles fetched from its board endpoint.
@@ -1920,48 +2590,12 @@
       if (d.url) { const h = card.querySelector('.sc-head'); h.setAttribute('role', 'link'); h.onclick = () => window.open(d.url, '_blank', 'noopener'); }
       if (p.key === 'github' && d.repo) makeRepoPicker(card, d.repo);
       if (p.key === 'jira') makeJiraPicker(card, d.project || '');
-      if (p.key === 'workspace') makeWorkspacePicker(card, d.dir, d.resolved);
       tiles.innerHTML = '';
       for (const st of (d.stats || [])) {
         const t = document.createElement(st.url ? 'a' : 'div'); t.className = 'stat-tile';
         if (st.url) { t.href = st.url; t.target = '_blank'; t.rel = 'noopener'; }
         t.innerHTML = '<div class="sv">' + (st.value != null ? st.value : 0) + escapeHtml(st.suffix || '') + '</div><div class="sl">' + escapeHtml(st.label || '') + '</div>';
         tiles.appendChild(t);
-      }
-      if (p.key === 'workspace') renderWsAlerts(card, d.messages || []);
-    }
-    // Workspace card: a small path input so the user can point the board at the
-    // workspace dir the orchestrator writes to (persisted server-side).
-    function makeWorkspacePicker(card, dir, resolved) {
-      const sub = card.querySelector('.sc-sub'); sub.textContent = '';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.className = 'repo-select';
-      inp.placeholder = resolved || '.forge-workspace'; inp.value = dir || ''; inp.style.minWidth = '20ch';
-      inp.onmousedown = (e) => e.stopPropagation();
-      inp.onclick = (e) => e.stopPropagation();
-      inp.onkeydown = async (e) => {
-        if (e.key !== 'Enter') return;
-        e.preventDefault(); inp.disabled = true;
-        await api('/api/workspace-dir', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: inp.value.trim() }) });
-        loadStats({ key: 'workspace' });
-      };
-      sub.appendChild(inp);
-    }
-    // Workspace card: list the most recent ticket messages on the bus (the ⑨
-    // stuck alerts and reviewer→engineer rework tickets) below the status tiles.
-    function renderWsAlerts(card, msgs) {
-      let box = card.querySelector('.ws-msgs');
-      if (!box) { box = document.createElement('div'); box.className = 'ws-msgs'; box.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:5px;'; card.appendChild(box); }
-      box.innerHTML = '';
-      const tickets = msgs.filter((m) => m.category === 'ticket');
-      if (!tickets.length) { box.innerHTML = '<span class="sl">no alerts</span>'; return; }
-      for (const m of tickets.slice(0, 5)) {
-        const row = document.createElement('div');
-        row.style.cssText = 'border-left:3px solid #e5484d;padding:1px 0 1px 7px;';
-        const head = document.createElement('div'); head.style.cssText = 'font-size:11px;font-weight:600;color:#e5484d;';
-        head.textContent = '⚠ ' + (m.from || '?') + ' → ' + (m.to || '?');
-        const body = document.createElement('div'); body.className = 'sl'; body.style.fontSize = '11px';
-        body.textContent = (m.body || '').slice(0, 160);
-        row.appendChild(head); row.appendChild(body); box.appendChild(row);
       }
     }
 

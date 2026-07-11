@@ -67,90 +67,6 @@ pub(crate) async fn set_gcal<A: API>(
 }
 
 // ---------------------------------------------------------------------------
-// Workspace Team board — the multi-agent orchestrator's own request pipeline
-// (open→in_progress→review→qa→done) plus recent message-bus alerts. Read-only:
-// it reads the same YAML the orchestrator and workspace MCP write. The workspace
-// dir is resolved from the web settings, else $FORGE_WORKSPACE_DIR, else the CWD.
-// ---------------------------------------------------------------------------
-
-fn workspace_root() -> PathBuf {
-    if let Some(dir) = read_settings()
-        .get("workspace_dir")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-    {
-        return PathBuf::from(dir);
-    }
-    if let Some(dir) = std::env::var_os("FORGE_WORKSPACE_DIR") {
-        return PathBuf::from(dir);
-    }
-    PathBuf::from(".forge-workspace")
-}
-
-#[derive(Deserialize)]
-pub(crate) struct WorkspaceDirBody {
-    dir: Option<String>,
-}
-
-/// GET /api/workspace-dir — the configured workspace dir + the resolved path.
-pub(crate) async fn get_workspace_dir<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
-    let dir = read_settings().get("workspace_dir").and_then(|v| v.as_str()).map(str::to_string);
-    Json(json!({ "dir": dir, "resolved": workspace_root().display().to_string() }))
-}
-
-/// PUT /api/workspace-dir — set (empty clears) which workspace the board reads.
-pub(crate) async fn set_workspace_dir<A: API>(
-    State(_): State<AppState<A>>,
-    Json(body): Json<WorkspaceDirBody>,
-) -> Json<Value> {
-    let mut s = read_settings();
-    match body.dir.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-        Some(u) => {
-            s["workspace_dir"] = json!(u);
-        }
-        None => {
-            if let Value::Object(m) = &mut s {
-                m.remove("workspace_dir");
-            }
-        }
-    }
-    write_settings(&s);
-    Json(json!({ "ok": true }))
-}
-
-/// GET /api/board/workspace — request counts per pipeline status, plus the full
-/// request list and recent bus messages (alerts). Pure read; nothing is mutated.
-pub(crate) async fn workspace_board<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
-    use forge_workspace::RequestStatus as S;
-    let root = workspace_root();
-    let reqs = forge_workspace::list_requests(&root, None).unwrap_or_default();
-    let count = |want: S| reqs.iter().filter(|r| r.status == want).count();
-    let stats = json!([
-        { "label": "Open", "value": count(S::Open) },
-        { "label": "In progress", "value": count(S::InProgress) },
-        { "label": "Review", "value": count(S::Review) },
-        { "label": "QA", "value": count(S::Qa) },
-        { "label": "Done", "value": count(S::Done) },
-        { "label": "Rejected", "value": count(S::Rejected) },
-    ]);
-    let all_msgs = forge_workspace::list_messages(&root).unwrap_or_default();
-    let alerts = all_msgs.iter().filter(|m| matches!(m.category, forge_workspace::Category::Ticket)).count();
-    let requests: Vec<Value> =
-        reqs.iter().map(|r| serde_json::to_value(r).unwrap_or_else(|_| json!({}))).collect();
-    let messages: Vec<Value> =
-        all_msgs.iter().take(20).map(|m| serde_json::to_value(m).unwrap_or_else(|_| json!({}))).collect();
-    let resolved = root.display().to_string();
-    Json(json!({
-        "resolved": resolved,
-        "subtitle": format!("{} request(s) · {}", reqs.len(), resolved),
-        "stats": stats,
-        "alerts": alerts,
-        "requests": requests,
-        "messages": messages,
-    }))
-}
-
-// ---------------------------------------------------------------------------
 // TODOs — a small personal list for the activity panel, persisted in the same
 // settings file. Single-user local app, so plain read-modify-write is fine.
 // ---------------------------------------------------------------------------
@@ -505,9 +421,8 @@ pub(crate) async fn platforms<A: API>(State(state): State<AppState<A>>) -> Json<
     let gcal = read_settings().get("gcal_ics").and_then(|v| v.as_str()).is_some();
     let slack = server(&state, "slack").await.as_ref().and_then(slack_token).is_some();
     let gmail = server(&state, "gmail").await.as_ref().and_then(|s| stdio_env(s, "EMAIL_USER")).is_some();
-    // GitHub Actions reuses the GitHub connection. The Workspace Team board is
-    // the team's own pipeline, always shown (configured via /api/workspace-dir).
-    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack, "gmail": gmail, "workspace": true }))
+    // GitHub Actions reuses the GitHub connection.
+    Json(json!({ "github": gh, "gha": gh, "jira": jira, "sentry": sentry, "gcal": gcal, "slack": slack, "gmail": gmail }))
 }
 
 /// GET /api/board/gmail — inbox stats over IMAP using the app password from the
