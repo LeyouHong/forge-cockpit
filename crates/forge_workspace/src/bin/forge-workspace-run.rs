@@ -222,16 +222,49 @@ fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A "Workspace Team" snapshot injected into every agent's context — the team
+/// roster, the pipeline, and a live view of all requests. This is what gives
+/// each agent global awareness (who's upstream/downstream, current state).
+fn topology(workspace: &Path, role: &str) -> String {
+    let reqs = request::list_requests(workspace, None).unwrap_or_default();
+    let mut t = String::from(
+        "## Workspace Team\n\
+         You are one agent on a pipeline team. Work flows **engineer → reviewer → qa → done**, \
+         handed off automatically by request status. Agents coordinate ONLY through the shared \
+         request documents and messages — never talk to each other directly.\n\
+         - **engineer** — implements requests in `open` / `in_progress`\n\
+         - **reviewer** — reviews requests in `review` (downstream of engineer)\n\
+         - **qa** — verifies requests in `qa` (downstream of reviewer)\n\n\
+         Current requests on the board:\n",
+    );
+    if reqs.is_empty() {
+        t.push_str("  (none)\n");
+    } else {
+        for r in &reqs {
+            t.push_str(&format!(
+                "  - {} [{:?}] {}{}\n",
+                r.id,
+                r.status,
+                r.title,
+                r.claimed_by.as_deref().map(|a| format!(" (@{a})")).unwrap_or_default()
+            ));
+        }
+    }
+    t.push_str(&format!("\nYou are the **{role}** (agent name `{role}-1`).\n"));
+    t
+}
+
 /// Spawn a role agent for a request on its own thread; clear `running` when done.
 fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, role: &'static str, sop: &'static str) {
     std::thread::spawn(move || {
         if !cfg.dry_run {
+            let topo = topology(&cfg.workspace, role);
             let prompt = format!(
-                "{sop}\n\n---\nYou are agent `{role}-1`. The workspace request tools are available \
+                "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
-                 submit_engineer_work, submit_review, submit_qa). Follow your SOP to find the request \
-                 that needs your role and complete exactly your step. The request likely waiting for \
-                 you is `{}`. Start now.",
+                 submit_engineer_work, submit_review, submit_qa, send_message, get_inbox). Follow \
+                 your SOP to find the request that needs your role and complete exactly your step. \
+                 The request likely waiting for you is `{}`. Start now.",
                 req.id
             );
             let mut cmd = Command::new(&cfg.forge);
