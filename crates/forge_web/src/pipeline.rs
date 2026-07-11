@@ -552,7 +552,28 @@ pub(crate) async fn list_runs<A: API>(
                 .node_order
                 .iter()
                 .filter_map(|id| p.nodes.get(id).map(|st| (id, st)))
-                .map(|(id, st)| json!({ "id": id, "status": format!("{:?}", st.status).to_lowercase() }))
+                .map(|(id, st)| {
+                    // Include each node's outputs (truncated) so the editor can
+                    // show "what did this node produce" after a run.
+                    let outputs: serde_json::Map<String, Value> = st
+                        .outputs
+                        .iter()
+                        .map(|(k, v)| {
+                            let val = if v.chars().count() > 4000 {
+                                format!("{}…", v.chars().take(4000).collect::<String>())
+                            } else {
+                                v.clone()
+                            };
+                            (k.clone(), json!(val))
+                        })
+                        .collect();
+                    json!({
+                        "id": id,
+                        "status": format!("{:?}", st.status).to_lowercase(),
+                        "outputs": outputs,
+                        "error": st.error,
+                    })
+                })
                 .collect();
             json!({
                 "id": p.id,

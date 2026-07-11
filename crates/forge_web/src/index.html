@@ -2189,7 +2189,8 @@
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
       const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
       $('pl-editor').value = f.content || '';
-      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles();
+      PL.runOutputs = {};
+      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles(); loadRuns();
     }
     const PL_NODE_KEYS = ['mode', 'prompt', 'project', 'retries', 'depends_on', 'outputs'];
     const PL_WF_KEYS = ['name', 'vars', 'input', 'nodes'];
@@ -2363,6 +2364,12 @@
       if (!PL.project) return;
       const box = $('pl-runs');
       const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ runs: [] }));
+      // capture the newest run for the open workflow → per-node outputs (shown in the edit modal)
+      if (PL.g) {
+        const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+        PL.runOutputs = {};
+        if (mine) for (const n of (mine.nodes || [])) PL.runOutputs[n.id] = { outputs: n.outputs || {}, status: n.status, error: n.error };
+      }
       box.innerHTML = '';
       if (!(d.runs || []).length) { box.innerHTML = '<span class="sl">no runs yet</span>'; return; }
       for (const r of d.runs.slice(0, 8)) {
@@ -2564,6 +2571,19 @@
         const dw = document.createElement('div'); dw.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px';
         n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove dependency'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); buildNodeForm(box); }; dw.appendChild(t); });
         row('depends on (edit on canvas)', dw);
+      }
+      // last-run output (read-only) — what this node produced on the most recent run
+      const ro = PL.runOutputs && PL.runOutputs[id];
+      if (ro && (ro.status || ro.error || Object.keys(ro.outputs || {}).length)) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label'); l.textContent = 'last run — ' + (ro.status || ''); r.appendChild(l);
+        if (ro.error) { const e = document.createElement('div'); e.style.cssText = 'color:#e5484d;font-size:11px;white-space:pre-wrap'; e.textContent = ro.error; r.appendChild(e); }
+        for (const [k, v] of Object.entries(ro.outputs || {})) {
+          const oh = document.createElement('div'); oh.style.cssText = 'font-size:10px;color:#2e9e44;margin-top:4px;font-weight:600'; oh.textContent = k;
+          const ta = document.createElement('textarea'); ta.readOnly = true; ta.value = v; ta.style.minHeight = '54px';
+          r.appendChild(oh); r.appendChild(ta);
+        }
+        box.appendChild(r);
       }
     }
     function renameNode(oldId, nid) {
