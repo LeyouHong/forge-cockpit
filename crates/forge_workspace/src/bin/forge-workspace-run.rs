@@ -74,6 +74,9 @@ struct Cfg {
     poll: Duration,
     daemon: bool,
     dry_run: bool,
+    /// When set (via --isolate-mcp), spawned agents run with FORGE_CONFIG=this,
+    /// an isolated base_path exposing ONLY the workspace MCP.
+    home: Option<PathBuf>,
 }
 
 fn pending(r: &RequestDocument) -> bool {
@@ -109,6 +112,8 @@ fn run() -> anyhow::Result<()> {
     let forge = flag(&mut args, "--forge").map(PathBuf::from).unwrap_or_else(|| exe_dir.join("forge"));
     let mcp_bin = exe_dir.join("forge-workspace-mcp");
 
+    let isolate = has(&mut args, "--isolate-mcp");
+    let home = if isolate { Some(setup_isolated_home(&workspace, &mcp_bin)?) } else { None };
     let cfg = Cfg {
         project,
         workspace,
@@ -118,12 +123,17 @@ fn run() -> anyhow::Result<()> {
         poll: Duration::from_secs(flag(&mut args, "--poll-secs").and_then(|s| s.parse().ok()).unwrap_or(3)),
         daemon: has(&mut args, "--daemon"),
         dry_run: has(&mut args, "--dry-run"),
+        home,
     };
 
-    ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
+    // With an isolated base_path the workspace MCP is provided there; otherwise
+    // inject it into the project's .mcp.json (which merges with the global one).
+    if cfg.home.is_none() {
+        ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
+    }
     println!(
-        "▶ orchestrator: project={} concurrent={} max-attempts={} daemon={} dry-run={}",
-        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.daemon, cfg.dry_run
+        "▶ orchestrator: project={} concurrent={} max-attempts={} daemon={} dry-run={} isolate-mcp={}",
+        cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.daemon, cfg.dry_run, cfg.home.is_some()
     );
 
     let state = Arc::new(Mutex::new(State { running: HashSet::new(), trackers: HashMap::new() }));
@@ -224,13 +234,58 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, ro
                  you is `{}`. Start now.",
                 req.id
             );
-            let _ = Command::new(&cfg.forge).arg("-p").arg(&prompt).current_dir(&cfg.project).status();
+            let mut cmd = Command::new(&cfg.forge);
+            cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
+            if let Some(home) = &cfg.home {
+                cmd.env("FORGE_CONFIG", home);
+            }
+            let _ = cmd.status();
         } else {
             // Simulate a session that does nothing (so stuck detection can be tested).
             std::thread::sleep(Duration::from_millis(200));
         }
         state.lock().unwrap().running.remove(&req.id);
     });
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
+/// Build an isolated base_path (used as FORGE_CONFIG) that reuses the user's real
+/// provider credentials/config but exposes ONLY the workspace MCP — so spawned
+/// agents don't load unrelated global MCP servers (faster startup, more reliable
+/// tool registration). Credentials are symlinked, never copied.
+fn setup_isolated_home(workspace: &Path, mcp_bin: &Path) -> anyhow::Result<PathBuf> {
+    let home = workspace.join(".forge-home");
+    std::fs::create_dir_all(&home)?;
+    let real = std::env::var("FORGE_CONFIG")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            let h = home_dir();
+            [".forge", "forge"].iter().map(|d| h.join(d)).find(|p| p.join(".credentials.json").exists())
+        })
+        .unwrap_or_else(|| home_dir().join(".forge"));
+    // Reuse real provider config/credentials; exclude .mcp.json (we write our own).
+    for f in [".credentials.json", ".forge.toml", ".mcp_trust.json", ".mcp-credentials.json", ".config.json"] {
+        let (src, dst) = (real.join(f), home.join(f));
+        if src.exists() && !dst.exists() {
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&src, &dst);
+            #[cfg(not(unix))]
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+    let mcp = json!({ "mcpServers": { "forge-workspace": {
+        "command": mcp_bin.to_string_lossy(),
+        "env": { "FORGE_WORKSPACE_DIR": workspace.to_string_lossy() }
+    }}});
+    std::fs::write(home.join(".mcp.json"), serde_json::to_string_pretty(&mcp)?)?;
+    Ok(home)
 }
 
 fn ensure_workspace_mcp(project: &Path, mcp_bin: &Path, workspace: &Path) -> anyhow::Result<()> {
