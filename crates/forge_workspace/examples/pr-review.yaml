@@ -1,0 +1,43 @@
+# Batch PR review: for each PR number, fetch its diff and have an agent review it.
+#
+#   forge-pipeline run crates/forge_workspace/examples/pr-review.yaml \
+#       --project . --isolate-mcp \
+#       # override the repo / PRs from the CLI if you like:
+#       # (edit `vars` below, or template them from --input)
+#
+# Requires the `gh` CLI to be authenticated. The findings for each PR land in the
+# review node's output (and its contract file under
+# <workspace>/pipelines/.out/<run>/<i>-review.txt), one per iteration.
+#
+# This example is READ-ONLY — it fetches and reviews but does not post anything
+# back to GitHub. To post, add a `report` node that runs e.g.
+#   gh pr comment {{pr}} --repo {{vars.repo}} --body-file <the review file>
+# — posting to a real PR is an outward action; wire it up deliberately.
+
+name: pr-review
+vars:
+  repo: "antinomyhq/forge"
+  pr_ids: "3640,3665"
+for_each:
+  source: "{{vars.pr_ids}}"
+  as: pr
+nodes:
+  fetch:
+    mode: shell
+    prompt: "gh pr diff {{pr}} --repo {{vars.repo}}"
+    outputs:
+      - name: diff
+        extract: stdout
+  review:
+    depends_on: [fetch]
+    prompt: |
+      You are a senior code reviewer. Review the following PR diff for correctness,
+      security, and obvious bugs. List each concrete issue as a short bullet with a
+      file:line reference and a one-line fix. If nothing substantive, reply exactly
+      "LGTM". Be terse — no preamble.
+
+      PR #{{pr}} diff:
+      {{nodes.fetch.outputs.diff}}
+    outputs:
+      - name: findings
+        extract: result
