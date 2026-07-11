@@ -500,9 +500,13 @@
     .pl-tab.active { background: var(--hover); color: var(--text); font-weight: 600; }
     .pl-palette { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
     .pl-canvas-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 10px; align-items: stretch; }
-    .pl-canvas { position: relative; height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background:
+    .pl-canvas { position: relative; height: 460px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; cursor: grab; background:
       radial-gradient(circle, rgba(127,127,127,.18) 1px, transparent 1px) 0 0 / 18px 18px; }
-    .pl-edges { position: absolute; inset: 0; width: 3000px; height: 2000px; pointer-events: none; overflow: visible; }
+    .pl-canvas.panning { cursor: grabbing; }
+    .pl-viewport { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+    .pl-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+    .pl-zoom .btn { width: 26px; padding: 2px 0; }
+    .pl-edges { position: absolute; inset: 0; width: 4000px; height: 3000px; pointer-events: none; overflow: visible; }
     .pl-edges path { stroke: #8a8f98; stroke-width: 2; fill: none; }
     .pl-edges path.hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
     .pl-node { position: absolute; width: 210px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; user-select: none; }
@@ -703,7 +707,14 @@
               </div>
               <div class="pl-canvas-wrap">
                 <div id="pl-canvas" class="pl-canvas">
-                  <svg id="pl-edges" class="pl-edges"></svg>
+                  <div id="pl-viewport" class="pl-viewport">
+                    <svg id="pl-edges" class="pl-edges"></svg>
+                  </div>
+                  <div class="pl-zoom">
+                    <button class="btn btn-sm" id="pl-zin" title="Zoom in">+</button>
+                    <button class="btn btn-sm" id="pl-zout" title="Zoom out">−</button>
+                    <button class="btn btn-sm" id="pl-zfit" title="Reset view">⤢</button>
+                  </div>
                 </div>
                 <div id="pl-inspector" class="pl-inspector"><span class="sl">select a node to edit it</span></div>
               </div>
@@ -2234,17 +2245,46 @@
       }
     }
 
+    /* ---- canvas pan / zoom (infinite-canvas feel) ---- */
+    PL.view = PL.view || { x: 0, y: 0, z: 1 };
+    function applyView() {
+      const v = PL.view;
+      $('pl-viewport').style.transform = 'translate(' + v.x + 'px,' + v.y + 'px) scale(' + v.z + ')';
+      $('pl-canvas').style.backgroundPosition = v.x + 'px ' + v.y + 'px';
+      $('pl-canvas').style.backgroundSize = (18 * v.z) + 'px ' + (18 * v.z) + 'px';
+    }
+    function toGraph(cx, cy) { const r = $('pl-canvas').getBoundingClientRect(); return { x: (cx - r.left - PL.view.x) / PL.view.z, y: (cy - r.top - PL.view.y) / PL.view.z }; }
+    function zoomAt(mx, my, factor) {
+      const old = PL.view.z, nz = Math.min(2, Math.max(0.3, old * factor));
+      PL.view.x = mx - (mx - PL.view.x) * (nz / old); PL.view.y = my - (my - PL.view.y) * (nz / old); PL.view.z = nz; applyView();
+    }
+    (function initCanvasNav() {
+      const c = $('pl-canvas'); if (!c || c.dataset.nav) return; c.dataset.nav = '1';
+      c.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.pl-node') || e.target.closest('.pl-zoom')) return;
+        PL.sel = null; renderInspector(); [...$('pl-viewport').querySelectorAll('.pl-node.sel')].forEach((n) => n.classList.remove('sel'));
+        const pan = { sx: e.clientX, sy: e.clientY, ox: PL.view.x, oy: PL.view.y }; c.classList.add('panning');
+        const move = (ev) => { PL.view.x = pan.ox + (ev.clientX - pan.sx); PL.view.y = pan.oy + (ev.clientY - pan.sy); applyView(); };
+        const up = () => { c.classList.remove('panning'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      });
+      c.addEventListener('wheel', (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89); }, { passive: false });
+      $('pl-zin').onclick = () => { const r = c.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.15); };
+      $('pl-zout').onclick = () => { const r = c.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.87); };
+      $('pl-zfit').onclick = () => { PL.view = { x: 0, y: 0, z: 1 }; applyView(); };
+    })();
+
     /* ---- canvas rendering ---- */
     function nodePorts(id) {
       const el = document.getElementById('pln-' + id); if (!el || !PL.g.layout[id]) return null;
-      const x = PL.g.layout[id].x, y = PL.g.layout[id].y, w = el.offsetWidth || 168, h = el.offsetHeight || 60;
+      const x = PL.g.layout[id].x, y = PL.g.layout[id].y, w = el.offsetWidth || 210, h = el.offsetHeight || 70;
       return { inX: x + w / 2, inY: y, outX: x + w / 2, outY: y + h };
     }
     function renderCanvas() {
-      const canvas = $('pl-canvas'); if (!canvas || !PL.g) return;
-      [...canvas.querySelectorAll('.pl-node')].forEach((n) => n.remove());
-      for (const id of Object.keys(PL.g.nodes)) canvas.appendChild(nodeEl(id));
-      drawEdges();
+      const vp = $('pl-viewport'); if (!vp || !PL.g) return;
+      [...vp.querySelectorAll('.pl-node')].forEach((n) => n.remove());
+      for (const id of Object.keys(PL.g.nodes)) vp.appendChild(nodeEl(id));
+      drawEdges(); applyView();
     }
     function nodeEl(id) {
       const n = PL.g.nodes[id], pos = PL.g.layout[id];
@@ -2298,7 +2338,7 @@
     function startDrag(e, id) { e.preventDefault(); const p = PL.g.layout[id]; plDrag = { id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }; document.onmousemove = onDragMove; document.onmouseup = endDrag; }
     function onDragMove(e) {
       if (!plDrag) return;
-      const nx = Math.max(0, plDrag.ox + (e.clientX - plDrag.sx)), ny = Math.max(0, plDrag.oy + (e.clientY - plDrag.sy));
+      const nx = plDrag.ox + (e.clientX - plDrag.sx) / PL.view.z, ny = plDrag.oy + (e.clientY - plDrag.sy) / PL.view.z;
       PL.g.layout[plDrag.id] = { x: nx, y: ny };
       const el = document.getElementById('pln-' + plDrag.id); if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
       drawEdges();
@@ -2313,10 +2353,9 @@
       const over = document.elementFromPoint(e.clientX, e.clientY);
       if (over && over.classList.contains('pl-port') && over.classList.contains('in')) over.classList.add('tgt');
       const from = nodePorts(plLink.from); if (!from) return;
-      const c = $('pl-canvas'), rect = c.getBoundingClientRect();
-      const mx = e.clientX - rect.left + c.scrollLeft, my = e.clientY - rect.top + c.scrollTop;
+      const m = toGraph(e.clientX, e.clientY);
       drawEdges();
-      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', 'M' + from.outX + ',' + from.outY + ' L' + mx + ',' + my); p.setAttribute('stroke-dasharray', '5,4'); $('pl-edges').appendChild(p);
+      const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', 'M' + from.outX + ',' + from.outY + ' L' + m.x + ',' + m.y); p.setAttribute('stroke-dasharray', '5,4'); $('pl-edges').appendChild(p);
     }
     function endLink(e) {
       const over = document.elementFromPoint(e.clientX, e.clientY);
