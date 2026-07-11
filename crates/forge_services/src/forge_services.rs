@@ -27,7 +27,8 @@ use crate::provider_service::ForgeProviderService;
 use crate::template::ForgeTemplateService;
 use crate::tool_services::{
     ForgeFetch, ForgeFollowup, ForgeFsPatch, ForgeFsRead, ForgeFsRemove, ForgeFsSearch,
-    ForgeFsUndo, ForgeFsWrite, ForgeImageRead, ForgePlanCreate, ForgeShell, ForgeSkillFetch,
+    ForgeFsUndo, ForgeFsWrite, ForgeImageRead, ForgePipelineService, ForgePlanCreate, ForgeShell,
+    ForgeSkillFetch,
 };
 
 type McpService<F> = ForgeMcpService<ForgeMcpManager<F>, F, <F as McpServerInfra>::Client>;
@@ -83,6 +84,7 @@ pub struct ForgeServices<
     provider_auth_service: ForgeProviderAuthService<F>,
     workspace_service: Arc<crate::context_engine::ForgeWorkspaceService<F, FdDefault<F>>>,
     skill_service: Arc<ForgeSkillFetch<F>>,
+    pipeline_service: Arc<ForgePipelineService>,
     infra: Arc<F>,
 }
 
@@ -141,6 +143,7 @@ impl<
             discovery,
         ));
         let skill_service = Arc::new(ForgeSkillFetch::new(infra.clone()));
+        let pipeline_service = Arc::new(ForgePipelineService::new());
 
         Self {
             conversation_service,
@@ -169,6 +172,7 @@ impl<
             provider_auth_service,
             workspace_service,
             skill_service,
+            pipeline_service,
             chat_service,
             infra,
         }
@@ -236,6 +240,7 @@ impl<
     type ProviderService = ForgeProviderService<F>;
     type WorkspaceService = crate::context_engine::ForgeWorkspaceService<F, FdDefault<F>>;
     type SkillFetchService = ForgeSkillFetch<F>;
+    type PipelineService = ForgePipelineService;
 
     fn config_service(&self) -> &Self::AppConfigService {
         &self.config_service
@@ -334,6 +339,10 @@ impl<
     }
     fn skill_fetch_service(&self) -> &Self::SkillFetchService {
         &self.skill_service
+    }
+
+    fn pipeline_service(&self) -> &Self::PipelineService {
+        &self.pipeline_service
     }
 
     fn provider_service(&self) -> &Self::ProviderService {

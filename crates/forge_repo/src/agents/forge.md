@@ -17,6 +17,8 @@ tools:
   - shell
   - fetch
   - skill
+  - pipeline_list
+  - pipeline_run
   - todo_write
   - todo_read
   - mcp_*

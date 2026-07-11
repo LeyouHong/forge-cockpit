@@ -143,16 +143,13 @@ pub(crate) async fn remove_project<A: API>(
 // directory and inputs are supplied at RUN time (see run_pipeline), and runs
 // persist globally too. `project` is only for the Team page.
 
-fn web_home() -> PathBuf {
-    home_dir().join(".forge-web")
-}
-/// Where global pipeline files live.
+/// Where global pipeline files live (shared with the CLI + agent tools).
 fn global_pipelines_dir() -> PathBuf {
-    web_home().join("pipelines")
+    forge_workspace::pipeline::global_pipelines_dir()
 }
 /// The workspace all runs persist to (global, not per project).
 fn runs_ws() -> PathBuf {
-    web_home().join("runs")
+    forge_workspace::pipeline::global_runs_workspace()
 }
 
 /// Resolve `~/.forge-web/pipelines/<name>`, rejecting path traversal.

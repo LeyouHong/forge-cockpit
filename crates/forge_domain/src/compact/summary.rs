@@ -362,6 +362,10 @@ fn extract_tool_info(call: &ToolCallFull, current_todos: &[Todo]) -> Option<Summ
             }
             ToolCatalog::Plan(input) => Some(SummaryTool::Plan { plan_name: input.plan_name }),
             ToolCatalog::Skill(input) => Some(SummaryTool::Skill { name: input.name }),
+            ToolCatalog::PipelineList(_) => None,
+            ToolCatalog::PipelineRun(input) => {
+                Some(SummaryTool::Shell { command: format!("pipeline_run {}", input.name) })
+            }
             ToolCatalog::TodoWrite(input) => {
                 let before_map: HashMap<&str, &Todo> = current_todos
                     .iter()

@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use forge_workspace::pipeline::{self, RunConfig, Workflow};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     if let Some(i) = args.iter().position(|a| a == name) {
@@ -247,40 +247,4 @@ fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-/// Isolated base_path (FORGE_CONFIG) exposing ONLY the workspace MCP — mirrors
-/// forge-workspace-run's isolate so `claude`-mode nodes start fast/reliably.
-/// Credentials are symlinked, never copied.
-fn setup_isolated_home(workspace: &Path, mcp_bin: &Path) -> Result<PathBuf> {
-    let home = workspace.join(".forge-home");
-    std::fs::create_dir_all(&home)?;
-    let real = std::env::var("FORGE_CONFIG")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            let h = home_dir();
-            [".forge", "forge"].iter().map(|d| h.join(d)).find(|p| p.join(".credentials.json").exists())
-        })
-        .unwrap_or_else(|| home_dir().join(".forge"));
-    for f in [".credentials.json", ".forge.toml", ".mcp_trust.json", ".mcp-credentials.json", ".config.json"] {
-        let (src, dst) = (real.join(f), home.join(f));
-        if src.exists() && !dst.exists() {
-            #[cfg(unix)]
-            let _ = std::os::unix::fs::symlink(&src, &dst);
-            #[cfg(not(unix))]
-            let _ = std::fs::copy(&src, &dst);
-        }
-    }
-    let mcp = json!({ "mcpServers": { "forge-workspace": {
-        "command": mcp_bin.to_string_lossy(),
-        "env": { "FORGE_WORKSPACE_DIR": workspace.to_string_lossy() }
-    }}});
-    std::fs::write(home.join(".mcp.json"), serde_json::to_string_pretty(&mcp)?)?;
-    Ok(home)
-}
+use pipeline::setup_isolated_home;

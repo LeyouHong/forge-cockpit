@@ -1011,6 +1011,57 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+/// The user's home directory (`$HOME` / `%USERPROFILE%`).
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
+/// Where global (project-independent) pipeline recipes live. Shared by the web
+/// UI's visual builder, the `forge-pipeline` CLI, and the agent's
+/// `pipeline_*` tools so they all see the same set.
+pub fn global_pipelines_dir() -> PathBuf {
+    home_dir().join(".forge-web").join("pipelines")
+}
+
+/// The workspace all global pipeline runs persist to.
+pub fn global_runs_workspace() -> PathBuf {
+    home_dir().join(".forge-web").join("runs")
+}
+
+/// Isolated base_path (FORGE_CONFIG) exposing ONLY the workspace MCP — so
+/// `claude`-mode nodes start fast/reliably regardless of the user's MCP setup.
+/// Credentials are symlinked, never copied.
+pub fn setup_isolated_home(workspace: &Path, mcp_bin: &Path) -> Result<PathBuf> {
+    let home = workspace.join(".forge-home");
+    std::fs::create_dir_all(&home)?;
+    let real = std::env::var("FORGE_CONFIG")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            let h = home_dir();
+            [".forge", "forge"].iter().map(|d| h.join(d)).find(|p| p.join(".credentials.json").exists())
+        })
+        .unwrap_or_else(|| home_dir().join(".forge"));
+    for f in [".credentials.json", ".forge.toml", ".mcp_trust.json", ".mcp-credentials.json", ".config.json"] {
+        let (src, dst) = (real.join(f), home.join(f));
+        if src.exists() && !dst.exists() {
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&src, &dst);
+            #[cfg(not(unix))]
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+    let mcp = serde_json::json!({ "mcpServers": { "forge-workspace": {
+        "command": mcp_bin.to_string_lossy(),
+        "env": { "FORGE_WORKSPACE_DIR": workspace.to_string_lossy() }
+    }}});
+    std::fs::write(home.join(".mcp.json"), serde_json::to_string_pretty(&mcp)?)?;
+    Ok(home)
+}
+
 /// List persisted pipeline runs under `<workspace>/pipelines/`, newest first.
 /// A pure read for dashboards / monitoring.
 pub fn list_pipelines(workspace: &Path) -> Vec<Pipeline> {

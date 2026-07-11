@@ -127,6 +127,19 @@ impl FormatContent for ToolCatalog {
                     .sub_title(input.name.to_lowercase())
                     .into(),
             ),
+            ToolCatalog::PipelineList(_) => Some(TitleFormat::debug("List Pipelines").into()),
+            ToolCatalog::PipelineRun(input) => {
+                let inputs = input
+                    .inputs
+                    .iter()
+                    .map(|(k, v)| format!(" {k}={v}"))
+                    .collect::<String>();
+                Some(
+                    TitleFormat::debug("Run Pipeline")
+                        .sub_title(format!("{}{}", input.name, inputs))
+                        .into(),
+                )
+            }
             ToolCatalog::TodoWrite(input) => Some(
                 TitleFormat::debug("Update Todos")
                     .sub_title(format!("{} item(s)", input.todos.len()))
