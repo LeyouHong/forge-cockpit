@@ -1,0 +1,39 @@
+# Review a SINGLE PR — the workflow the PR watcher fires per new/updated PR.
+#
+#   # one-shot, review PR #42 of a repo you own:
+#   forge-pipeline run crates/forge_workspace/examples/pr-review-single.yaml \
+#       --input pr=42 --input repo=you/your-repo --project . --isolate-mcp
+#
+#   # resident trigger — fire this per new/updated open PR:
+#   forge-pipeline watch crates/forge_workspace/examples/pr-review-single.yaml \
+#       --repo you/your-repo --project . --isolate-mcp --poll-secs 60
+#
+# `watch` supplies `pr` (the number) and `repo` as inputs automatically, dedupes
+# by <number>@<head-sha> (so new commits re-fire), and persists the seen set to
+# <workspace>/pipelines/.watch.json. Read-only — reviews but does not post; add a
+# `post` node (see pr-review-post.yaml) to comment back on a repo you own.
+
+name: pr-review-single
+input:
+  pr: "PR number to review"
+  repo: "owner/name (supplied by `watch`)"
+nodes:
+  fetch:
+    mode: shell
+    prompt: "gh pr diff {{input.pr}} --repo {{input.repo}}"
+    outputs:
+      - name: diff
+        extract: stdout
+  review:
+    depends_on: [fetch]
+    prompt: |
+      You are a senior code reviewer. Review the following PR diff for correctness,
+      security, and obvious bugs. List each concrete issue as a short bullet with a
+      file:line reference and a one-line fix. If nothing substantive, reply exactly
+      "LGTM". Be terse — no preamble.
+
+      PR #{{input.pr}} diff:
+      {{nodes.fetch.outputs.diff}}
+    outputs:
+      - name: findings
+        extract: result
