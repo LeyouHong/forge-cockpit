@@ -154,6 +154,7 @@ where
         .route("/api/pipeline/run", post(pipeline::run_pipeline::<A>))
         .route("/api/pipeline/runs", get(pipeline::list_runs::<A>))
         .route("/api/team", get(pipeline::team_board::<A>))
+        .route("/api/team/request", get(pipeline::team_request::<A>))
         .route("/api/team/run", post(pipeline::team_run::<A>))
         .route("/api/team/stop", post(pipeline::team_stop::<A>))
         .route(

@@ -373,6 +373,30 @@ pub(crate) async fn run_pipeline<A: API>(
     Ok(Json(json!({ "started": true, "log": log.to_string_lossy() })))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct TeamReqQuery {
+    project: String,
+    id: String,
+}
+
+/// GET /api/team/request?project=NAME&id=req-… — one request's full document plus
+/// its response sections (engineer / review / qa).
+pub(crate) async fn team_request<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<TeamReqQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    match forge_workspace::request::get_request(&ws, &q.id) {
+        Ok(Some((req, res))) => Ok(Json(json!({
+            "request": serde_json::to_value(&req).unwrap_or_else(|_| json!({})),
+            "response": res.map(|r| serde_json::to_value(&r).unwrap_or_else(|_| json!({}))),
+        }))),
+        Ok(None) => Err(AppError::not_found("no such request")),
+        Err(e) => Err(AppError::from(e)),
+    }
+}
+
 fn forge_workspace_run_bin() -> PathBuf {
     std::env::current_exe()
         .ok()

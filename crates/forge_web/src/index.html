@@ -796,6 +796,14 @@
     </div>
   </div>
 
+  <!-- Team: request detail modal -->
+  <div class="pl-picker-overlay" id="tm-reqmodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b id="tm-req-title">Request</b><div style="flex:1"></div><button class="icon-btn" id="tm-req-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="tm-req-body"></div>
+    </div>
+  </div>
+
   <!-- Node edit modal -->
   <div class="pl-picker-overlay" id="pl-nodemodal">
     <div class="pl-picker pl-node-modal">
@@ -2682,7 +2690,7 @@
       const tb = document.createElement('div'); tb.className = 'tb';
       if (role.key === 'coordinator') { const s = document.createElement('div'); s.className = 'rq'; s.textContent = 'plans goals → requests'; tb.appendChild(s); }
       else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
-      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); tb.appendChild(q); }
+      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
       el.appendChild(th); el.appendChild(tb);
       if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
       if (role.key !== 'done') {
@@ -2695,6 +2703,24 @@
         af.appendChild(sel); el.appendChild(af);
       }
       return el;
+    }
+    $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
+    async function tmShowRequest(id) {
+      const d = await (await api('/api/team/request?project=' + encodeURIComponent(TEAM.project) + '&id=' + encodeURIComponent(id))).json().catch(() => null);
+      if (!d || !d.request) return;
+      const req = d.request, res = d.response;
+      $('tm-req-title').textContent = req.title || id;
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const sec = (label, html) => { const s = document.createElement('div'); s.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; s.appendChild(l); const c = document.createElement('div'); c.style.cssText = 'font-size:12px;white-space:pre-wrap;line-height:1.5'; c.innerHTML = html; s.appendChild(c); b.appendChild(s); };
+      sec('status', '<b>' + escapeHtml(req.status || '') + '</b>' + (req.claimed_by ? ' · @' + escapeHtml(req.claimed_by) : ''));
+      if (req.description) sec('description', escapeHtml(req.description));
+      if ((req.acceptance_criteria || []).length) sec('acceptance criteria', '<ul style="margin:0;padding-left:18px">' + req.acceptance_criteria.map((c) => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul>');
+      if (res) {
+        if (res.engineer) sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+        if (res.review) sec('🔍 review — ' + escapeHtml(res.review.result || ''), (res.review.findings || []).length ? '<ul style="margin:0;padding-left:18px">' + res.review.findings.map((f) => '<li>[' + escapeHtml(f.severity || '') + '] ' + escapeHtml(f.file || '') + ' — ' + escapeHtml(f.description || '') + '</li>').join('') + '</ul>' : '(no findings)');
+        if (res.qa) sec('✅ qa — ' + escapeHtml(res.qa.result || ''), escapeHtml(res.qa.notes || ''));
+      }
+      $('tm-reqmodal').classList.add('open');
     }
     function tmEdges() {
       const svg = $('tm-edges'); svg.innerHTML = '';
