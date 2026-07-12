@@ -3251,7 +3251,8 @@
       for (const msg of sorted.slice(0, 30)) {
         const r = document.createElement('div'); r.className = 'pl-insp-row';
         const l = document.createElement('label');
-        l.textContent = (msg.category === 'ticket' ? '🎫 ' : '🔔 ') + (msg.from || '?') + ' · ' + new Date(msg.created_at).toLocaleString() + (msg.read ? '' : ' · unread');
+        const ts = new Date(msg.created_at || msg.at || 0);
+        l.textContent = (msg.category === 'ticket' ? '🎫 ' : '🔔 ') + (msg.from || '?') + ' · ' + (isNaN(ts) ? (msg.created_at || '') : ts.toLocaleString()) + (msg.read ? '' : ' · unread');
         const c = document.createElement('div'); c.style.cssText = 'font-size:12px;white-space:pre-wrap;line-height:1.5'; c.textContent = msg.body || '';
         r.appendChild(l); r.appendChild(c); b.appendChild(r);
       }
