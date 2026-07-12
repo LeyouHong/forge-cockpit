@@ -43,6 +43,7 @@ It runs two ways from one engine:
 | Browser UI | — | **Web cockpit**: chat + dashboards + one-click integrations |
 | Platform dashboards | — | GitHub · GitHub Actions · Jira · Sentry · Google Calendar · Slack · Gmail |
 | One-click integrations | — | Slack (bot token), Gmail (app password), plus GitHub/Jira/Sentry/Calendar and any custom MCP |
+| Orchestration | — | **Pipelines** (visual DAG workflows, agent-invokable) · **Team** (editable multi-agent canvas) · **Schedules** (cron + actions) · **Usage** analytics · **Crafts** (AI-generated mini-apps) |
 | Distribution | — | Published to npm (`npx forge-cockpit`) with prebuilt binaries per platform |
 
 The underlying agent engine, tools, and provider support are inherited from Forge.
@@ -113,6 +114,20 @@ Forge web UI ready. Open:
   <p align="center"><img src="docs/img/integrations.png" alt="Integrations — one-click MCP connections" width="900"></p>
 
 - **⏱ Activity & TODO** — running turns, recent runs, and a small personal TODO list the agent can pick up.
+
+### Orchestration & automation
+
+Beyond chat, the cockpit ships a full orchestration stack — build reusable agent workflows, run a resident multi-agent team, schedule work, and watch what it costs:
+
+- **🧬 Pipelines** — YAML DAG workflows (agent + shell nodes) with a **visual drag-and-drop builder**. Nodes pass outputs downstream (`{{nodes.x.outputs.y}}`), run in parallel, support `for_each` batching and verify/replan self-healing. Pipelines are global, reusable recipes; ▶ Run picks a target directory and fills the declared inputs. The chat agent can **discover and run them itself** (`pipeline_list` / `pipeline_run`) — "review this PR" routes through your pr-review pipeline instead of doing it by hand. Ships example workflows for PR review + auto-fix.
+
+- **🤝 Team** — a resident multi-agent team on an **editable canvas**. Members (PM · Architect · Coordinator · Engineer · Reviewer · QA, or your own) carry a stage, a custom SOP, a per-role model, and DAG connections you draw by dragging. Give it a goal → PM writes a PRD → Architect designs and files work requests → engineers implement → reviewer → QA, handed off automatically through a request/response state machine with a message bus. Includes Lead gap-coverage, per-item human **approval gates**, member templates, whole-team YAML import/export, and a **Code** tab to browse the project (git-modified files marked, per-file diff).
+
+- **⏰ Schedules** — timed automation: a **trigger** (every N min / cron / once / manual) fires a **body** (a saved pipeline, or a one-shot agent prompt), then an optional **action** delivers the output (webhook/Slack or email). Run history with cleaned output tails.
+
+- **📊 Usage** — token & cost of your forge agents (chat / team / pipeline), scanned from the conversation store and priced at your provider's rate (DeepSeek, Claude, …). Summary cards, daily trend, by-model / by-project breakdowns.
+
+- **🧩 Crafts** — project-scoped mini-apps. Describe what you want ("a dashboard of our REST endpoints") and a background builder agent reads your project and writes a self-contained HTML page under `<project>/.forge/crafts/`, rendered in a sandboxed iframe tab. Refine it in place; commit it so the team gets the same tab.
 
 ## Terminal usage
 

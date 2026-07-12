@@ -42,6 +42,19 @@ per-run token):
 - **📋 Dashboard** — read-only boards over your connected platforms.
 - **🧩 Integrations** — one-click connect to MCP servers (read **and** write).
 
+And a full orchestration stack:
+
+- **🧬 Pipelines** — visual DAG workflows (agent + shell nodes); the chat agent
+  can discover and run them itself (`pipeline_list` / `pipeline_run`).
+- **🤝 Team** — a resident multi-agent team on an editable canvas
+  (PM → Architect → Engineer → Reviewer → QA), with approval gates, per-role
+  models, and a project code browser.
+- **⏰ Schedules** — cron/interval/one-shot triggers → a pipeline or prompt →
+  optional webhook / email delivery.
+- **📊 Usage** — token & cost of your agents, priced at your provider's rate.
+- **🧩 Crafts** — describe a mini-app; a builder agent writes a self-contained
+  HTML page into your project and renders it in a tab.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/dashboard.png" alt="Dashboard" width="820">
 </p>
