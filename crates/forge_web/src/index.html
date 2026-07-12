@@ -2955,6 +2955,7 @@
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
+      if (!d.running && ($('tm-status').textContent || '').indexOf('started') !== -1) { $('tm-status').textContent = '✓ team finished — all work processed'; $('tm-status').style.color = 'var(--muted)'; }
       $('tm-empty').textContent = reqs.length ? '' : (d.running
         ? '⏳ team is running — the planning chain (pm → architect → …) takes a few minutes before requests appear here.'
         : 'no work on the board yet — enter a goal + Run, or start it from the terminal.');
