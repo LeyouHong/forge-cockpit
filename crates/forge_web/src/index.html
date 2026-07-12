@@ -600,7 +600,7 @@
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
       <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="sched-open" title="Schedules — timed automation (pipeline or prompt on a trigger)">⏰</button>
-      <button class="icon-btn" id="usage-open" title="Usage — token and cost analytics across your Claude sessions">📊</button>
+      <button class="icon-btn" id="usage-open" title="Usage — token and cost of your forge agents">📊</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -769,7 +769,7 @@
   <!-- Team (resident agent team) page -->
   <div class="kanban-overlay" id="usage-overlay">
     <div class="kanban-head">
-      <span><b>📊 Usage</b> <span class="drawer-hint">token &amp; cost across your Claude Code sessions (~/.claude/projects)</span></span>
+      <span><b>📊 Usage</b> <span class="drawer-hint">token &amp; cost of your forge agents (chat / team / pipeline)</span></span>
       <div style="flex:1"></div>
       <span id="usage-range" style="display:flex;gap:4px"></span>
       <button class="btn btn-ghost btn-sm" id="usage-refresh">Refresh</button>
@@ -2746,22 +2746,12 @@
       const dailyAvg = d.days_with_activity ? t.cost / d.days_with_activity : 0;
       const card = (label, big, sub, tip) => '<div title="' + (tip || '') + '" style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
         '<div class="sl">' + label + '</div><div style="font-size:22px;font-weight:700;margin:2px 0">' + big + '</div><div class="sl">' + (sub || '') + '</div></div>';
-      const srcNote = { forge: 'your forge agents (chat / team / pipeline) — real spend at your provider\'s rate', 'claude-code': 'interactive Claude Code CLI sessions — Anthropic models, covered by your subscription' };
       let html = '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">' +
-        'ℹ️ Estimated <b>API-equivalent</b> prices for the tokens in your sessions — <b>not a bill</b>. ' +
-        'Two sources: <b>forge</b> = your agents (e.g. DeepSeek) — this is real per-token spend; <b>claude-code</b> = interactive Claude Code, covered by your Claude subscription (flat fee, not per-token). Cache reads are near-free and shown separately.</div>';
-      const bySrc = d.by_source || [];
-      if (bySrc.length) {
-        html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' + bySrc.map((sc) =>
-          '<div title="' + (srcNote[sc.source] || '') + '" style="flex:1;min-width:220px;border:1px solid var(--border);border-radius:10px;padding:12px 14px' + (sc.source === 'forge' ? ';border-color:var(--accent,#5e6ad2)' : '') + '">' +
-          '<div class="sl">' + (sc.source === 'forge' ? '🔥 forge agents (real spend)' : '💬 ' + sc.source + ' (subscription)') + '</div>' +
-          '<div style="font-size:22px;font-weight:700;margin:2px 0">' + fmtUsd(sc.cost) + '</div>' +
-          '<div class="sl">' + (sc.messages || 0) + ' msgs · +' + fmtUsd(sc.cache_cost) + ' cache</div></div>').join('') + '</div>';
-      }
-      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
-        card('Est. new-work cost', fmtUsd(t.cost), (t.sessions || 0) + ' sessions · ' + (t.messages || 0) + ' msgs', 'API-equivalent cost of input + output + cache-write tokens (excludes cache reads). Not your actual bill.') +
-        card('+ cache reads', fmtUsd(t.cache_cost), 'API-equiv; ~$0 on subscription', 'What the ' + fmtNum(t.cache_read) + ' cache-read tokens would cost at API rates — effectively free on a subscription plan.') +
-        card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out · ' + fmtNum(t.cache_read) + ' cached') +
+        'ℹ️ Token spend by your <b>forge agents</b> (chat / team / pipeline), priced at your provider\'s per-token rate (e.g. DeepSeek). Cache reads are near-free and shown separately.</div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+        card('Total cost', fmtUsd(t.cost), (t.messages || 0) + ' messages', 'Input + output + cache-write tokens at your provider rate (cache reads shown separately).') +
+        card('+ cache reads', fmtUsd(t.cache_cost), fmtNum(t.cache_read) + ' cached tokens', 'Cache-read tokens are billed at a large discount — kept out of the headline.') +
+        card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out') +
         card('Daily avg', fmtUsd(dailyAvg), d.days_with_activity + ' active days · ' + cacheHit.toFixed(0) + '% cache hit') +
         '</div>';
 
@@ -2776,7 +2766,7 @@
           return px.toFixed(1) + ',' + py.toFixed(1);
         }).join(' ');
         html += '<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-          '<div class="sl" style="margin-bottom:6px">Est. new-work cost per day — peak ' + fmtUsd(max) + '</div>' +
+          '<div class="sl" style="margin-bottom:6px">Cost per day — peak ' + fmtUsd(max) + '</div>' +
           '<svg viewBox="0 0 ' + W + ' ' + Hh + '" style="width:100%;height:120px"><polyline points="' + pts + '" fill="none" stroke="var(--accent,#5e6ad2)" stroke-width="2"/></svg>' +
           '<div class="sl">' + (trend[0] || {}).day + ' → ' + (trend[trend.length - 1] || {}).day + '</div></div>';
       }
@@ -2792,7 +2782,7 @@
         '<div style="flex:1;min-width:300px;border:1px solid var(--border);border-radius:10px;padding:12px 14px"><div class="sl" style="margin-bottom:8px">By model</div>' + bar(d.by_model || [], 'model') + '</div>' +
         '<div style="flex:1;min-width:300px;border:1px solid var(--border);border-radius:10px;padding:12px 14px"><div class="sl" style="margin-bottom:8px">By project (top 20)</div>' + bar(d.by_project || [], 'project') + '</div>' +
         '</div>';
-      if (!totalTok) html = '<span class="sl">no Claude Code sessions found in ~/.claude/projects for this range.</span>';
+      if (!totalTok) html = '<span class="sl">no forge agent activity in this range — run a chat, team, or pipeline first.</span>';
       body.innerHTML = html;
     }
 

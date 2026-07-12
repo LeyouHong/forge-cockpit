@@ -77,8 +77,6 @@ struct Row {
     day: String,
     project: String,
     model: String,
-    /// "claude-code" (Anthropic CLI sessions) or "forge" (your DeepSeek agents).
-    source: String,
     session: String,
     input: u64,
     output: u64,
@@ -88,50 +86,8 @@ struct Row {
     cache_cost: f64,
 }
 
-fn claude_projects_dir() -> PathBuf {
-    forge_workspace::pipeline::home_dir().join(".claude").join("projects")
-}
-
-/// Decode `~/.claude/projects` directory names (cwd with `/`→`-`) into a short
-/// project label (the last path segment).
-fn project_label(dir_name: &str) -> String {
-    dir_name.rsplit('-').next().filter(|s| !s.is_empty()).unwrap_or(dir_name).to_string()
-}
-
 fn u(v: &Value, k: &str) -> u64 {
     v.get(k).and_then(Value::as_u64).unwrap_or(0)
-}
-
-/// Parse one JSONL line into a usage Row, if it carries assistant usage.
-fn parse_row(line: &str, project: &str) -> Option<Row> {
-    let o: Value = serde_json::from_str(line).ok()?;
-    let msg = o.get("message")?;
-    let usage = msg.get("usage").or_else(|| o.get("usage"))?;
-    let output = u(usage, "output_tokens");
-    let input = u(usage, "input_tokens");
-    let cache_read = u(usage, "cache_read_input_tokens");
-    let cache_write = u(usage, "cache_creation_input_tokens");
-    if input + output + cache_read + cache_write == 0 {
-        return None;
-    }
-    let model = msg
-        .get("model")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty() && *s != "<synthetic>")
-        .unwrap_or("unknown")
-        .to_string();
-    let day = o
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .map(|t| t.get(..10).unwrap_or(t).to_string())
-        .unwrap_or_default();
-    let session = o.get("sessionId").and_then(Value::as_str).unwrap_or("").to_string();
-    let (pi, po, pr, pw) = price(&model);
-    // Cache reads are the bulk of token volume and $0 on subscription plans;
-    // track them separately so the headline number reflects "new work".
-    let cost = input as f64 / 1e6 * pi + output as f64 / 1e6 * po + cache_write as f64 / 1e6 * pw;
-    let cache_cost = cache_read as f64 / 1e6 * pr;
-    Some(Row { day, project: project.to_string(), model, source: "claude-code".into(), session, input, output, cache_read, cache_write, cost, cache_cost })
 }
 
 /// Candidate forge conversation DBs (the running server's home may vary).
@@ -170,7 +126,6 @@ fn rows_from_forge_context(ctx: &str, day: &str, rows: &mut Vec<Row>) {
             day: day.to_string(),
             project: "forge-agents".into(),
             model,
-            source: "forge".into(),
             session: String::new(),
             input,
             output,
@@ -240,45 +195,21 @@ pub(crate) async fn usage<A: API>(
         (chrono::Utc::now() - chrono::Duration::days(q.days as i64)).format("%Y-%m-%d").to_string()
     };
 
+    // Forge's own agent usage (chat / team / pipeline) — your real per-token
+    // spend. We deliberately ignore ~/.claude/projects (interactive Claude Code
+    // CLI, a separate subscription concern).
     let mut rows: Vec<Row> = Vec::new();
-    // Source 1: your forge agents (DeepSeek etc.) — the real spend for a
-    // non-subscription provider.
     scan_forge(&cutoff, &mut rows);
-    // Source 2: Claude Code CLI sessions (Anthropic models).
-    if let Ok(dirs) = std::fs::read_dir(claude_projects_dir()) {
-        for d in dirs.flatten() {
-            if !d.path().is_dir() {
-                continue;
-            }
-            let project = project_label(&d.file_name().to_string_lossy());
-            let Ok(files) = std::fs::read_dir(d.path()) else { continue };
-            for f in files.flatten() {
-                if f.path().extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                    continue;
-                }
-                let Ok(content) = std::fs::read_to_string(f.path()) else { continue };
-                for line in content.lines() {
-                    let Some(row) = parse_row(line, &project) else { continue };
-                    if !cutoff.is_empty() && row.day.as_str() < cutoff.as_str() {
-                        continue;
-                    }
-                    rows.push(row);
-                }
-            }
-        }
-    }
 
     let mut total = Agg::default();
     let mut by_day: BTreeMap<String, f64> = BTreeMap::new();
     let mut by_model: BTreeMap<String, Agg> = BTreeMap::new();
     let mut by_project: BTreeMap<String, Agg> = BTreeMap::new();
-    let mut by_source: BTreeMap<String, Agg> = BTreeMap::new();
     for row in &rows {
         total.add(row);
         *by_day.entry(row.day.clone()).or_default() += row.cost;
         by_model.entry(row.model.clone()).or_default().add(row);
         by_project.entry(row.project.clone()).or_default().add(row);
-        by_source.entry(row.source.clone()).or_default().add(row);
     }
 
     let trend: Vec<Value> = by_day
@@ -305,23 +236,12 @@ pub(crate) async fn usage<A: API>(
     projects.sort_by(|a, b| b["cost"].as_f64().partial_cmp(&a["cost"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
     projects.truncate(20);
 
-    let mut sources: Vec<Value> = by_source
-        .iter()
-        .map(|(sname, a)| {
-            let mut v = a.to_json();
-            v["source"] = json!(sname);
-            v
-        })
-        .collect();
-    sources.sort_by(|a, b| b["cost"].as_f64().partial_cmp(&a["cost"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
-
     Ok(Json(json!({
         "total": total.to_json(),
         "days_with_activity": by_day.len(),
         "trend": trend,
         "by_model": models,
         "by_project": projects,
-        "by_source": sources,
     })))
 }
 
@@ -330,22 +250,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_row_and_cost() {
-        let line = r#"{"timestamp":"2026-07-11T20:26:17.388Z","sessionId":"s1","message":{"model":"claude-opus-4-8","usage":{"input_tokens":1000,"output_tokens":2000,"cache_read_input_tokens":500,"cache_creation_input_tokens":100}}}"#;
-        let r = parse_row(line, "proj").unwrap();
-        assert_eq!(r.day, "2026-07-11");
-        assert_eq!(r.input, 1000);
-        assert_eq!(r.output, 2000);
-        // opus new-work cost excludes cache read: in + out + cache_write
-        let expect = 0.015 + 0.15 + 0.001875;
+    fn test_forge_context_usage_and_deepseek_cost() {
+        let ctx = r#"{"messages":[{"message":{"text":{"model":"deepseek-v4-pro"}},"usage":{"prompt_tokens":{"actual":60000},"completion_tokens":{"actual":200},"total_tokens":{"actual":60200},"cached_tokens":{"actual":58000}}}]}"#;
+        let mut rows = Vec::new();
+        rows_from_forge_context(ctx, "2026-07-12", &mut rows);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.model, "deepseek-v4-pro");
+        assert_eq!(r.input, 2000); // 60000 prompt - 58000 cached
+        assert_eq!(r.output, 200);
+        assert_eq!(r.cache_read, 58000);
+        // deepseek: 2000/1e6*0.27 + 200/1e6*1.10
+        let expect = 0.00054 + 0.00022;
         assert!((r.cost - expect).abs() < 1e-9, "cost {} vs {}", r.cost, expect);
-        assert!((r.cache_cost - 0.00075).abs() < 1e-9);
     }
 
     #[test]
-    fn test_parse_row_skips_empty_and_nonusage() {
-        assert!(parse_row("not json", "p").is_none());
-        assert!(parse_row(r#"{"type":"user","message":{"content":"hi"}}"#, "p").is_none());
-        assert!(parse_row(r#"{"message":{"usage":{"input_tokens":0,"output_tokens":0}}}"#, "p").is_none());
+    fn test_forge_context_skips_no_usage() {
+        let mut rows = Vec::new();
+        rows_from_forge_context(r#"{"messages":[{"message":{"text":{"role":"user"}}}]}"#, "d", &mut rows);
+        assert!(rows.is_empty());
     }
 }
