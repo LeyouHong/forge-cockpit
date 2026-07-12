@@ -95,28 +95,8 @@ impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
             let skills = self.services.list_skills().await?;
 
             // The user's saved pipelines: listed in the prompt so matching requests
-            // route through pipeline_run. Best-effort — a broken dir must not sink
-            // the conversation.
-            let pipelines = match self.services.list_pipelines().await {
-                Ok(out) => out
-                    .pipelines
-                    .into_iter()
-                    .map(|p| forge_domain::PipelineEntry {
-                        file: p.file,
-                        name: p.name,
-                        description: p.description,
-                        inputs: p
-                            .inputs
-                            .into_iter()
-                            .map(|(k, default)| match default {
-                                Some(d) => format!("{k} (default: {d})"),
-                                None => k,
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-                Err(_) => Vec::new(),
-            };
+            // route through pipeline_run.
+            let pipelines = load_pipeline_entries(self.services.as_ref()).await;
 
             // Fetch extension statistics from git
             let extensions = self.fetch_extensions(self.max_extensions).await;
@@ -268,6 +248,33 @@ fn parse_extensions(extensions: &str, max_extensions: usize) -> Option<Extension
         total_extensions,
         remaining_percentage,
     })
+}
+
+/// Loads the user's saved pipelines as prompt entries. Best-effort — a broken
+/// pipelines dir must not sink the conversation.
+pub(crate) async fn load_pipeline_entries<S: PipelineService>(
+    services: &S,
+) -> Vec<forge_domain::PipelineEntry> {
+    match services.list_pipelines().await {
+        Ok(out) => out
+            .pipelines
+            .into_iter()
+            .map(|p| forge_domain::PipelineEntry {
+                file: p.file,
+                name: p.name,
+                description: p.description,
+                inputs: p
+                    .inputs
+                    .into_iter()
+                    .map(|(k, default)| match default {
+                        Some(d) => format!("{k} (default: {d})"),
+                        None => k,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 #[cfg(test)]

@@ -124,13 +124,24 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
                 .add_system_message(conversation)
                 .await?;
 
-        // Insert user prompt
+        // Insert user prompt. When the agent has the pipeline_run tool, attach
+        // the saved-pipelines reminder next to the user message — the
+        // system-prompt listing alone is unreliable for routing.
+        let pipeline_entries = if tool_definitions
+            .iter()
+            .any(|d| d.name.as_str() == "pipeline_run")
+        {
+            crate::system_prompt::load_pipeline_entries(self.services.as_ref()).await
+        } else {
+            Vec::new()
+        };
         let conversation = UserPromptGenerator::new(
             self.services.clone(),
             agent.clone(),
             chat.event.clone(),
             current_time,
         )
+        .pipelines(pipeline_entries)
         .add_user_prompt(conversation)
         .await?;
 
