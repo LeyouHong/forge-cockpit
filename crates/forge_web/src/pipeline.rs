@@ -515,6 +515,37 @@ pub(crate) async fn team_config_set<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct DiffQuery {
+    project: String,
+    files: String,
+}
+
+/// GET /api/team/diff?project=&files=a,b — the code changes for a request's
+/// files: uncommitted diff, else the last commit that touched them.
+pub(crate) async fn team_diff<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<DiffQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let files: Vec<&str> = q.files.split(',').map(str::trim).filter(|f| !f.is_empty() && !f.contains("..")).collect();
+    if files.is_empty() {
+        return Ok(Json(json!({ "diff": "" })));
+    }
+    let run = |args: &[&str]| -> String {
+        let mut cmd = Command::new("git");
+        cmd.args(args).arg("--").args(&files).current_dir(&project);
+        cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    };
+    let mut diff = run(&["diff", "HEAD"]);
+    if diff.trim().is_empty() {
+        diff = run(&["log", "-p", "--max-count=1"]);
+    }
+    let mut d = diff;
+    if d.len() > 60000 { d.truncate(60000); d.push_str("\n… [truncated]"); }
+    Ok(Json(json!({ "diff": d })))
+}
+
 /// GET /api/team/approvals?project= — pending approval gates.
 pub(crate) async fn team_approvals_get<A: API>(
     State(_): State<AppState<A>>,

@@ -3272,7 +3272,22 @@
       if (req.description) sec('description', escapeHtml(req.description));
       if ((req.acceptance_criteria || []).length) sec('acceptance criteria', '<ul style="margin:0;padding-left:18px">' + req.acceptance_criteria.map((c) => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul>');
       if (res) {
-        if (res.engineer) sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+        if (res.engineer) {
+          sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+          if ((res.engineer.files_changed || []).length) {
+            const dr = document.createElement('div'); dr.className = 'pl-insp-row';
+            const btn = document.createElement('button'); btn.className = 'btn btn-sm'; btn.textContent = '📄 View code changes';
+            btn.onclick = async () => {
+              btn.textContent = '…';
+              const dd = await api('/api/team/diff?project=' + encodeURIComponent(TEAM.project) + '&files=' + encodeURIComponent(res.engineer.files_changed.join(','))).then((r) => r.json()).catch(() => ({ diff: '' }));
+              const pre = document.createElement('pre');
+              pre.style.cssText = 'font-size:10.5px;white-space:pre-wrap;max-height:340px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.05));padding:8px;border-radius:6px';
+              pre.textContent = dd.diff || '(no diff found — the change may be in older commits)';
+              btn.replaceWith(pre);
+            };
+            dr.appendChild(btn); b.appendChild(dr);
+          }
+        }
         if (res.review) sec('🔍 review — ' + escapeHtml(res.review.result || ''), (res.review.findings || []).length ? '<ul style="margin:0;padding-left:18px">' + res.review.findings.map((f) => '<li>[' + escapeHtml(f.severity || '') + '] ' + escapeHtml(f.file || '') + ' — ' + escapeHtml(f.description || '') + '</li>').join('') + '</ul>' : '(no findings)');
         if (res.qa) sec('✅ qa — ' + escapeHtml(res.qa.result || ''), escapeHtml(res.qa.notes || ''));
       }

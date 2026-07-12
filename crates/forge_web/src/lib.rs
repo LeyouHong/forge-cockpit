@@ -167,6 +167,7 @@ where
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )
+        .route("/api/team/diff", get(pipeline::team_diff::<A>))
         .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
         .route("/api/team/approve", post(pipeline::team_approve::<A>))
         .route(
