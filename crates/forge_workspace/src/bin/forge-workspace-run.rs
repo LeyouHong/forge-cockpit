@@ -153,21 +153,46 @@ fn member_sop(m: &TeamMember) -> String {
     }
 }
 
-/// The member that works a request in `status` — stable pick (by request id)
-/// when several members share the stage, so retries reuse the same member.
-fn member_for(team: &TeamConfig, status: RequestStatus, req_id: &str) -> Option<TeamMember> {
-    let stage = match status {
+fn stage_for(status: RequestStatus) -> Stage {
+    match status {
         RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
         RequestStatus::Review => Stage::Review,
         RequestStatus::Qa => Stage::Qa,
         _ => Stage::Implement,
-    };
-    let pool: Vec<&TeamMember> = team.members.iter().filter(|m| m.stage == stage).collect();
-    if pool.is_empty() {
-        return None;
     }
-    let n: usize = req_id.bytes().map(|b| b as usize).sum();
-    Some(pool[n % pool.len()].clone())
+}
+
+/// The built-in SOP for the work a stage does (used for gap coverage).
+fn stage_sop(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Plan => COORDINATOR_SOP,
+        Stage::Implement => ENGINEER_SOP,
+        Stage::Review => REVIEWER_SOP,
+        Stage::Qa => QA_SOP,
+    }
+}
+
+/// The member that works a request in `status` — stable pick (by request id)
+/// when several members share the stage, so retries reuse the same member.
+///
+/// When NO member handles the stage, the Lead covers the gap (mirrors the
+/// reference forge's Lead SOP): coordinator if present, else any plan-stage
+/// member, else the first member. The second tuple field is true in that case
+/// so the spawn swaps in the stage's SOP instead of the member's own.
+fn member_for(team: &TeamConfig, status: RequestStatus, req_id: &str) -> Option<(TeamMember, bool)> {
+    let stage = stage_for(status);
+    let pool: Vec<&TeamMember> = team.members.iter().filter(|m| m.stage == stage).collect();
+    if !pool.is_empty() {
+        let n: usize = req_id.bytes().map(|b| b as usize).sum();
+        return Some((pool[n % pool.len()].clone(), false));
+    }
+    let lead = team
+        .members
+        .iter()
+        .find(|m| m.id == "coordinator")
+        .or_else(|| team.members.iter().find(|m| m.stage == Stage::Plan))
+        .or_else(|| team.members.first())?;
+    Some((lead.clone(), true))
 }
 
 fn main() {
@@ -303,13 +328,20 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
-                let Some(member) = member_for(&cfg.team, req.status, &req.id) else {
-                    println!("  ! {} [{:?}] no team member handles this stage — skipping", req.id, req.status);
+                let Some((member, covering)) = member_for(&cfg.team, req.status, &req.id) else {
+                    println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
                     continue;
                 };
-                println!("  → {} [{:?}] attempt {attempts} → {}{}", req.id, req.status, member.id, if cfg.dry_run { " (dry-run)" } else { "" });
+                println!(
+                    "  → {} [{:?}] attempt {attempts} → {}{}{}",
+                    req.id,
+                    req.status,
+                    member.id,
+                    if covering { " (covering gap — no member for this stage)" } else { "" },
+                    if cfg.dry_run { " (dry-run)" } else { "" }
+                );
                 st.running.insert(req.id.clone());
-                spawn_agent(cfg.clone(), state.clone(), req.clone(), member);
+                spawn_agent(cfg.clone(), state.clone(), req.clone(), member, covering);
             }
         }
 
@@ -474,12 +506,24 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
 /// The subprocess is bounded by `cfg.agent_timeout`: if it runs longer it is
 /// killed (recovery from a hung/runaway agent) so the concurrency slot is freed
 /// and the request is retried on the next poll instead of wedging the pipeline.
-fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, member: TeamMember) {
+fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, member: TeamMember, covering: bool) {
     std::thread::spawn(move || {
         let mut timed_out = false;
         if !cfg.dry_run {
             let topo = topology(&cfg, &member.id);
-            let sop = member_sop(&member);
+            // Gap coverage: the team has no member for this request's stage, so
+            // the Lead does the stage's work itself — stage SOP, not its own.
+            let sop = if covering {
+                format!(
+                    "## Gap coverage\nYour team has NO dedicated member for this request's current \
+                     stage — as the Lead you are covering it yourself for this request. Do the \
+                     stage's work per the SOP below and submit through the normal tools; do not \
+                     wait for or delegate to a member that doesn't exist.\n\n{}",
+                    stage_sop(stage_for(req.status))
+                )
+            } else {
+                member_sop(&member)
+            };
             let prompt = format!(
                 "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
