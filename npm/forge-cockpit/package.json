@@ -1,7 +1,7 @@
 {
   "name": "forge-cockpit",
-  "version": "0.1.3",
-  "description": "An AI coding agent with a browser cockpit (dashboards + one-click integrations). Bring your own model API key. A fork of Forge (Apache-2.0).",
+  "version": "0.2.0",
+  "description": "An AI coding agent with a browser cockpit: chat, platform dashboards, visual pipelines, a multi-agent team, schedules, usage analytics, and AI-generated mini-apps. Bring your own model API key. A fork of Forge (Apache-2.0).",
   "keywords": [
     "ai",
     "agent",
@@ -9,7 +9,11 @@
     "cli",
     "mcp",
     "dashboard",
-    "forge"
+    "forge",
+    "pipeline",
+    "multi-agent",
+    "orchestration",
+    "cron"
   ],
   "homepage": "https://github.com/LeyouHong/forge-cockpit#readme",
   "repository": {

@@ -600,6 +600,8 @@
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
       <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="sched-open" title="Schedules — timed automation (pipeline or prompt on a trigger)">⏰</button>
+      <button class="icon-btn" id="usage-open" title="Usage — token and cost of your forge agents">📊</button>
+      <button class="icon-btn" id="craft-open" title="Crafts — AI-generated project mini-apps">🧩</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -766,6 +768,48 @@
   </div>
 
   <!-- Team (resident agent team) page -->
+  <div class="kanban-overlay" id="craft-overlay">
+    <div class="kanban-head">
+      <span><b>🧩 Crafts</b> <span class="drawer-hint">AI-generated mini-apps that live in your project (.forge/crafts)</span></span>
+      <div style="flex:1"></div>
+      <label class="sl" style="margin-right:4px">Project</label>
+      <select id="craft-project" class="repo-select" style="border:1px solid var(--border);min-width:140px"></select>
+      <button class="btn btn-primary btn-sm" id="craft-new">+ Craft</button>
+      <button class="btn btn-ghost btn-sm" id="craft-refresh">Refresh</button>
+      <button class="icon-btn" id="craft-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section" style="display:flex;gap:12px;height:calc(100vh - 120px)">
+        <div id="craft-list" style="width:220px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:4px"></div>
+        <div style="flex:1;border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative">
+          <div id="craft-toolbar" style="display:none;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);align-items:center">
+            <b id="craft-cur-name" style="font-size:13px"></b>
+            <div style="flex:1"></div>
+            <button class="btn btn-sm" id="craft-refine">⚙ Refine</button>
+            <button class="btn btn-sm" id="craft-del" style="color:#e5484d">Delete</button>
+          </div>
+          <iframe id="craft-frame" sandbox="allow-scripts" style="width:100%;height:100%;border:0;background:#fff"></iframe>
+          <div id="craft-empty" class="sl" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">select a craft, or "+ Craft" to make one</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="kanban-overlay" id="usage-overlay">
+    <div class="kanban-head">
+      <span><b>📊 Usage</b> <span class="drawer-hint">token &amp; cost of your forge agents (chat / team / pipeline)</span></span>
+      <div style="flex:1"></div>
+      <span id="usage-range" style="display:flex;gap:4px"></span>
+      <button class="btn btn-ghost btn-sm" id="usage-refresh">Refresh</button>
+      <button class="icon-btn" id="usage-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div id="usage-body" style="max-width:1100px"></div>
+      </section>
+    </div>
+  </div>
+
   <div class="kanban-overlay" id="sched-overlay">
     <div class="kanban-head">
       <span><b>⏰ Schedules</b> <span class="drawer-hint">timed automation — a trigger fires a pipeline or a prompt</span></span>
@@ -2708,6 +2752,128 @@
       PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
     }
 
+    /* ---------- crafts (project mini-apps) ---------- */
+    const CRAFT = { project: null, cur: null, poll: null };
+    $('craft-open').onclick = () => { $('craft-overlay').classList.add('open'); craftLoadProjects(); };
+    $('craft-close').onclick = () => { if (CRAFT.poll) clearInterval(CRAFT.poll); $('craft-overlay').classList.remove('open'); };
+    $('craft-refresh').onclick = () => craftLoadList();
+    async function craftLoadProjects() {
+      const d = await api('/api/pipeline/projects').then((r) => r.json()).catch(() => ({ projects: [] }));
+      const sel = $('craft-project'); sel.innerHTML = '';
+      for (const p of d.projects || []) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name; sel.appendChild(o); }
+      if ((d.projects || []).length) { CRAFT.project = CRAFT.project || d.projects[0].name; sel.value = CRAFT.project; craftLoadList(); }
+      else { $('craft-list').innerHTML = '<span class="sl">no projects — add one on the Team page</span>'; }
+    }
+    $('craft-project').onchange = () => { CRAFT.project = $('craft-project').value; CRAFT.cur = null; craftLoadList(); };
+    async function craftLoadList() {
+      if (!CRAFT.project) return;
+      const d = await api('/api/crafts?project=' + encodeURIComponent(CRAFT.project)).then((r) => r.json()).catch(() => ({ crafts: [], building: [] }));
+      const box = $('craft-list'); box.innerHTML = '';
+      const building = new Set(d.building || []);
+      if (!(d.crafts || []).length && !building.size) box.innerHTML = '<span class="sl">no crafts yet — "+ Craft"</span>';
+      for (const b of building) if (!(d.crafts || []).includes(b)) {
+        const el = document.createElement('div'); el.className = 'sl'; el.textContent = '⏳ ' + b + ' (building…)'; box.appendChild(el);
+      }
+      for (const name of d.crafts || []) {
+        const el = document.createElement('div'); el.style.cssText = 'cursor:pointer;padding:5px 7px;border-radius:6px;font-size:13px' + (name === CRAFT.cur ? ';background:var(--bg-2,rgba(94,106,210,.12))' : '');
+        el.textContent = (building.has(name) ? '⏳ ' : '🧩 ') + name;
+        el.onclick = () => craftOpen(name);
+        box.appendChild(el);
+      }
+      // poll while anything is building
+      if (building.size) { if (!CRAFT.poll) CRAFT.poll = setInterval(craftLoadList, 3000); }
+      else if (CRAFT.poll) { clearInterval(CRAFT.poll); CRAFT.poll = null; if (CRAFT.cur) craftOpen(CRAFT.cur); }
+    }
+    async function craftOpen(name) {
+      CRAFT.cur = name; craftLoadList();
+      const d = await api('/api/craft?project=' + encodeURIComponent(CRAFT.project) + '&name=' + encodeURIComponent(name)).then((r) => r.json()).catch(() => null);
+      $('craft-empty').style.display = 'none';
+      $('craft-toolbar').style.display = 'flex';
+      $('craft-cur-name').textContent = '🧩 ' + name;
+      $('craft-frame').srcdoc = (d && d.html) || '<p style="font-family:sans-serif;padding:20px">craft not ready</p>';
+    }
+    $('craft-new').onclick = async () => {
+      if (!CRAFT.project) return;
+      const name = prompt('Craft name (short, e.g. "endpoints"):'); if (!name) return;
+      const desc = prompt('Describe what this mini-app should do:'); if (!desc) return;
+      const r = await api('/api/craft/generate', plBody({ b: { project: CRAFT.project, name: name.trim(), prompt: desc } }));
+      if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || 'failed'); return; }
+      CRAFT.cur = name.trim(); craftLoadList();
+    };
+    $('craft-refine').onclick = async () => {
+      if (!CRAFT.cur) return;
+      const desc = prompt('What should change?'); if (!desc) return;
+      await api('/api/craft/generate', plBody({ b: { project: CRAFT.project, name: CRAFT.cur, prompt: desc, refine: true } }));
+      craftLoadList();
+    };
+    $('craft-del').onclick = async () => {
+      if (!CRAFT.cur || !confirm('Delete craft "' + CRAFT.cur + '"?')) return;
+      await api('/api/craft/delete', plBody({ b: { project: CRAFT.project, name: CRAFT.cur } }));
+      CRAFT.cur = null; $('craft-toolbar').style.display = 'none'; $('craft-frame').srcdoc = ''; $('craft-empty').style.display = ''; craftLoadList();
+    };
+
+    /* ---------- usage analytics ---------- */
+    const USAGE = { days: 30 };
+    $('usage-open').onclick = () => { $('usage-overlay').classList.add('open'); usageLoad(); };
+    $('usage-close').onclick = () => $('usage-overlay').classList.remove('open');
+    $('usage-refresh').onclick = () => usageLoad();
+    function fmtNum(n) { n = +n || 0; if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return '' + n; }
+    function fmtUsd(n) { return '$' + (+n || 0).toFixed(2); }
+    async function usageLoad() {
+      const rb = $('usage-range'); rb.innerHTML = '';
+      for (const [d, lbl] of [[7, '7d'], [30, '30d'], [90, '90d'], [0, 'All']]) {
+        const b = document.createElement('button'); b.className = 'btn btn-sm' + (USAGE.days === d ? ' btn-primary' : ''); b.textContent = lbl;
+        b.onclick = () => { USAGE.days = d; usageLoad(); }; rb.appendChild(b);
+      }
+      const body = $('usage-body'); body.innerHTML = '<span class="sl">scanning sessions…</span>';
+      const d = await api('/api/usage?days=' + USAGE.days).then((r) => r.json()).catch(() => null);
+      if (!d) { body.innerHTML = '<span class="err">failed to load usage</span>'; return; }
+      const t = d.total || {};
+      const totalTok = (t.input || 0) + (t.output || 0) + (t.cache_read || 0) + (t.cache_write || 0);
+      const cacheHit = (t.input + t.cache_read) ? (t.cache_read / (t.input + t.cache_read) * 100) : 0;
+      const dailyAvg = d.days_with_activity ? t.cost / d.days_with_activity : 0;
+      const card = (label, big, sub, tip) => '<div title="' + (tip || '') + '" style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
+        '<div class="sl">' + label + '</div><div style="font-size:22px;font-weight:700;margin:2px 0">' + big + '</div><div class="sl">' + (sub || '') + '</div></div>';
+      let html = '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">' +
+        'ℹ️ Token spend by your <b>forge agents</b> (chat / team / pipeline), priced at your provider\'s per-token rate (e.g. DeepSeek). Cache reads are near-free and shown separately.</div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+        card('Total cost', fmtUsd(t.cost), (t.messages || 0) + ' messages', 'Input + output + cache-write tokens at your provider rate (cache reads shown separately).') +
+        card('+ cache reads', fmtUsd(t.cache_cost), fmtNum(t.cache_read) + ' cached tokens', 'Cache-read tokens are billed at a large discount — kept out of the headline.') +
+        card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out') +
+        card('Daily avg', fmtUsd(dailyAvg), d.days_with_activity + ' active days · ' + cacheHit.toFixed(0) + '% cache hit') +
+        '</div>';
+
+      // cost trend (inline SVG)
+      const trend = d.trend || [];
+      if (trend.length) {
+        const max = Math.max(...trend.map((x) => x.cost), 0.0001);
+        const W = 1040, Hh = 120, pad = 4;
+        const pts = trend.map((x, i) => {
+          const px = trend.length > 1 ? pad + i * (W - 2 * pad) / (trend.length - 1) : W / 2;
+          const py = Hh - pad - (x.cost / max) * (Hh - 2 * pad);
+          return px.toFixed(1) + ',' + py.toFixed(1);
+        }).join(' ');
+        html += '<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
+          '<div class="sl" style="margin-bottom:6px">Cost per day — peak ' + fmtUsd(max) + '</div>' +
+          '<svg viewBox="0 0 ' + W + ' ' + Hh + '" style="width:100%;height:120px"><polyline points="' + pts + '" fill="none" stroke="var(--accent,#5e6ad2)" stroke-width="2"/></svg>' +
+          '<div class="sl">' + (trend[0] || {}).day + ' → ' + (trend[trend.length - 1] || {}).day + '</div></div>';
+      }
+
+      // by model + by project side by side
+      const bar = (rows, key, unit) => {
+        if (!rows.length) return '<span class="sl">(none)</span>';
+        const max = Math.max(...rows.map((r) => r.cost), 0.0001);
+        return rows.map((r) => '<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:12px"><span>' + escapeHtml(r[key] || '?') + '</span><span>' + fmtUsd(r.cost) + '</span></div>' +
+          '<div style="height:6px;background:var(--bg-2,rgba(0,0,0,.06));border-radius:3px;overflow:hidden"><div style="height:100%;width:' + (r.cost / max * 100).toFixed(1) + '%;background:var(--accent,#5e6ad2)"></div></div></div>').join('');
+      };
+      html += '<div style="display:flex;gap:14px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:300px;border:1px solid var(--border);border-radius:10px;padding:12px 14px"><div class="sl" style="margin-bottom:8px">By model</div>' + bar(d.by_model || [], 'model') + '</div>' +
+        '<div style="flex:1;min-width:300px;border:1px solid var(--border);border-radius:10px;padding:12px 14px"><div class="sl" style="margin-bottom:8px">By project (top 20)</div>' + bar(d.by_project || [], 'project') + '</div>' +
+        '</div>';
+      if (!totalTok) html = '<span class="sl">no forge agent activity in this range — run a chat, team, or pipeline first.</span>';
+      body.innerHTML = html;
+    }
+
     /* ---------- schedules (timed automation) ---------- */
     const SCH = { list: [], poll: null };
     $('sched-open').onclick = () => { $('sched-overlay').classList.add('open'); schedLoad(); SCH.poll = setInterval(() => { if (!$('sched-overlay').classList.contains('open')) { clearInterval(SCH.poll); return; } schedLoad(); }, 5000); };
@@ -2739,7 +2905,7 @@
       const el = document.createElement('div'); el.className = 'pl-run';
       const rh = document.createElement('div'); rh.className = 'rh';
       rh.innerHTML = '<span style="color:' + colors[s.state] + '">●</span> <b>' + escapeHtml(s.name) + '</b>'
-        + ' <span class="sl">' + (s.body_kind === 'pipeline' ? '🧬 ' + escapeHtml(s.pipeline) : '💬 prompt') + ' · ' + escapeHtml(schedTrigDesc(s)) + '</span>'
+        + ' <span class="sl">' + (s.body_kind === 'pipeline' ? '🧬 ' + escapeHtml(s.pipeline) : '💬 prompt') + ' · ' + escapeHtml(schedTrigDesc(s)) + (s.action_kind && s.action_kind !== 'none' ? ' · -> ' + escapeHtml(s.action_kind) : '') + '</span>'
         + '<span class="sl" style="margin-left:auto">' + (s.next_run_at && s.enabled ? 'next ' + new Date(s.next_run_at).toLocaleString() : '') + '</span>';
       const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:6px;margin-top:5px;align-items:center';
       const btn = (label, fn, title) => { const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = label; if (title) b.title = title; b.onclick = fn; bar.appendChild(b); };
@@ -2755,8 +2921,9 @@
         if (!(d.runs || []).length) runsBox.innerHTML = '<span class="sl">(no runs yet)</span>';
         for (const r of d.runs || []) {
           const row = document.createElement('div'); row.style.cssText = 'font-size:11px;margin-bottom:4px';
+          const acs = r.action_status ? ' · action: ' + escapeHtml(r.action_status) : '';
           row.innerHTML = '<b style="color:' + (r.status === 'done' ? '#2e9e44' : r.status === 'failed' ? '#e5484d' : '#f59e0b') + '">' + r.status + '</b> · '
-            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by);
+            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by) + acs;
           if (r.output_tail) { const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.04));padding:5px;border-radius:6px;margin:3px 0 0'; pre.textContent = r.output_tail; row.appendChild(pre); }
           runsBox.appendChild(row);
         }
@@ -2828,6 +2995,28 @@
       const atIn = document.createElement('input'); atIn.type = 'datetime-local'; if (s && s.at) atIn.value = s.at.slice(0, 16);
       row('once at', atIn);
 
+      const ac = (s && s.action_config) || {};
+      const actSel = document.createElement('select');
+      for (const a of ['none', 'webhook', 'email']) { const o = document.createElement('option'); o.value = a; o.textContent = { none: 'none (body self-handles output)', webhook: 'webhook / Slack', email: 'email (SMTP)' }[a]; if (s && (s.action_kind || 'none') === a) o.selected = true; actSel.appendChild(o); }
+      actSel.title = 'What to do with the body output when it finishes (done + non-empty). none = nothing.';
+      row('action', actSel);
+      const acField = (label, key, ph, type) => { const i = document.createElement('input'); if (type) i.type = type; i.value = ac[key] || ''; i.placeholder = ph || ''; i.dataset.ak = key; i.className = 'sched-ac'; row(label, i); return i; };
+      const whUrl = acField('webhook url', 'url', 'https://hooks.slack.com/...');
+      const whPre = acField('webhook prefix', 'prefix', 'optional text prepended');
+      const emTo = acField('email to', 'to', 'alice@example.com');
+      const emSub = acField('email subject', 'subject', 'default: <name> - {date}');
+      const emHost = acField('smtp host', 'smtp_host', 'smtp.gmail.com');
+      const emPort = acField('smtp port', 'smtp_port', '587');
+      const emUser = acField('smtp user', 'smtp_user', 'forge@example.com');
+      const emPass = acField('smtp password', 'smtp_password', 'app password', 'password');
+      const emFrom = acField('smtp from', 'smtp_from', 'Forge <forge@example.com>');
+      const acSyncVis = () => {
+        const k = actSel.value;
+        for (const el of [whUrl, whPre]) el.parentElement.style.display = k === 'webhook' ? '' : 'none';
+        for (const el of [emTo, emSub, emHost, emPort, emUser, emPass, emFrom]) el.parentElement.style.display = k === 'email' ? '' : 'none';
+      };
+      actSel.onchange = acSyncVis; acSyncVis();
+
       const syncVis = () => {
         pipeWrap.parentElement.style.display = kindSel.value === 'pipeline' ? '' : 'none';
         promptTa.parentElement.style.display = kindSel.value === 'prompt' ? '' : 'none';
@@ -2846,6 +3035,8 @@
           dir: dirIn.value.trim(), prompt: promptTa.value, agent: agentIn.value.trim(),
           trigger: trigSel.value, every_minutes: parseInt(everyIn.value, 10) || 0,
           cron: cronIn.value.trim(), at: atIn.value,
+          action_kind: actSel.value,
+          action_config: (() => { const o = {}; for (const el of $('sched-m-body').querySelectorAll('.sched-ac')) if (el.value.trim()) o[el.dataset.ak] = el.value; return o; })(),
         };
         const r = await api(s ? '/api/schedules/update' : '/api/schedules', plBody({ b: body, m: s ? 'POST' : 'POST' }));
         const d = await r.json().catch(() => ({}));

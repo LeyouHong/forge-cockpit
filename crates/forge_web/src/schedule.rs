@@ -69,6 +69,14 @@ pub struct Schedule {
     /// RFC3339 local time for `once`.
     #[serde(default)]
     pub at: String,
+    /// What to do with the body's output: "none" | "webhook" | "email".
+    /// Fires only when the body ends `done` with non-empty output.
+    #[serde(default)]
+    pub action_kind: String,
+    /// Action params — webhook: url, prefix; email: to, subject, smtp_host,
+    /// smtp_port, smtp_user, smtp_password, smtp_from.
+    #[serde(default)]
+    pub action_config: BTreeMap<String, String>,
     #[serde(default)]
     pub next_run_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -88,6 +96,9 @@ pub struct ScheduleRun {
     /// Tail of the body's output (for the runs view).
     #[serde(default)]
     pub output_tail: String,
+    /// "" (no action) | "done" | "failed: <why>" | "skipped"
+    #[serde(default)]
+    pub action_status: String,
 }
 
 fn load_schedules() -> Vec<Schedule> {
@@ -183,7 +194,84 @@ fn validate(s: &Schedule) -> Result<(), String> {
         "manual" => {}
         other => return Err(format!("unknown trigger `{other}`")),
     }
+    let need = |k: &str| -> Result<(), String> {
+        if s.action_config.get(k).map(|v| v.trim().is_empty()).unwrap_or(true) {
+            Err(format!("action needs `{k}`"))
+        } else {
+            Ok(())
+        }
+    };
+    match s.action_kind.as_str() {
+        "" | "none" => {}
+        "webhook" => need("url")?,
+        "email" => {
+            for k in ["to", "smtp_host", "smtp_from"] {
+                need(k)?;
+            }
+        }
+        other => return Err(format!("unknown action `{other}`")),
+    }
     Ok(())
+}
+
+/// Deliver the body output per the schedule's action. Returns "done"/"failed…".
+fn run_action(s: &Schedule, output: &str) -> String {
+    let cfg = &s.action_config;
+    let get = |k: &str| cfg.get(k).cloned().unwrap_or_default();
+    let date = Local::now().format("%Y-%m-%d").to_string();
+    match s.action_kind.as_str() {
+        "webhook" => {
+            let payload = serde_json::json!({
+                "schedule": s.name,
+                "fired_at": Utc::now().to_rfc3339(),
+                // Slack-compatible: incoming webhooks render `text` directly.
+                "text": format!("{}{}", get("prefix"), output),
+            });
+            match reqwest::blocking::Client::new()
+                .post(get("url"))
+                .json(&payload)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+            {
+                Ok(r) if r.status().is_success() => "done".into(),
+                Ok(r) => format!("failed: webhook HTTP {}", r.status()),
+                Err(e) => format!("failed: {e}"),
+            }
+        }
+        "email" => {
+            use lettre::transport::smtp::authentication::Credentials;
+            use lettre::{Message, SmtpTransport, Transport};
+            let subject = if get("subject").is_empty() {
+                format!("{} — {date}", s.name)
+            } else {
+                get("subject").replace("{date}", &date).replace("{name}", &s.name)
+            };
+            let build = || -> Result<(Message, SmtpTransport), String> {
+                let msg = Message::builder()
+                    .from(get("smtp_from").parse().map_err(|e| format!("bad smtp_from: {e}"))?)
+                    .to(get("to").parse().map_err(|e| format!("bad to: {e}"))?)
+                    .subject(subject.clone())
+                    .body(output.to_string())
+                    .map_err(|e| format!("build mail: {e}"))?;
+                let port: u16 = get("smtp_port").parse().unwrap_or(587);
+                let mut t = SmtpTransport::starttls_relay(&get("smtp_host"))
+                    .map_err(|e| format!("smtp relay: {e}"))?
+                    .port(port);
+                if !get("smtp_user").is_empty() {
+                    t = t.credentials(Credentials::new(get("smtp_user"), get("smtp_password")));
+                }
+                Ok((msg, t.build()))
+            };
+            match build() {
+                Ok((msg, transport)) => match transport.send(&msg) {
+                    Ok(_) => "done".into(),
+                    Err(e) => format!("failed: smtp send: {e}"),
+                },
+                Err(e) => format!("failed: {e}"),
+            }
+        }
+        _ => String::new(),
+    }
 }
 
 fn shellexpand(p: &str) -> String {
@@ -221,6 +309,7 @@ fn fire(s: Schedule, fired_by: &str) {
             status: "started".into(),
             fired_by: fired_by.into(),
             output_tail: String::new(),
+            action_status: String::new(),
         });
         save_runs(&runs);
     }
@@ -261,6 +350,15 @@ fn fire(s: Schedule, fired_by: &str) {
         };
         let _g = LOCK.lock().unwrap();
         let mut runs = load_runs();
+        // Action layer: only on success with non-empty output (reference-forge
+        // semantics); status recorded independently of the body status.
+        let action_status = if s.action_kind.is_empty() || s.action_kind == "none" {
+            String::new()
+        } else if !status || cleaned.trim().is_empty() {
+            "skipped".into()
+        } else {
+            run_action(&s, cleaned.trim())
+        };
         if let Some(r) = runs
             .iter_mut()
             .rev()
@@ -269,6 +367,7 @@ fn fire(s: Schedule, fired_by: &str) {
             r.finished_at = Some(Utc::now());
             r.status = if status { "done".into() } else { "failed".into() };
             r.output_tail = tail(&cleaned, 3000);
+            r.action_status = action_status;
         }
         save_runs(&runs);
     });
