@@ -535,6 +535,9 @@
     .tm-canvas { position: relative; height: 340px; border: 1px solid var(--border); border-radius: 10px; overflow: auto;
       background: radial-gradient(circle, rgba(127,127,127,.16) 1px, transparent 1px) 0 0 / 18px 18px; }
     .tm-edges { position: absolute; inset: 0; width: 1400px; height: 340px; pointer-events: none; overflow: visible; }
+    .tm-edges path.hit { pointer-events: stroke; cursor: pointer; }
+    .tm-port { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; border-radius: 50%; background: var(--accent, #5e6ad2); border: 2px solid var(--bg, #fff); cursor: crosshair; z-index: 3; }
+    .tm-port:hover { transform: translateY(-50%) scale(1.25); }
     .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
     .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
     .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
@@ -3022,7 +3025,45 @@
       sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
       af.appendChild(sel); el.appendChild(af);
       tmMakeDraggable(el, m.id);
+      const port = document.createElement('div'); port.className = 'tm-port';
+      port.title = 'drag to another card to connect (that card will depend on this one)';
+      port.onmousedown = (e) => tmStartConnect(e, m.id, el);
+      el.appendChild(port);
       return el;
+    }
+    /* drag-to-connect: from a card's ◉ port to another card = target depends_on source */
+    function tmStartConnect(e, sourceId, sourceEl) {
+      e.preventDefault(); e.stopPropagation();
+      const canvas = $('tm-canvas'); const svg = $('tm-edges');
+      const temp = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      temp.setAttribute('stroke-dasharray', '4 3'); svg.appendChild(temp);
+      const local = (ev) => {
+        const r = canvas.getBoundingClientRect();
+        return { x: ev.clientX - r.left + canvas.scrollLeft, y: ev.clientY - r.top + canvas.scrollTop };
+      };
+      const sx = sourceEl.offsetLeft + sourceEl.offsetWidth, sy = sourceEl.offsetTop + sourceEl.offsetHeight / 2;
+      const move = (ev) => {
+        const pt = local(ev); const mx = (sx + pt.x) / 2;
+        temp.setAttribute('d', 'M' + sx + ',' + sy + ' C' + mx + ',' + sy + ' ' + mx + ',' + pt.y + ' ' + pt.x + ',' + pt.y);
+      };
+      const up = async (ev) => {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+        temp.remove();
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        const card = hit && hit.closest ? hit.closest('.tm-card') : null;
+        if (!card) return;
+        const targetId = card.id.replace(/^tm-/, '');
+        if (targetId === sourceId) return;
+        if (targetId === 'done') { $('tm-status').textContent = 'Done is automatic — qa-stage members already flow into it'; return; }
+        const target = (TEAM.cfg.members || []).find((x) => x.id === targetId);
+        if (!target) return;
+        target.depends_on = target.depends_on || [];
+        if (target.depends_on.includes(sourceId)) return;
+        target.depends_on.push(sourceId);
+        if (!(await tmSaveConfig())) { target.depends_on = target.depends_on.filter((d) => d !== sourceId); return; }
+        loadTeam();
+      };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     }
     function tmDoneCard(i, reqs) {
       const pos = tmPos('done', i);
@@ -3243,8 +3284,25 @@
         path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by, cls);
       };
       const members = (TEAM.cfg && TEAM.cfg.members) || [];
-      // solid edges = depends_on (dep → member), plus every qa member → done
-      for (const m of members) for (const dep of (m.depends_on || [])) flow(dep, m.id);
+      // solid edges = depends_on (dep → member), plus every qa member → done.
+      // Each depends_on edge gets an invisible wide twin that deletes on click.
+      const clickable = (fromId, toId) => {
+        const a = dims(fromId), b = dims(toId); if (!a || !b) return;
+        const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
+        const h = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        h.setAttribute('d', 'M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
+        h.setAttribute('class', 'hit'); h.setAttribute('stroke', 'transparent'); h.setAttribute('stroke-width', '12'); h.setAttribute('fill', 'none');
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        t.textContent = fromId + ' → ' + toId + ' (click to remove)'; h.appendChild(t);
+        h.onclick = async () => {
+          if (!confirm('Remove connection ' + fromId + ' → ' + toId + '?')) return;
+          const m = (TEAM.cfg.members || []).find((x) => x.id === toId); if (!m) return;
+          m.depends_on = (m.depends_on || []).filter((d) => d !== fromId);
+          if (await tmSaveConfig()) loadTeam();
+        };
+        svg.appendChild(h);
+      };
+      for (const m of members) for (const dep of (m.depends_on || [])) { flow(dep, m.id); clickable(dep, m.id); }
       for (const m of members) if (m.stage === 'qa') flow(m.id, 'done');
       // rework back-edges (dashed): review/qa members hand work back to implementers
       const impl = members.filter((m) => m.stage === 'implement');
