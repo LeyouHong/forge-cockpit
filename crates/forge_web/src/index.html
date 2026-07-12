@@ -2739,7 +2739,7 @@
       const el = document.createElement('div'); el.className = 'pl-run';
       const rh = document.createElement('div'); rh.className = 'rh';
       rh.innerHTML = '<span style="color:' + colors[s.state] + '">●</span> <b>' + escapeHtml(s.name) + '</b>'
-        + ' <span class="sl">' + (s.body_kind === 'pipeline' ? '🧬 ' + escapeHtml(s.pipeline) : '💬 prompt') + ' · ' + escapeHtml(schedTrigDesc(s)) + '</span>'
+        + ' <span class="sl">' + (s.body_kind === 'pipeline' ? '🧬 ' + escapeHtml(s.pipeline) : '💬 prompt') + ' · ' + escapeHtml(schedTrigDesc(s)) + (s.action_kind && s.action_kind !== 'none' ? ' · -> ' + escapeHtml(s.action_kind) : '') + '</span>'
         + '<span class="sl" style="margin-left:auto">' + (s.next_run_at && s.enabled ? 'next ' + new Date(s.next_run_at).toLocaleString() : '') + '</span>';
       const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:6px;margin-top:5px;align-items:center';
       const btn = (label, fn, title) => { const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = label; if (title) b.title = title; b.onclick = fn; bar.appendChild(b); };
@@ -2755,8 +2755,9 @@
         if (!(d.runs || []).length) runsBox.innerHTML = '<span class="sl">(no runs yet)</span>';
         for (const r of d.runs || []) {
           const row = document.createElement('div'); row.style.cssText = 'font-size:11px;margin-bottom:4px';
+          const acs = r.action_status ? ' · action: ' + escapeHtml(r.action_status) : '';
           row.innerHTML = '<b style="color:' + (r.status === 'done' ? '#2e9e44' : r.status === 'failed' ? '#e5484d' : '#f59e0b') + '">' + r.status + '</b> · '
-            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by);
+            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by) + acs;
           if (r.output_tail) { const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.04));padding:5px;border-radius:6px;margin:3px 0 0'; pre.textContent = r.output_tail; row.appendChild(pre); }
           runsBox.appendChild(row);
         }
@@ -2828,6 +2829,28 @@
       const atIn = document.createElement('input'); atIn.type = 'datetime-local'; if (s && s.at) atIn.value = s.at.slice(0, 16);
       row('once at', atIn);
 
+      const ac = (s && s.action_config) || {};
+      const actSel = document.createElement('select');
+      for (const a of ['none', 'webhook', 'email']) { const o = document.createElement('option'); o.value = a; o.textContent = { none: 'none (body self-handles output)', webhook: 'webhook / Slack', email: 'email (SMTP)' }[a]; if (s && (s.action_kind || 'none') === a) o.selected = true; actSel.appendChild(o); }
+      actSel.title = 'What to do with the body output when it finishes (done + non-empty). none = nothing.';
+      row('action', actSel);
+      const acField = (label, key, ph, type) => { const i = document.createElement('input'); if (type) i.type = type; i.value = ac[key] || ''; i.placeholder = ph || ''; i.dataset.ak = key; i.className = 'sched-ac'; row(label, i); return i; };
+      const whUrl = acField('webhook url', 'url', 'https://hooks.slack.com/...');
+      const whPre = acField('webhook prefix', 'prefix', 'optional text prepended');
+      const emTo = acField('email to', 'to', 'alice@example.com');
+      const emSub = acField('email subject', 'subject', 'default: <name> - {date}');
+      const emHost = acField('smtp host', 'smtp_host', 'smtp.gmail.com');
+      const emPort = acField('smtp port', 'smtp_port', '587');
+      const emUser = acField('smtp user', 'smtp_user', 'forge@example.com');
+      const emPass = acField('smtp password', 'smtp_password', 'app password', 'password');
+      const emFrom = acField('smtp from', 'smtp_from', 'Forge <forge@example.com>');
+      const acSyncVis = () => {
+        const k = actSel.value;
+        for (const el of [whUrl, whPre]) el.parentElement.style.display = k === 'webhook' ? '' : 'none';
+        for (const el of [emTo, emSub, emHost, emPort, emUser, emPass, emFrom]) el.parentElement.style.display = k === 'email' ? '' : 'none';
+      };
+      actSel.onchange = acSyncVis; acSyncVis();
+
       const syncVis = () => {
         pipeWrap.parentElement.style.display = kindSel.value === 'pipeline' ? '' : 'none';
         promptTa.parentElement.style.display = kindSel.value === 'prompt' ? '' : 'none';
@@ -2846,6 +2869,8 @@
           dir: dirIn.value.trim(), prompt: promptTa.value, agent: agentIn.value.trim(),
           trigger: trigSel.value, every_minutes: parseInt(everyIn.value, 10) || 0,
           cron: cronIn.value.trim(), at: atIn.value,
+          action_kind: actSel.value,
+          action_config: (() => { const o = {}; for (const el of $('sched-m-body').querySelectorAll('.sched-ac')) if (el.value.trim()) o[el.dataset.ak] = el.value; return o; })(),
         };
         const r = await api(s ? '/api/schedules/update' : '/api/schedules', plBody({ b: body, m: s ? 'POST' : 'POST' }));
         const d = await r.json().catch(() => ({}));
