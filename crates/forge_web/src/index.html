@@ -2697,13 +2697,18 @@
     const SCH = { list: [], poll: null };
     $('sched-open').onclick = () => { $('sched-overlay').classList.add('open'); schedLoad(); SCH.poll = setInterval(() => { if (!$('sched-overlay').classList.contains('open')) { clearInterval(SCH.poll); return; } schedLoad(); }, 5000); };
     $('sched-close').onclick = () => { clearInterval(SCH.poll); $('sched-overlay').classList.remove('open'); };
-    $('sched-refresh').onclick = () => schedLoad();
+    $('sched-refresh').onclick = () => schedLoad(true);
     $('sched-m-close').onclick = () => $('sched-modal').classList.remove('open');
     $('sched-new').onclick = () => schedOpenModal(null);
 
-    async function schedLoad() {
+    async function schedLoad(force) {
       const d = await api('/api/schedules').then((r) => r.json()).catch(() => ({ schedules: [] }));
       SCH.list = d.schedules || [];
+      // Don't rebuild (and collapse expanded histories) when nothing changed.
+      const sig = JSON.stringify(SCH.list);
+      if (!force && sig === SCH._sig) return;
+      SCH._sig = sig;
+      SCH.expanded = SCH.expanded || new Set();
       const box = $('sched-list'); box.innerHTML = '';
       $('sched-empty').textContent = SCH.list.length ? '' : 'no schedules yet — "+ New schedule" fires a pipeline or a prompt on a timer.';
       for (const s of SCH.list) box.appendChild(schedRow(s));
@@ -2723,29 +2728,34 @@
         + '<span class="sl" style="margin-left:auto">' + (s.next_run_at && s.enabled ? 'next ' + new Date(s.next_run_at).toLocaleString() : '') + '</span>';
       const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:6px;margin-top:5px;align-items:center';
       const btn = (label, fn, title) => { const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = label; if (title) b.title = title; b.onclick = fn; bar.appendChild(b); };
-      btn('▶ Run now', async () => { await api('/api/schedules/fire', plBody({ b: { id: s.id } })); schedLoad(); });
-      btn(s.enabled ? '⏸ Pause' : '▶ Resume', async () => { const u = Object.assign({}, s, { enabled: !s.enabled }); await api('/api/schedules/update', plBody({ b: u })); schedLoad(); });
+      btn('▶ Run now', async () => { await api('/api/schedules/fire', plBody({ b: { id: s.id } })); schedLoad(true); });
+      btn(s.enabled ? '⏸ Pause' : '▶ Resume', async () => { const u = Object.assign({}, s, { enabled: !s.enabled }); await api('/api/schedules/update', plBody({ b: u })); schedLoad(true); });
       btn('✎ Edit', () => schedOpenModal(s));
-      btn('✕ Delete', async () => { if (!confirm('Delete schedule "' + s.name + '"?')) return; await api('/api/schedules/delete', plBody({ b: { id: s.id } })); schedLoad(); });
+      btn('✕ Delete', async () => { if (!confirm('Delete schedule "' + s.name + '"?')) return; await api('/api/schedules/delete', plBody({ b: { id: s.id } })); schedLoad(true); });
       const hist = document.createElement('a'); hist.href = '#'; hist.className = 'sl'; hist.textContent = 'runs ▾'; hist.style.marginLeft = 'auto';
       const runsBox = document.createElement('div'); runsBox.style.cssText = 'display:none;margin-top:6px;border-top:1px solid var(--border);padding-top:6px';
+      const loadRunHistory = async () => {
+        const d = await api('/api/schedule-runs?id=' + encodeURIComponent(s.id)).then((r) => r.json()).catch(() => ({ runs: [] }));
+        runsBox.innerHTML = '';
+        if (!(d.runs || []).length) runsBox.innerHTML = '<span class="sl">(no runs yet)</span>';
+        for (const r of d.runs || []) {
+          const row = document.createElement('div'); row.style.cssText = 'font-size:11px;margin-bottom:4px';
+          row.innerHTML = '<b style="color:' + (r.status === 'done' ? '#2e9e44' : r.status === 'failed' ? '#e5484d' : '#f59e0b') + '">' + r.status + '</b> · '
+            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by);
+          if (r.output_tail) { const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.04));padding:5px;border-radius:6px;margin:3px 0 0'; pre.textContent = r.output_tail; row.appendChild(pre); }
+          runsBox.appendChild(row);
+        }
+        runsBox.style.display = '';
+        hist.textContent = 'runs ▴';
+      };
       hist.onclick = async (e) => {
         e.preventDefault();
-        if (runsBox.style.display === 'none') {
-          const d = await api('/api/schedule-runs?id=' + encodeURIComponent(s.id)).then((r) => r.json()).catch(() => ({ runs: [] }));
-          runsBox.innerHTML = '';
-          if (!(d.runs || []).length) runsBox.innerHTML = '<span class="sl">(no runs yet)</span>';
-          for (const r of d.runs || []) {
-            const row = document.createElement('div'); row.style.cssText = 'font-size:11px;margin-bottom:4px';
-            row.innerHTML = '<b style="color:' + (r.status === 'done' ? '#2e9e44' : r.status === 'failed' ? '#e5484d' : '#f59e0b') + '">' + r.status + '</b> · '
-              + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by);
-            if (r.output_tail) { const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10px;white-space:pre-wrap;max-height:120px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.04));padding:5px;border-radius:6px;margin:3px 0 0'; pre.textContent = r.output_tail; row.appendChild(pre); }
-            runsBox.appendChild(row);
-          }
-          runsBox.style.display = '';
-          hist.textContent = 'runs ▴';
-        } else { runsBox.style.display = 'none'; hist.textContent = 'runs ▾'; }
+        SCH.expanded = SCH.expanded || new Set();
+        if (runsBox.style.display === 'none') { SCH.expanded.add(s.id); await loadRunHistory(); }
+        else { SCH.expanded.delete(s.id); runsBox.style.display = 'none'; hist.textContent = 'runs ▾'; }
       };
+      // A rebuild (data changed) re-opens histories the user had expanded.
+      if (SCH.expanded && SCH.expanded.has(s.id)) loadRunHistory();
       bar.appendChild(hist);
       el.appendChild(rh); el.appendChild(bar); el.appendChild(runsBox);
       return el;
