@@ -1,0 +1,55 @@
+members:
+  - id: pm
+    name: PM
+    icon: 📋
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: []
+    requires_approval: false
+  - id: architect
+    name: Architect
+    icon: 🏗️
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - pm
+    requires_approval: false
+  - id: coordinator
+    name: Coordinator
+    icon: 🧭
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - architect
+    requires_approval: false
+  - id: engineer
+    name: Engineer
+    icon: 🔨
+    stage: implement
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - coordinator
+    requires_approval: false
+  - id: reviewer
+    name: Reviewer
+    icon: 🔍
+    stage: review
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - engineer
+    requires_approval: false
+  - id: qa
+    name: QA
+    icon: ✅
+    stage: qa
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - reviewer
+    requires_approval: false
+positions: {}
