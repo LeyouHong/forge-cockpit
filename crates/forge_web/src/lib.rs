@@ -167,6 +167,11 @@ where
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )
+        .route(
+            "/api/team/templates",
+            get(pipeline::team_templates_get::<A>).post(pipeline::team_templates_save::<A>),
+        )
+        .route("/api/team/templates/delete", post(pipeline::team_templates_delete::<A>))
         .route("/api/schedules", get(schedule::list::<A>).post(schedule::create::<A>))
         .route("/api/schedules/update", post(schedule::update::<A>))
         .route("/api/schedules/delete", post(schedule::delete::<A>))

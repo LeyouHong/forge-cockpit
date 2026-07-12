@@ -2997,7 +2997,14 @@
         }
       }
       el.appendChild(th); el.appendChild(tb);
-      if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
+      const allMine = msgs.filter((x) => x.to === m.id + '-1');
+      const unreadMine = allMine.filter((x) => !x.read);
+      if (allMine.length) {
+        const tf = document.createElement('div'); tf.className = 'tf'; tf.style.cursor = 'pointer'; tf.title = 'view inbox';
+        tf.innerHTML = '📨 <span class="box">' + (unreadMine.length ? unreadMine.length + ' unread' : allMine.length + ' msg') + (inbox ? ' · ' + inbox + ' ticket' + (inbox > 1 ? 's' : '') : '') + '</span>';
+        tf.onclick = (e) => { e.stopPropagation(); tmShowInbox(m, allMine); };
+        el.appendChild(tf);
+      }
       const af = document.createElement('div'); af.className = 'tf';
       const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
       const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
@@ -3025,7 +3032,7 @@
     /* member add/edit modal */
     $('tm-mem-close').onclick = () => $('tm-memmodal').classList.remove('open');
     $('tm-addagent').onclick = () => tmOpenMember(null);
-    function tmOpenMember(id) {
+    async function tmOpenMember(id) {
       const members = (TEAM.cfg && TEAM.cfg.members) || [];
       const m = id ? members.find((x) => x.id === id) : null;
       $('tm-mem-title').textContent = m ? 'Edit — ' + (m.name || m.id) : 'Add Agent';
@@ -3034,6 +3041,40 @@
       const b = $('tm-mem-body'); b.innerHTML = '';
       const row = (label, node) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(node); b.appendChild(r); };
       const idIn = document.createElement('input'); idIn.value = m ? m.id : ''; idIn.placeholder = 'e.g. ui-designer (letters/digits/-/_)'; idIn.disabled = !!m;
+      // fills the form fields from a member-shaped object (template / import)
+      let applyMember = null;
+      if (!m) {
+        const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px;align-items:center';
+        const tplSel = document.createElement('select'); tplSel.style.flex = '1';
+        const d0 = document.createElement('option'); d0.value = ''; d0.textContent = '— start from a saved template —'; tplSel.appendChild(d0);
+        const tpls = await api('/api/team/templates').then((r) => r.json()).catch(() => ({ templates: [] }));
+        for (const t of tpls.templates || []) { const o = document.createElement('option'); o.value = t.name; o.textContent = t.name; tplSel.appendChild(o); }
+        tplSel.onchange = () => {
+          const t = (tpls.templates || []).find((x) => x.name === tplSel.value);
+          if (t && t.member && applyMember) applyMember(t.member);
+        };
+        const delT = document.createElement('button'); delT.className = 'btn btn-sm'; delT.textContent = '✕'; delT.title = 'delete selected template';
+        delT.onclick = async () => {
+          if (!tplSel.value || !confirm('Delete template "' + tplSel.value + '"?')) return;
+          await api('/api/team/templates/delete', plBody({ b: { name: tplSel.value } }));
+          tmOpenMember(null);
+        };
+        const imp = document.createElement('button'); imp.className = 'btn btn-sm'; imp.textContent = '📂 Import';
+        imp.title = 'load a member JSON file';
+        imp.onclick = () => {
+          const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json';
+          f.onchange = () => {
+            const file = f.files && f.files[0]; if (!file) return;
+            file.text().then((txt) => {
+              try { const obj = JSON.parse(txt); if (applyMember) applyMember(obj.member || obj); }
+              catch (e) { $('tm-mem-msg').textContent = 'bad JSON: ' + e.message; }
+            });
+          };
+          f.click();
+        };
+        wrap.appendChild(tplSel); wrap.appendChild(delT); wrap.appendChild(imp);
+        row('template', wrap);
+      }
       row('id', idIn);
       const nameIn = document.createElement('input'); nameIn.value = m ? m.name : ''; nameIn.placeholder = 'display name';
       row('name', nameIn);
@@ -3059,6 +3100,33 @@
       sopTa.placeholder = 'custom SOP (markdown) — leave empty to use the built-in SOP for this id/stage';
       sopTa.style.minHeight = '130px';
       row('role prompt (SOP)', sopTa);
+      applyMember = (t) => {
+        if (!idIn.disabled && t.id) idIn.value = t.id;
+        if (t.name) nameIn.value = t.name;
+        if (t.icon) icoIn.value = t.icon;
+        if (t.stage) stSel.value = t.stage;
+        if (typeof t.agent === 'string') agSel.value = t.agent;
+        if (typeof t.role_prompt === 'string') sopTa.value = t.role_prompt;
+      };
+      if (m) {
+        const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px';
+        const saveT = document.createElement('button'); saveT.className = 'btn btn-sm'; saveT.textContent = '💾 Save as template';
+        saveT.onclick = async () => {
+          const name = prompt('Template name:', m.name || m.id); if (!name) return;
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const r = await api('/api/team/templates', plBody({ b: { name, member } }));
+          $('tm-mem-msg').textContent = r.ok ? '✓ template saved' : 'save failed';
+        };
+        const expT = document.createElement('button'); expT.className = 'btn btn-sm'; expT.textContent = '📤 Export JSON';
+        expT.onclick = () => {
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([JSON.stringify({ member }, null, 2)], { type: 'application/json' }));
+          a.download = m.id + '.json'; a.click(); URL.revokeObjectURL(a.href);
+        };
+        wrap.appendChild(saveT); wrap.appendChild(expT);
+        row('template', wrap);
+      }
       $('tm-mem-save').onclick = async () => {
         const nid = (m ? m.id : idIn.value).trim();
         if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
@@ -3080,6 +3148,20 @@
         else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
       };
       $('tm-memmodal').classList.add('open');
+    }
+    function tmShowInbox(m, msgs) {
+      $('tm-req-title').textContent = '📨 ' + (m.name || m.id) + ' — inbox';
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const sorted = msgs.slice().sort((a, x) => (a.created_at < x.created_at ? 1 : -1));
+      for (const msg of sorted.slice(0, 30)) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label');
+        l.textContent = (msg.category === 'ticket' ? '🎫 ' : '🔔 ') + (msg.from || '?') + ' · ' + new Date(msg.created_at).toLocaleString() + (msg.read ? '' : ' · unread');
+        const c = document.createElement('div'); c.style.cssText = 'font-size:12px;white-space:pre-wrap;line-height:1.5'; c.textContent = msg.body || '';
+        r.appendChild(l); r.appendChild(c); b.appendChild(r);
+      }
+      if (!sorted.length) b.innerHTML = '<span class="sl">(empty)</span>';
+      $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
     async function tmShowRequest(id) {

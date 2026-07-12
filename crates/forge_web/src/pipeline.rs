@@ -515,6 +515,71 @@ pub(crate) async fn team_config_set<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+// ─── Team member templates (global: ~/.forge-web/team-templates.json) ───────
+// Mirrors the reference forge's smith templates: save a configured member,
+// reuse it in any project's team, export/import as JSON.
+
+fn team_templates_path() -> PathBuf {
+    forge_workspace::pipeline::home_dir().join(".forge-web").join("team-templates.json")
+}
+
+fn load_team_templates() -> Vec<Value> {
+    std::fs::read_to_string(team_templates_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_team_templates(list: &[Value]) {
+    if let Some(d) = team_templates_path().parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(team_templates_path(), serde_json::to_string_pretty(list).unwrap_or_default());
+}
+
+/// GET /api/team/templates — saved member templates.
+pub(crate) async fn team_templates_get<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    Json(json!({ "templates": load_team_templates() }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TemplateSave {
+    name: String,
+    member: Value,
+}
+
+/// POST /api/team/templates — upsert a template by name.
+pub(crate) async fn team_templates_save<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TemplateSave>,
+) -> Result<Json<Value>, AppError> {
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::bad_request("template name required"));
+    }
+    let mut list = load_team_templates();
+    list.retain(|t| t.get("name").and_then(Value::as_str) != Some(name.as_str()));
+    list.push(json!({ "name": name, "member": body.member }));
+    save_team_templates(&list);
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TemplateRef {
+    name: String,
+}
+
+/// POST /api/team/templates/delete
+pub(crate) async fn team_templates_delete<A: API>(
+    State(_): State<AppState<A>>,
+    Json(q): Json<TemplateRef>,
+) -> Json<Value> {
+    let mut list = load_team_templates();
+    list.retain(|t| t.get("name").and_then(Value::as_str) != Some(q.name.as_str()));
+    save_team_templates(&list);
+    Json(json!({ "ok": true }))
+}
+
 /// GET /api/team/agents?project=NAME — the role→agent map for this project.
 pub(crate) async fn team_agents_get<A: API>(
     State(_): State<AppState<A>>,
