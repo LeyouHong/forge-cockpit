@@ -514,6 +514,65 @@ pub trait SkillFetchService: Send + Sync {
     async fn list_skills(&self) -> anyhow::Result<Vec<forge_domain::Skill>>;
 }
 
+/// One saved pipeline recipe, as reported by the `pipeline_list` tool.
+#[derive(Debug, Clone)]
+pub struct PipelineInfo {
+    /// File name inside the global pipelines dir (pass this to pipeline_run).
+    pub file: String,
+    /// The workflow's declared name.
+    pub name: String,
+    pub description: String,
+    /// Declared input keys, each with its default (if any).
+    pub inputs: Vec<(String, Option<String>)>,
+    /// Node ids in author order.
+    pub nodes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PipelineListOutput {
+    pub dir: PathBuf,
+    pub pipelines: Vec<PipelineInfo>,
+}
+
+/// Per-node outcome of a finished pipeline run.
+#[derive(Debug, Clone)]
+pub struct PipelineNodeResult {
+    pub id: String,
+    /// pending | running | done | failed | skipped
+    pub status: String,
+    pub outputs: Vec<(String, String)>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PipelineRunOutput {
+    /// The persisted run id (`pl-…`).
+    pub id: String,
+    pub workflow: String,
+    /// done | failed
+    pub status: String,
+    /// Directory the nodes ran against.
+    pub dir: PathBuf,
+    pub nodes: Vec<PipelineNodeResult>,
+}
+
+/// Global pipeline recipes (list + run) for the `pipeline_*` tools.
+#[async_trait::async_trait]
+pub trait PipelineService: Send + Sync {
+    /// Lists the global pipeline recipes with their declared inputs.
+    async fn list_pipelines(&self) -> anyhow::Result<PipelineListOutput>;
+
+    /// Runs a pipeline to completion against `dir` and returns the final
+    /// per-node state.
+    async fn run_pipeline(
+        &self,
+        name: String,
+        dir: PathBuf,
+        inputs: std::collections::BTreeMap<String, String>,
+        node_timeout: Duration,
+    ) -> anyhow::Result<PipelineRunOutput>;
+}
+
 /// Provider authentication service
 #[async_trait::async_trait]
 pub trait ProviderAuthService: Send + Sync {
@@ -568,6 +627,7 @@ pub trait Services: Send + Sync + 'static + Clone + EnvironmentInfra {
     type ProviderAuthService: ProviderAuthService;
     type WorkspaceService: WorkspaceService;
     type SkillFetchService: SkillFetchService;
+    type PipelineService: PipelineService;
 
     fn provider_service(&self) -> &Self::ProviderService;
     fn config_service(&self) -> &Self::AppConfigService;
@@ -596,6 +656,7 @@ pub trait Services: Send + Sync + 'static + Clone + EnvironmentInfra {
     fn provider_auth_service(&self) -> &Self::ProviderAuthService;
     fn workspace_service(&self) -> &Self::WorkspaceService;
     fn skill_fetch_service(&self) -> &Self::SkillFetchService;
+    fn pipeline_service(&self) -> &Self::PipelineService;
 }
 
 #[async_trait::async_trait]
@@ -992,6 +1053,25 @@ impl<I: Services> SkillFetchService for I {
 
     async fn list_skills(&self) -> anyhow::Result<Vec<forge_domain::Skill>> {
         self.skill_fetch_service().list_skills().await
+    }
+}
+
+#[async_trait::async_trait]
+impl<I: Services> PipelineService for I {
+    async fn list_pipelines(&self) -> anyhow::Result<PipelineListOutput> {
+        self.pipeline_service().list_pipelines().await
+    }
+
+    async fn run_pipeline(
+        &self,
+        name: String,
+        dir: PathBuf,
+        inputs: std::collections::BTreeMap<String, String>,
+        node_timeout: Duration,
+    ) -> anyhow::Result<PipelineRunOutput> {
+        self.pipeline_service()
+            .run_pipeline(name, dir, inputs, node_timeout)
+            .await
     }
 }
 

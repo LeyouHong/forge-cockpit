@@ -1,5 +1,6 @@
 ---
 source: crates/forge_domain/src/tools/catalog.rs
+assertion_line: 1315
 expression: tools
 ---
 {
@@ -392,6 +393,40 @@ expression: tools
     "name": {
       "description": "The name of the skill to fetch (e.g., \"pdf\", \"code_review\")",
       "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+{
+  "type": "object"
+}
+{
+  "type": "object",
+  "properties": {
+    "dir": {
+      "description": "Directory the pipeline's nodes run in (their default working\ndirectory). If not specified, defaults to the current working\ndirectory.",
+      "type": "string",
+      "nullable": true
+    },
+    "inputs": {
+      "description": "Values for the workflow's declared `input:` fields, as key → value.\nProvide every input pipeline_list reports for this pipeline unless it\nhas a default.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "name": {
+      "description": "The pipeline file name exactly as returned by pipeline_list (e.g.\n\"pr-review.yaml\").",
+      "type": "string"
+    },
+    "node_timeout_secs": {
+      "description": "Per-node wall-clock timeout in seconds (default 300). Raise it for\npipelines whose agent nodes do long tasks.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0,
+      "nullable": true
     }
   },
   "required": [

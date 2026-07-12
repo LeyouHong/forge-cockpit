@@ -44,6 +44,11 @@ impl FormatContent for ToolOperation {
             ToolOperation::TodoRead { output } => {
                 Some(ChatResponseContent::ToolOutput(format_todos(output)))
             }
+            ToolOperation::PipelineRun { output } => Some(
+                TitleFormat::debug(format!("Pipeline {}", output.status))
+                    .sub_title(format!("{} ({})", output.workflow, output.id))
+                    .into(),
+            ),
             ToolOperation::FsRead { input: _, output: _ }
             | ToolOperation::FsRemove { input: _, output: _ }
             | ToolOperation::FsSearch { input: _, output: _ }
@@ -52,7 +57,8 @@ impl FormatContent for ToolOperation {
             | ToolOperation::NetFetch { input: _, output: _ }
             | ToolOperation::Shell { output: _ }
             | ToolOperation::FollowUp { output: _ }
-            | ToolOperation::Skill { output: _ } => None,
+            | ToolOperation::Skill { output: _ }
+            | ToolOperation::PipelineList { output: _ } => None,
         }
     }
 }

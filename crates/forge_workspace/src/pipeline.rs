@@ -12,7 +12,7 @@
 //! worktree isolation, plugins) are intentionally out of scope for this layer.
 
 use std::collections::{BTreeMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -619,6 +619,12 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
             } else {
                 None
             };
+            // Live streamed stdout for this node's run (overwritten each attempt/iter).
+            let log_file = if cfg.dry_run {
+                None
+            } else {
+                Some(cfg.workspace.join("pipelines").join(".log").join(id).join(format!("{node_id}.txt")))
+            };
 
             running += 1;
             let tx = tx.clone();
@@ -631,7 +637,7 @@ fn run_dag(wf: &Workflow, pipeline: &Arc<Mutex<Pipeline>>, cfg: &RunConfig, each
                     std::thread::sleep(Duration::from_millis(50));
                     Ok(outputs.iter().map(|o| (o.name.clone(), format!("<dry:{}>", o.name))).collect())
                 } else {
-                    exec_node(mode, &resolved_prompt, &project_dir, &outputs, &forge, home.as_deref(), timeout, result_file.as_deref())
+                    exec_node(mode, &resolved_prompt, &project_dir, &outputs, &forge, home.as_deref(), timeout, result_file.as_deref(), log_file.as_deref())
                 };
                 let _ = tx.send(Done { id: node_id, result });
             });
@@ -842,7 +848,9 @@ fn exec_node(
     home: Option<&Path>,
     timeout: Duration,
     result_file: Option<&Path>,
+    log_file: Option<&Path>,
 ) -> std::result::Result<BTreeMap<String, String>, String> {
+    let log = log_file.map(|p| p.to_path_buf());
     let raw_stdout = match mode {
         NodeMode::Claude => {
             // Append the output contract when we're capturing a `result`, and
@@ -866,12 +874,12 @@ fn exec_node(
             if let Some(h) = home {
                 cmd.env("FORGE_CONFIG", h);
             }
-            run_capture(cmd, timeout)?
+            run_capture(cmd, timeout, log)?
         }
         NodeMode::Shell => {
             let mut cmd = Command::new("sh");
             cmd.arg("-c").arg(prompt).current_dir(project);
-            run_capture(cmd, timeout)?
+            run_capture(cmd, timeout, log)?
         }
     };
 
@@ -889,7 +897,7 @@ fn exec_node(
             Extract::GitDiff => {
                 let mut cmd = Command::new("git");
                 cmd.arg("diff").current_dir(project);
-                run_capture(cmd, timeout)?
+                run_capture(cmd, timeout, None)?
             }
         };
         out.insert(o.name.clone(), v);
@@ -898,15 +906,35 @@ fn exec_node(
 }
 
 /// Spawn a command, drain stdout on a reader thread (so a full pipe can't
-/// deadlock the process), and kill it if it outlives `timeout`.
-fn run_capture(mut cmd: Command, timeout: Duration) -> std::result::Result<String, String> {
+/// deadlock the process), and kill it if it outlives `timeout`. When `log` is
+/// set, stdout is tee'd to that file as it streams (for a live node log).
+fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std::result::Result<String, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let reader = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stdout.read_to_string(&mut s);
-        s
+        let mut logf = log.and_then(|p| {
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            std::fs::File::create(&p).ok()
+        });
+        let mut buf: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(f) = &mut logf {
+                        let _ = f.write_all(&chunk[..n]);
+                        let _ = f.flush();
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
     });
 
     let deadline = Instant::now() + timeout;
@@ -981,6 +1009,64 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+/// The user's home directory (`$HOME` / `%USERPROFILE%`).
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
+/// Where global (project-independent) pipeline recipes live. Shared by the web
+/// UI's visual builder, the `forge-pipeline` CLI, and the agent's
+/// `pipeline_*` tools so they all see the same set.
+pub fn global_pipelines_dir() -> PathBuf {
+    home_dir().join(".forge-web").join("pipelines")
+}
+
+/// The workspace all global pipeline runs persist to.
+pub fn global_runs_workspace() -> PathBuf {
+    home_dir().join(".forge-web").join("runs")
+}
+
+/// Reject pipeline file names that attempt path traversal. Used by the web
+/// API, CLI, and agent tools to ensure a name like `"../evil"` or
+/// `"sub/dir/foo.yaml"` can't escape the global pipelines directory.
+pub fn validate_pipeline_name(name: &str) -> bool {
+    !(name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains(".."))
+}
+
+/// Isolated base_path (FORGE_CONFIG) exposing ONLY the workspace MCP — so
+/// `claude`-mode nodes start fast/reliably regardless of the user's MCP setup.
+/// Credentials are symlinked, never copied.
+pub fn setup_isolated_home(workspace: &Path, mcp_bin: &Path) -> Result<PathBuf> {
+    let home = workspace.join(".forge-home");
+    std::fs::create_dir_all(&home)?;
+    let real = std::env::var("FORGE_CONFIG")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            let h = home_dir();
+            [".forge", "forge"].iter().map(|d| h.join(d)).find(|p| p.join(".credentials.json").exists())
+        })
+        .unwrap_or_else(|| home_dir().join(".forge"));
+    for f in [".credentials.json", ".forge.toml", ".mcp_trust.json", ".mcp-credentials.json", ".config.json"] {
+        let (src, dst) = (real.join(f), home.join(f));
+        if src.exists() && !dst.exists() {
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&src, &dst);
+            #[cfg(not(unix))]
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+    let mcp = serde_json::json!({ "mcpServers": { "forge-workspace": {
+        "command": mcp_bin.to_string_lossy(),
+        "env": { "FORGE_WORKSPACE_DIR": workspace.to_string_lossy() }
+    }}});
+    std::fs::write(home.join(".mcp.json"), serde_json::to_string_pretty(&mcp)?)?;
+    Ok(home)
 }
 
 /// List persisted pipeline runs under `<workspace>/pipelines/`, newest first.

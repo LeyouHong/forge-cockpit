@@ -236,6 +236,26 @@ impl SkillFetchService for Runner {
 }
 
 #[async_trait::async_trait]
+impl crate::PipelineService for Runner {
+    async fn list_pipelines(&self) -> anyhow::Result<crate::PipelineListOutput> {
+        Ok(crate::PipelineListOutput {
+            dir: std::path::PathBuf::new(),
+            pipelines: vec![],
+        })
+    }
+
+    async fn run_pipeline(
+        &self,
+        _name: String,
+        _dir: std::path::PathBuf,
+        _inputs: std::collections::BTreeMap<String, String>,
+        _node_timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::PipelineRunOutput> {
+        unimplemented!("PipelineService not implemented for test Runner")
+    }
+}
+
+#[async_trait::async_trait]
 impl ShellService for Runner {
     async fn execute(
         &self,

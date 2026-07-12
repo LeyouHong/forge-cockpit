@@ -457,10 +457,6 @@
       }
     }
     /* Pipeline page */
-    .pl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-    .pl-bar label { font-size: 12px; color: var(--muted); }
-    .pl-bar #pl-project { border: 1px solid var(--border); padding: 4px 22px 4px 8px; color: var(--text); min-width: 140px; }
-    .pl-bar #pl-newpath { font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; min-width: 240px; flex: 1; }
     .pl-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
     .pl-subhead { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
     .pl-files, .pl-runs { display: flex; flex-direction: column; gap: 4px; }
@@ -529,6 +525,31 @@
     .pl-node.run-skipped { opacity: .55; }
     .pl-node.run-skipped .nstat { background: #9ca3af; }
     @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    /* Team canvas */
+    .tm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+    .tm-alerts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+    .tm-alert { border-left: 3px solid #e5484d; background: #fff5f5; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+    .tm-alert b { color: #e5484d; }
+    :root[data-theme="dark"] .tm-alert { background: rgba(229,72,77,.12); }
+    .tm-canvas { position: relative; height: 340px; border: 1px solid var(--border); border-radius: 10px; overflow: auto;
+      background: radial-gradient(circle, rgba(127,127,127,.16) 1px, transparent 1px) 0 0 / 18px 18px; }
+    .tm-edges { position: absolute; inset: 0; width: 1400px; height: 340px; pointer-events: none; overflow: visible; }
+    .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
+    .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
+    .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
+    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .tm-card .th { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+    .tm-card .th .ico { font-size: 16px; }
+    .tm-card .th .nm { font-weight: 700; }
+    .tm-card .th .cnt { margin-left: auto; font-size: 11px; font-weight: 700; color: #fff; background: #7c5cff; border-radius: 10px; padding: 1px 8px; }
+    .tm-card .th .cnt.zero { background: #c7c7c7; }
+    .tm-card .tb { padding: 6px 10px; display: flex; flex-direction: column; gap: 3px; min-height: 30px; }
+    .tm-card .tb .rq { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tm-card .tb .rq .dot { color: #3b82f6; }
+    .tm-card .tb .none { font-size: 10.5px; color: #b8b8b8; font-style: italic; }
+    .tm-card .tf { border-top: 1px solid var(--border); padding: 5px 10px; font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+    .tm-card .tf .box { color: #e5484d; font-weight: 600; }
     .pl-foreach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
     .pl-foreach .pl-fe-toggle { display: flex; align-items: center; gap: 5px; font-weight: 600; }
     .pl-foreach .pl-fe-field { display: flex; align-items: center; gap: 5px; }
@@ -543,6 +564,7 @@
     .pl-node .nproj { font-size: 9.5px; color: #7c5cff; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-node .nprompt { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-node .nouts { font-size: 9px; color: #2e9e44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-node .nout-val { font-size: 9.5px; color: #3b82f6; font-family: ui-monospace, Menlo, monospace; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pl-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #8a8f98; background: var(--bg, #fff); left: 50%; transform: translateX(-50%); cursor: crosshair; }
     .pl-port.in { top: -7px; }
     .pl-port.out { bottom: -7px; background: #8a8f98; }
@@ -573,6 +595,7 @@
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
+      <button class="icon-btn" id="team-open" title="Team — the resident agent team (engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -683,20 +706,13 @@
   <!-- Pipeline builder (its own page) -->
   <div class="kanban-overlay" id="pipeline-overlay">
     <div class="kanban-head">
-      <span><b>🧬 Pipeline</b> <span class="drawer-hint">build &amp; run workflows per project</span></span>
+      <span><b>🧬 Pipeline</b> <span class="drawer-hint">build &amp; run reusable workflows</span></span>
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="pl-refresh">Refresh</button>
       <button class="icon-btn" id="pipeline-close" title="Close">✕</button>
     </div>
     <div class="kanban-scroll">
       <section class="kanban-section">
-        <div class="pl-bar">
-          <label>Project</label>
-          <select id="pl-project" class="repo-select"></select>
-          <input id="pl-newpath" placeholder="…or type a path + Enter" />
-          <button class="btn btn-sm" id="pl-addproject">+ Add project</button>
-          <button class="btn btn-ghost btn-sm" id="pl-delproject" title="Forget this project">Forget</button>
-        </div>
         <div class="pl-grid">
           <div class="pl-left">
             <div class="pl-subhead"><span>Pipelines</span><button class="btn btn-sm" id="pl-new">+ New</button></div>
@@ -742,6 +758,49 @@
           </div>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Team (resident agent team) page -->
+  <div class="kanban-overlay" id="team-overlay">
+    <div class="kanban-head">
+      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — engineer → reviewer → qa</span></span>
+      <div style="flex:1"></div>
+      <label class="sl" style="margin-right:6px">Project</label>
+      <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
+      <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
+      <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
+      <button class="icon-btn" id="team-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div class="tm-bar">
+          <input id="tm-goal" placeholder='goal for the coordinator (optional) — e.g. "harden calc.py: add validation + tests"' />
+          <button class="btn btn-primary btn-sm" id="tm-run">▶ Run</button>
+          <button class="btn btn-sm" id="tm-daemon">⚡ Start Daemon</button>
+          <span class="sl" id="tm-status"></span>
+        </div>
+        <div id="tm-alerts" class="tm-alerts"></div>
+        <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
+        <div id="tm-empty" class="sl" style="margin-top:10px"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Pipeline: Run dialog (pick target dir + fill inputs) -->
+  <div class="pl-picker-overlay" id="pl-rundlg">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b>▶ Run pipeline</b><div style="flex:1"></div><button class="icon-btn" id="pl-run-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="pl-run-body"></div>
+      <div class="pl-picker-foot"><span class="sl" id="pl-run-msg"></span><div style="flex:1"></div><button class="btn btn-primary btn-sm" id="pl-run-go">▶ Run</button></div>
+    </div>
+  </div>
+
+  <!-- Team: request detail modal -->
+  <div class="pl-picker-overlay" id="tm-reqmodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b id="tm-req-title">Request</b><div style="flex:1"></div><button class="icon-btn" id="tm-req-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="tm-req-body"></div>
     </div>
   </div>
 
@@ -2049,7 +2108,7 @@
     /* ---------- pipeline page ---------- */
     const PL = { project: null, file: null };
     const PL_COLOR = { done: '#2e9e44', running: '#3b82f6', failed: '#e5484d', skipped: '#9ca3af', pending: '#c7c7c7' };
-    function openPipeline() { $('pipeline-overlay').classList.add('open'); loadProjects(); }
+    function openPipeline() { $('pipeline-overlay').classList.add('open'); loadFiles(); loadRuns(); }
     $('pipeline-open').onclick = openPipeline;
     $('pipeline-close').onclick = () => { stopRunPoll(); $('pipeline-overlay').classList.remove('open'); };
     $('pl-refresh').onclick = () => { loadFiles(); loadRuns(); };
@@ -2063,32 +2122,21 @@
     function plShowValid(d) { if (d.valid) plStatus('✓ valid workflow', false); else plStatus('✗ ' + (d.error || 'invalid'), true); }
     const plBody = (o) => ({ method: o.m || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o.b) });
 
-    async function loadProjects() {
-      const d = await (await api('/api/pipeline/projects')).json().catch(() => ({ projects: [] }));
-      const sel = $('pl-project'); sel.innerHTML = '';
-      for (const p of (d.projects || [])) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + '  ·  ' + p.path; sel.appendChild(o); }
-      if ((d.projects || []).length) {
-        if (!PL.project || !d.projects.find((p) => p.name === PL.project)) PL.project = d.projects[0].name;
-        sel.value = PL.project; loadFiles(); loadRuns();
-      } else { PL.project = null; $('pl-files').innerHTML = '<span class="sl">no projects — add one above</span>'; $('pl-runs').innerHTML = ''; }
-    }
-    $('pl-project').onchange = () => { PL.project = $('pl-project').value; PL.file = null; plSetEditor('', 'no pipeline open'); loadFiles(); loadRuns(); };
+    // Add a Team project via a path (returns the created project name, or false).
     async function addProjectPath(path) {
       if (!path || !path.trim()) return false;
       const r = await api('/api/pipeline/projects', plBody({ b: { path: path.trim() } })); const d = await r.json();
-      if (!r.ok) { plStatus(d.error || 'failed to add project', true); return false; }
-      PL.project = d.name; $('pl-newpath').value = ''; loadProjects(); return true;
+      return r.ok ? d.name : false;
     }
-    $('pl-newpath').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addProjectPath($('pl-newpath').value); } };
-    $('pl-addproject').onclick = () => openPicker($('pl-newpath').value.trim() || null);
 
-    /* server-side folder picker (server is local → this is your filesystem) */
-    const PICK = { path: null, parent: null };
+    /* server-side folder picker (server is local → this is your filesystem).
+       PICK.onUse(path) is invoked with the chosen folder. */
+    const PICK = { path: null, parent: null, onUse: null };
     $('pl-picker-close').onclick = () => $('pl-picker').classList.remove('open');
     $('pl-picker-up').onclick = () => { if (PICK.parent) browseTo(PICK.parent); };
     $('pl-picker-path').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); browseTo($('pl-picker-path').value.trim()); } };
-    $('pl-picker-use').onclick = async () => { if (PICK.path && await addProjectPath(PICK.path)) $('pl-picker').classList.remove('open'); };
-    function openPicker(start) { $('pl-picker').classList.add('open'); browseTo(start); }
+    $('pl-picker-use').onclick = () => { if (PICK.path && PICK.onUse) PICK.onUse(PICK.path); $('pl-picker').classList.remove('open'); };
+    function openPicker(start, onUse) { PICK.onUse = onUse || null; $('pl-picker').classList.add('open'); browseTo(start); }
     async function browseTo(path) {
       const url = '/api/pipeline/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
       const d = await (await api(url)).json().catch(() => null);
@@ -2107,23 +2155,16 @@
         list.appendChild(row);
       }
     }
-    $('pl-delproject').onclick = async () => {
-      if (!PL.project || !confirm('Forget project "' + PL.project + '"? (files are not deleted)')) return;
-      await api('/api/pipeline/projects/delete', plBody({ b: { name: PL.project } }));
-      PL.project = null; PL.file = null; plSetEditor('', 'no pipeline open'); loadProjects();
-    };
-
     async function loadFiles() {
-      if (!PL.project) return;
       const box = $('pl-files'); box.innerHTML = '<span class="sl">…</span>';
-      const d = await (await api('/api/pipeline/files?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ files: [] }));
+      const d = await (await api('/api/pipeline/files')).json().catch(() => ({ files: [] }));
       box.innerHTML = '';
       if (!(d.files || []).length) { box.innerHTML = '<span class="sl">no pipelines yet — + New</span>'; return; }
       for (const f of d.files) {
         const row = document.createElement('div'); row.className = 'pl-file' + (f === PL.file ? ' active' : '');
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = f; nm.onclick = () => openFile(f);
         const rm = document.createElement('span'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'delete';
-        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { project: PL.project, name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
+        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
         row.appendChild(nm); row.appendChild(rm); box.appendChild(row);
       }
     }
@@ -2134,11 +2175,12 @@
     PL.tab = PL.tab || 'visual';
     async function openFile(name) {
       PL.file = name; PL.sel = null; closeNodeModal(); stopRunPoll(); $('pl-editing').textContent = name;
-      const d = await (await api('/api/pipeline/graph?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json();
+      const d = await (await api('/api/pipeline/graph?name=' + encodeURIComponent(name))).json();
       PL.g = graphFromWorkflow(d.workflow || {}, d.layout || {});
-      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(name))).json().catch(() => ({}));
+      const f = await (await api('/api/pipeline/file?name=' + encodeURIComponent(name))).json().catch(() => ({}));
       $('pl-editor').value = f.content || '';
-      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles();
+      PL.runOutputs = {};
+      plShowValid(d); setTab(PL.tab); renderCanvas(); renderForEach(); loadFiles(); loadRuns();
     }
     const PL_NODE_KEYS = ['mode', 'prompt', 'project', 'retries', 'depends_on', 'outputs'];
     const PL_WF_KEYS = ['name', 'vars', 'input', 'nodes'];
@@ -2203,11 +2245,10 @@
     }
 
     $('pl-new').onclick = async () => {
-      if (!PL.project) { plStatus('add a project first', true); return; }
       let name = prompt('New pipeline file name:', 'my-flow.yaml'); if (!name) return;
       if (!/\.(ya?ml)$/.test(name)) name += '.yaml';
       const base = name.replace(/\.(ya?ml)$/, '');
-      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
       if (!r.ok) { const d = await r.json(); plStatus(d.error || 'create failed', true); return; }
       await openFile(name); loadFiles();
     };
@@ -2224,17 +2265,17 @@
     $('pl-tab-yaml').onclick = async () => {
       if (PL.tab === 'yaml' || !PL.file) { setTab('yaml'); return; }
       await plSaveGraph();
-      const f = await (await api('/api/pipeline/file?project=' + encodeURIComponent(PL.project) + '&name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
+      const f = await (await api('/api/pipeline/file?name=' + encodeURIComponent(PL.file))).json().catch(() => ({}));
       $('pl-editor').value = f.content || ''; setTab('yaml');
     };
 
     async function plSaveGraph() {
       if (!PL.file || !PL.g) return { ok: false };
-      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
+      const r = await api('/api/pipeline/graph', plBody({ m: 'PUT', b: { name: PL.file, workflow: buildWorkflow(), layout: PL.g.layout } }));
       return { r, d: await r.json() };
     }
     async function plSaveYaml() {
-      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { project: PL.project, name: PL.file, content: $('pl-editor').value } }));
+      const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { name: PL.file, content: $('pl-editor').value } }));
       return { r, d: await r.json() };
     }
     async function plSave() { return PL.tab === 'visual' ? plSaveGraph() : plSaveYaml(); }
@@ -2252,13 +2293,48 @@
       if (!r || !r.ok) { plStatus((d && d.error) || 'save failed', true); return; }
       plStatus(d.valid ? '✓ saved · valid' : '⚠ saved · ✗ ' + (d.error || 'invalid'), !d.valid);
     };
+    /* Run dialog: pipelines are global, so Run asks for a target directory
+       (where the agent/shell nodes execute) + values for the workflow's
+       declared input fields, then POSTs { name, dir, inputs }. */
+    const RUN = { dir: '' };
     $('pl-run').onclick = async () => {
       if (!PL.file) { plStatus('open a pipeline first', true); return; }
       const { d: sv } = await plSave();
       if (sv && sv.valid === false) { plStatus('✗ not valid — fix before running:\n' + (sv.error || ''), true); return; }
-      const r = await api('/api/pipeline/run', plBody({ b: { project: PL.project, name: PL.file } }));
+      openRunDialog();
+    };
+    function openRunDialog() {
+      const input = (PL.g && PL.g.input) || {};
+      const keys = Object.keys(input);
+      RUN.dir = RUN.dir || '~';
+      let html = '<div class="pl-insp-row"><label>target directory <span class="sl">(where nodes run)</span></label>'
+        + '<div style="display:flex;gap:6px;align-items:center">'
+        + '<input id="pl-run-dir" style="flex:1" value="' + escapeHtml(RUN.dir) + '" placeholder="~/path/to/project">'
+        + '<button class="btn btn-sm" id="pl-run-browse">Browse…</button></div></div>';
+      if (keys.length) {
+        for (const k of keys) {
+          const def = input[k] == null ? '' : String(input[k]);
+          html += '<div class="pl-insp-row"><label>' + escapeHtml(k) + '</label>'
+            + '<input class="pl-run-in" data-k="' + escapeHtml(k) + '" value="' + escapeHtml(def) + '"></div>';
+        }
+      } else {
+        html += '<div class="sl">This pipeline declares no <code>input:</code> fields.</div>';
+      }
+      $('pl-run-body').innerHTML = html;
+      $('pl-run-msg').textContent = '';
+      $('pl-run-browse').onclick = () => openPicker(RUN.dir && RUN.dir !== '~' ? RUN.dir : '', (p) => { RUN.dir = p; $('pl-run-dir').value = p; });
+      $('pl-rundlg').classList.add('open');
+    }
+    $('pl-run-close').onclick = () => $('pl-rundlg').classList.remove('open');
+    $('pl-run-go').onclick = async () => {
+      const dir = $('pl-run-dir').value.trim();
+      if (!dir) { $('pl-run-msg').textContent = 'pick a target directory'; return; }
+      RUN.dir = dir;
+      const inputs = {}; for (const el of document.querySelectorAll('.pl-run-in')) inputs[el.dataset.k] = el.value;
+      const r = await api('/api/pipeline/run', plBody({ b: { name: PL.file, dir, inputs } }));
       const d = await r.json();
-      if (!r.ok) { plStatus(d.error || 'run failed to start', true); return; }
+      if (!r.ok) { $('pl-run-msg').textContent = d.error || 'run failed to start'; return; }
+      $('pl-rundlg').classList.remove('open');
       plStatus('▶ run started — nodes light up as they run', false);
       startRunPoll();
     };
@@ -2276,8 +2352,8 @@
       }
     }
     async function pollRunOnce() {
-      if (!PL.project || !PL.g) return null;
-      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => null);
+      if (!PL.g) return null;
+      const d = await (await api('/api/pipeline/runs')).json().catch(() => null);
       if (!d) return null;
       const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
       if (!mine) return null;
@@ -2309,9 +2385,15 @@
       openNodeModal(id);
     }
     async function loadRuns() {
-      if (!PL.project) return;
       const box = $('pl-runs');
-      const d = await (await api('/api/pipeline/runs?project=' + encodeURIComponent(PL.project))).json().catch(() => ({ runs: [] }));
+      const d = await (await api('/api/pipeline/runs')).json().catch(() => ({ runs: [] }));
+      // capture the newest run for the open workflow → per-node outputs (shown in the edit modal)
+      if (PL.g) {
+        const mine = (d.runs || []).filter((r) => r.workflow === PL.g.name).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+        PL.runOutputs = {}; PL.runId = mine ? mine.id : null;
+        if (mine) for (const n of (mine.nodes || [])) PL.runOutputs[n.id] = { outputs: n.outputs || {}, status: n.status, error: n.error };
+        refreshNodeOutputs();
+      }
       box.innerHTML = '';
       if (!(d.runs || []).length) { box.innerHTML = '<span class="sl">no runs yet</span>'; return; }
       for (const r of d.runs.slice(0, 8)) {
@@ -2406,6 +2488,7 @@
       if (n.outputs && n.outputs.length) { const ou = document.createElement('div'); ou.className = 'nouts'; ou.textContent = 'outputs: ' + n.outputs.map((o) => o.name).join(', '); body.appendChild(ou); }
       const pout = document.createElement('div'); pout.className = 'pl-port out'; pout.dataset.id = id;
       el.appendChild(pin); el.appendChild(head); el.appendChild(body); el.appendChild(pout);
+      updateNodeOutputLine(el, id);
       const onHead = (e) => !e.target.closest('.acts');
       head.onmousedown = (e) => { if (onHead(e)) startDrag(e, id); };
       head.ondblclick = (e) => { if (onHead(e)) { e.stopPropagation(); openNodeModal(id); } };
@@ -2418,6 +2501,17 @@
       for (const k of Object.keys(PL.g.nodes)) PL.g.nodes[k].depends_on = PL.g.nodes[k].depends_on.filter((x) => x !== id);
       if (PL.sel === id) PL.sel = null; renderCanvas(); renderInspector();
     }
+    // Show a one-line preview of a node's last-run output on its card.
+    function updateNodeOutputLine(el, id) {
+      let rv = el.querySelector('.nout-val');
+      const ro = PL.runOutputs && PL.runOutputs[id];
+      const val = ro && ro.outputs ? (Object.values(ro.outputs)[0] || '') : '';
+      const line = val ? '→ ' + (((val.split('\n').find((l) => l.trim())) || val).slice(0, 60)) : '';
+      if (!line) { if (rv) rv.remove(); return; }
+      if (!rv) { rv = document.createElement('div'); rv.className = 'nout-val'; (el.querySelector('.nbody') || el).appendChild(rv); }
+      rv.textContent = line;
+    }
+    function refreshNodeOutputs() { if (!PL.g) return; for (const id of Object.keys(PL.g.nodes)) { const el = document.getElementById('pln-' + id); if (el) updateNodeOutputLine(el, id); } }
     function drawEdges() {
       const svg = $('pl-edges'); svg.innerHTML = '';
       for (const id of Object.keys(PL.g.nodes)) for (const dep of PL.g.nodes[id].depends_on) {
@@ -2472,7 +2566,11 @@
     /* node edit modal */
     function nodeModalOpen() { return $('pl-nodemodal').classList.contains('open'); }
     function openNodeModal(id) { PL.sel = id; renderCanvas(); $('pl-nodemodal').classList.add('open'); buildNodeForm($('pl-nm-body')); }
-    function closeNodeModal() { $('pl-nodemodal').classList.remove('open'); }
+    function closeNodeModal() { stopNodeLogPoll(); $('pl-nodemodal').classList.remove('open'); }
+    function stopNodeLogPoll() { if (PL.logPoll) { clearInterval(PL.logPoll); PL.logPoll = null; } }
+    // Simple ANSI strip (inline regex). Keep in sync with the server-side
+    // equivalent at crates/forge_workspace/src/pipeline.rs strip_ansi().
+    function stripAnsiJs(s) { return (s || '').replace(/\[[0-9;?]*[a-zA-Z]/g, ''); }
     // Existing call sites use renderInspector() to "refresh the editor"; now that
     // means re-rendering the modal body when it's open.
     function renderInspector() { if (nodeModalOpen() && PL.g && PL.sel && PL.g.nodes[PL.sel]) buildNodeForm($('pl-nm-body')); else if (nodeModalOpen() && !(PL.g && PL.g.nodes[PL.sel])) closeNodeModal(); }
@@ -2514,12 +2612,192 @@
         n.depends_on.forEach((dep) => { const t = document.createElement('span'); t.className = 'pl-pill'; t.style.cssText = 'background:#8a8f98;cursor:pointer'; t.title = 'remove dependency'; t.textContent = dep + ' ✕'; t.onclick = () => { n.depends_on = n.depends_on.filter((x) => x !== dep); renderCanvas(); buildNodeForm(box); }; dw.appendChild(t); });
         row('depends on (edit on canvas)', dw);
       }
+      // last-run output (read-only) — what this node produced on the most recent run
+      const ro = PL.runOutputs && PL.runOutputs[id];
+      if (ro && (ro.status || ro.error || Object.keys(ro.outputs || {}).length)) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label'); l.textContent = 'last run — ' + (ro.status || ''); r.appendChild(l);
+        if (ro.error) { const e = document.createElement('div'); e.style.cssText = 'color:#e5484d;font-size:11px;white-space:pre-wrap'; e.textContent = ro.error; r.appendChild(e); }
+        for (const [k, v] of Object.entries(ro.outputs || {})) {
+          const oh = document.createElement('div'); oh.style.cssText = 'font-size:10px;color:#2e9e44;margin-top:4px;font-weight:600'; oh.textContent = k;
+          const ta = document.createElement('textarea'); ta.readOnly = true; ta.value = v; ta.style.minHeight = '54px';
+          r.appendChild(oh); r.appendChild(ta);
+        }
+        box.appendChild(r);
+      }
+      // live run log (streamed stdout) — polls while the node is running
+      stopNodeLogPoll();
+      if (PL.runId) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label'); l.textContent = 'run log'; r.appendChild(l);
+        const ta = document.createElement('textarea'); ta.readOnly = true; ta.style.minHeight = '90px'; ta.placeholder = '(no log for this node yet)'; r.appendChild(ta);
+        box.appendChild(r);
+        const fetchLog = async () => {
+          const d = await (await api('/api/pipeline/node-log?run=' + encodeURIComponent(PL.runId) + '&node=' + encodeURIComponent(id))).json().catch(() => null);
+          if (!d) return;
+          const atBottom = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 8;
+          ta.value = stripAnsiJs(d.log || '').slice(-8000);
+          if (atBottom) ta.scrollTop = ta.scrollHeight;
+        };
+        fetchLog();
+        if ((PL.runOutputs[id] || {}).status === 'running') {
+          PL.logPoll = setInterval(async () => {
+            if (!nodeModalOpen()) { stopNodeLogPoll(); return; }
+            await fetchLog();
+            const cur = (PL.runOutputs[id] || {}).status;
+            if (cur && cur !== 'running') stopNodeLogPoll();
+          }, 1500);
+        }
+      }
     }
     function renameNode(oldId, nid) {
       const g = PL.g; g.nodes[nid] = g.nodes[oldId]; delete g.nodes[oldId];
       g.layout[nid] = g.layout[oldId]; delete g.layout[oldId];
       for (const k of Object.keys(g.nodes)) g.nodes[k].depends_on = g.nodes[k].depends_on.map((x) => (x === oldId ? nid : x));
       PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
+    }
+
+    /* ---------- team (resident agent team) page ---------- */
+    const TEAM = { project: null, poll: null };
+    const TM_ROLES = [
+      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [] },
+      { key: 'engineer', name: 'Engineer', ico: '🔨', statuses: ['open', 'in_progress'] },
+      { key: 'reviewer', name: 'Reviewer', ico: '🔍', statuses: ['review'] },
+      { key: 'qa', name: 'QA', ico: '✅', statuses: ['qa'] },
+      { key: 'done', name: 'Done', ico: '🏁', statuses: ['done', 'rejected'] },
+    ];
+    const TM_ORDER = ['coordinator', 'engineer', 'reviewer', 'qa', 'done'];
+    const TM_POS = { coordinator: { x: 24, y: 90 }, engineer: { x: 268, y: 90 }, reviewer: { x: 512, y: 90 }, qa: { x: 756, y: 90 }, done: { x: 1000, y: 90 } };
+    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
+    $('team-open').onclick = openTeam;
+    $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
+    $('tm-refresh').onclick = () => loadTeam();
+    function tmStopPoll() { if (TEAM.poll) { clearInterval(TEAM.poll); TEAM.poll = null; } }
+    async function tmLoadProjects() {
+      const d = await (await api('/api/pipeline/projects')).json().catch(() => ({ projects: [] }));
+      const sel = $('tm-project'); sel.innerHTML = '';
+      for (const p of (d.projects || [])) { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name; sel.appendChild(o); }
+      if ((d.projects || []).length) {
+        if (!TEAM.project || !d.projects.find((p) => p.name === TEAM.project)) TEAM.project = d.projects[0].name;
+        sel.value = TEAM.project; startTeamPoll();
+      } else {
+        TEAM.project = null; [...$('tm-canvas').querySelectorAll('.tm-card')].forEach((c) => c.remove());
+        $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — click "+ Project" to add a folder.';
+      }
+    }
+    $('tm-addproject').onclick = () => openPicker('', async (p) => {
+      const name = await addProjectPath(p);
+      if (name) { TEAM.project = name; tmLoadProjects(); }
+    });
+    $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
+    $('tm-run').onclick = () => tmRun(false);
+    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else tmRun(true); };
+    async function tmRun(daemon) {
+      if (!TEAM.project) { $('tm-status').textContent = 'add a project first'; return; }
+      const goal = $('tm-goal').value.trim();
+      const r = await api('/api/team/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, goal, daemon }) });
+      const d = await r.json();
+      if (!r.ok) { $('tm-status').textContent = '✗ ' + (d.error || 'failed'); $('tm-status').style.color = '#e5484d'; return; }
+      $('tm-status').textContent = (daemon ? '⚡ daemon started' : '▶ team started') + ' (pid ' + d.pid + ')'; $('tm-status').style.color = '#2e9e44';
+      startTeamPoll();
+    }
+    async function tmStop() {
+      if (!TEAM.project) return;
+      await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
+      $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
+    }
+    async function tmLoadAgents() {
+      const [al, am] = await Promise.all([
+        api('/api/agents').then((r) => r.json()).catch(() => []),
+        api('/api/team/agents?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ agents: {} })),
+      ]);
+      TEAM.agentList = Array.isArray(al) ? al : [];
+      TEAM.agentMap = (am && am.agents) || {};
+    }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadAgents().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    async function loadTeam() {
+      if (!TEAM.project) return;
+      const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
+      if (d) renderTeam(d);
+    }
+    function renderTeam(d) {
+      const reqs = d.requests || [], msgs = d.messages || [];
+      TEAM.running = !!d.running;
+      $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
+      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
+      // Only rebuild the canvas when the board data actually changed, so an open
+      // agent dropdown isn't reset by the 3s poll.
+      const sig = JSON.stringify([reqs, msgs]);
+      if (sig === TEAM._sig) return;
+      TEAM._sig = sig;
+      const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
+      const ab = $('tm-alerts'); ab.innerHTML = '';
+      for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
+      const canvas = $('tm-canvas'); [...canvas.querySelectorAll('.tm-card')].forEach((c) => c.remove());
+      for (const role of TM_ROLES) canvas.appendChild(tmCard(role, reqs, msgs));
+      tmEdges();
+    }
+    function tmCard(role, reqs, msgs) {
+      const pos = TM_POS[role.key];
+      const mine = role.key === 'coordinator' ? [] : reqs.filter((r) => role.statuses.includes(r.status));
+      const cnt = role.key === 'coordinator' ? reqs.length : mine.length;
+      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(role.key) === 0);
+      const inbox = msgs.filter((m) => m.to === role.key + '-1' && !m.read && m.category === 'ticket').length;
+      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + role.key;
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const th = document.createElement('div'); th.className = 'th';
+      th.innerHTML = '<span class="ico">' + role.ico + '</span><span class="nm">' + role.name + '</span><span class="cnt' + (cnt ? '' : ' zero') + '">' + cnt + '</span>';
+      const tb = document.createElement('div'); tb.className = 'tb';
+      if (role.key === 'coordinator') { const s = document.createElement('div'); s.className = 'rq'; s.textContent = 'plans goals → requests'; tb.appendChild(s); }
+      else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
+      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
+      el.appendChild(th); el.appendChild(tb);
+      if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
+      if (role.key !== 'done') {
+        const af = document.createElement('div'); af.className = 'tf';
+        const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
+        const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
+        const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
+        for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if ((TEAM.agentMap || {})[role.key] === a.id) o.selected = true; sel.appendChild(o); }
+        sel.onchange = async () => { TEAM.agentMap = TEAM.agentMap || {}; TEAM.agentMap[role.key] = sel.value; await api('/api/team/agents', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, agents: TEAM.agentMap }) }); };
+        af.appendChild(sel); el.appendChild(af);
+      }
+      return el;
+    }
+    $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
+    async function tmShowRequest(id) {
+      const d = await (await api('/api/team/request?project=' + encodeURIComponent(TEAM.project) + '&id=' + encodeURIComponent(id))).json().catch(() => null);
+      if (!d || !d.request) return;
+      const req = d.request, res = d.response;
+      $('tm-req-title').textContent = req.title || id;
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const sec = (label, html) => { const s = document.createElement('div'); s.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; s.appendChild(l); const c = document.createElement('div'); c.style.cssText = 'font-size:12px;white-space:pre-wrap;line-height:1.5'; c.innerHTML = html; s.appendChild(c); b.appendChild(s); };
+      sec('status', '<b>' + escapeHtml(req.status || '') + '</b>' + (req.claimed_by ? ' · @' + escapeHtml(req.claimed_by) : ''));
+      if (req.description) sec('description', escapeHtml(req.description));
+      if ((req.acceptance_criteria || []).length) sec('acceptance criteria', '<ul style="margin:0;padding-left:18px">' + req.acceptance_criteria.map((c) => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul>');
+      if (res) {
+        if (res.engineer) sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+        if (res.review) sec('🔍 review — ' + escapeHtml(res.review.result || ''), (res.review.findings || []).length ? '<ul style="margin:0;padding-left:18px">' + res.review.findings.map((f) => '<li>[' + escapeHtml(f.severity || '') + '] ' + escapeHtml(f.file || '') + ' — ' + escapeHtml(f.description || '') + '</li>').join('') + '</ul>' : '(no findings)');
+        if (res.qa) sec('✅ qa — ' + escapeHtml(res.qa.result || ''), escapeHtml(res.qa.notes || ''));
+      }
+      $('tm-reqmodal').classList.add('open');
+    }
+    function tmEdges() {
+      const svg = $('tm-edges'); svg.innerHTML = '';
+      const dims = (k) => { const el = document.getElementById('tm-' + k), p = TM_POS[k]; return { x: p.x, y: p.y, w: el ? el.offsetWidth : 200, h: el ? el.offsetHeight : 80 }; };
+      const path = (d, cls) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); if (cls) p.setAttribute('class', cls); svg.appendChild(p); };
+      for (let i = 0; i < TM_ORDER.length - 1; i++) {
+        const a = dims(TM_ORDER[i]), b = dims(TM_ORDER[i + 1]);
+        const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
+        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
+      }
+      // rework back-edges (dashed) from reviewer/qa down to engineer
+      const eng = dims('engineer');
+      for (const from of ['reviewer', 'qa']) {
+        const f = dims(from);
+        const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
+        path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+      }
     }
 
     // Renders one framed stats card per connected platform, each with a small

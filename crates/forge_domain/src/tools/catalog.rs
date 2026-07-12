@@ -54,6 +54,8 @@ pub enum ToolCatalog {
     Followup(Followup),
     Plan(PlanCreate),
     Skill(SkillFetch),
+    PipelineList(PipelineList),
+    PipelineRun(PipelineRun),
     TodoWrite(TodoWrite),
     TodoRead(TodoRead),
     #[serde(alias = "Task")]
@@ -690,6 +692,38 @@ pub struct SkillFetch {
     pub name: String,
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, ToolDescription, PartialEq)]
+#[tool_description_file = "crates/forge_domain/src/tools/descriptions/pipeline_list.md"]
+pub struct PipelineList {}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, ToolDescription, PartialEq)]
+#[tool_description_file = "crates/forge_domain/src/tools/descriptions/pipeline_run.md"]
+pub struct PipelineRun {
+    /// The pipeline file name exactly as returned by pipeline_list (e.g.
+    /// "pr-review.yaml").
+    pub name: String,
+
+    /// Directory the pipeline's nodes run in (their default working
+    /// directory). If not specified, defaults to the current working
+    /// directory.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+
+    /// Values for the workflow's declared `input:` fields, as key → value.
+    /// Provide every input pipeline_list reports for this pipeline unless it
+    /// has a default.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub inputs: std::collections::BTreeMap<String, String>,
+
+    /// Per-node wall-clock timeout in seconds (default 300). Raise it for
+    /// pipelines whose agent nodes do long tasks.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_timeout_secs: Option<u64>,
+}
+
 /// A single todo item sent by the model.
 ///
 /// The model always provides `content` and `status`. The server uses `content`
@@ -824,6 +858,8 @@ impl ToolDescription for ToolCatalog {
             ToolCatalog::Write(v) => v.description(),
             ToolCatalog::Plan(v) => v.description(),
             ToolCatalog::Skill(v) => v.description(),
+            ToolCatalog::PipelineList(v) => v.description(),
+            ToolCatalog::PipelineRun(v) => v.description(),
             ToolCatalog::TodoWrite(v) => v.description(),
             ToolCatalog::TodoRead(v) => v.description(),
             ToolCatalog::Task(v) => v.description(),
@@ -884,6 +920,8 @@ impl ToolCatalog {
             ToolCatalog::Write(_) => r#gen.into_root_schema_for::<FSWrite>(),
             ToolCatalog::Plan(_) => r#gen.into_root_schema_for::<PlanCreate>(),
             ToolCatalog::Skill(_) => r#gen.into_root_schema_for::<SkillFetch>(),
+            ToolCatalog::PipelineList(_) => r#gen.into_root_schema_for::<PipelineList>(),
+            ToolCatalog::PipelineRun(_) => r#gen.into_root_schema_for::<PipelineRun>(),
             ToolCatalog::Task(_) => r#gen.into_root_schema_for::<TaskInput>(),
             ToolCatalog::TodoWrite(_) => r#gen.into_root_schema_for::<TodoWrite>(),
             ToolCatalog::TodoRead(_) => r#gen.into_root_schema_for::<TodoRead>(),
@@ -1004,12 +1042,28 @@ impl ToolCatalog {
                 cwd,
                 message: format!("Fetch content from URL: {}", input.url),
             }),
+            // Running a pipeline executes its shell/agent nodes — gate it like Shell.
+            ToolCatalog::PipelineRun(input) => {
+                Some(crate::policies::PermissionOperation::Execute {
+                    command: format!(
+                        "pipeline_run {}{}",
+                        input.name,
+                        input
+                            .inputs
+                            .iter()
+                            .map(|(k, v)| format!(" --input {k}={v}"))
+                            .collect::<String>()
+                    ),
+                    cwd: input.dir.as_ref().map(PathBuf::from).unwrap_or(cwd),
+                })
+            }
             // Operations that don't require permission checks
             ToolCatalog::SemSearch(_)
             | ToolCatalog::Undo(_)
             | ToolCatalog::Followup(_)
             | ToolCatalog::Plan(_)
             | ToolCatalog::Skill(_)
+            | ToolCatalog::PipelineList(_)
             | ToolCatalog::TodoWrite(_)
             | ToolCatalog::TodoRead(_)
             | ToolCatalog::Task(_) => None,

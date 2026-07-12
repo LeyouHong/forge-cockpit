@@ -27,6 +27,37 @@ impl ExtensionStat {
     }
 }
 
+/// One saved pipeline recipe, listed in the system prompt's
+/// `<available_pipelines>` so the agent routes matching requests through
+/// `pipeline_run` instead of doing the work manually.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineEntry {
+    /// File name to pass to pipeline_run (e.g. "pr-review.yaml").
+    pub file: String,
+    /// The workflow's declared name.
+    pub name: String,
+    pub description: String,
+    /// Declared inputs, pre-rendered as "key" or "key (default: v)".
+    pub inputs: Vec<String>,
+}
+
+impl PipelineEntry {
+    /// Creates a new [`PipelineEntry`].
+    pub fn new(
+        file: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        inputs: Vec<String>,
+    ) -> Self {
+        Self {
+            file: file.into(),
+            name: name.into(),
+            description: description.into(),
+            inputs,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Extension {
     pub extension_stats: Vec<ExtensionStat>,
@@ -115,6 +146,11 @@ pub struct SystemContext {
     /// List of available skills
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<Skill>,
+
+    /// List of the user's saved pipelines (global recipes runnable via
+    /// pipeline_run)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pipelines: Vec<PipelineEntry>,
 
     /// Currently selected model with capabilities
     #[serde(skip_serializing_if = "Option::is_none")]

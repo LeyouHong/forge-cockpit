@@ -17,6 +17,8 @@ tools:
   - shell
   - fetch
   - skill
+  - pipeline_list
+  - pipeline_run
   - todo_write
   - todo_read
   - mcp_*
@@ -150,3 +152,7 @@ Choose tools based on the nature of the task:
 {{> forge-partial-skill-instructions.md}}
 {{else}}
 {{/if}}
+
+{{#if tool_names.pipeline_run}}{{#if pipelines}}
+{{> forge-partial-pipeline-instructions.md}}
+{{/if}}{{/if}}

@@ -10,8 +10,8 @@ use crate::services::{Services, ShellService};
 use crate::{
     AgentRegistry, ConversationService, EnvironmentInfra, FollowUpService, FsPatchService,
     FsReadService, FsRemoveService, FsSearchService, FsUndoService, FsWriteService,
-    ImageReadService, NetFetchService, PlanCreateService, ProviderService, SkillFetchService,
-    WorkspaceService,
+    ImageReadService, NetFetchService, PipelineService, PlanCreateService, ProviderService,
+    SkillFetchService, WorkspaceService,
 };
 
 pub struct ToolExecutor<S> {
@@ -321,6 +321,25 @@ impl<
             ToolCatalog::Skill(input) => {
                 let skill = self.services.fetch_skill(input.name.clone()).await?;
                 ToolOperation::Skill { output: skill }
+            }
+            ToolCatalog::PipelineList(_) => {
+                let output = self.services.list_pipelines().await?;
+                ToolOperation::PipelineList { output }
+            }
+            ToolCatalog::PipelineRun(input) => {
+                let dir = input
+                    .dir
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.services.get_environment().cwd.clone());
+                let timeout = std::time::Duration::from_secs(
+                    input.node_timeout_secs.unwrap_or(300).max(1),
+                );
+                let output = self
+                    .services
+                    .run_pipeline(input.name.clone(), dir, input.inputs.clone(), timeout)
+                    .await?;
+                ToolOperation::PipelineRun { output }
             }
             ToolCatalog::TodoWrite(input) => {
                 let before = context.get_todos()?;

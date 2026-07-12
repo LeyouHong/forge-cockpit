@@ -2710,6 +2710,7 @@ dependencies = [
  "forge_snaps",
  "forge_stream",
  "forge_test_kit",
+ "forge_workspace",
  "futures",
  "glob",
  "gray_matter",

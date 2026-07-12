@@ -1,5 +1,6 @@
 ---
 source: crates/forge_repo/src/provider/openai_responses/request.rs
+assertion_line: 976
 expression: actual.tools
 ---
 [
@@ -664,6 +665,72 @@ expression: actual.tools
     },
     "strict": true,
     "description": "Fetches detailed information about a specific skill. Use this tool to load skill content and instructions when you need to understand how to perform a specialized task. Skills provide domain-specific knowledge, workflows, and best practices. Only invoke skills that are listed in the available skills section. Do not invoke a skill that is already active."
+  },
+  {
+    "type": "function",
+    "name": "pipeline_list",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "strict": true,
+    "description": "Lists the user's saved pipelines — reusable YAML workflows (DAGs of AI-agent and shell nodes) built in the Forge web UI or CLI. Returns each pipeline's file name, workflow name, description, declared inputs (with defaults), and node ids. ALWAYS check this list when the user asks for a task that an existing pipeline might automate (e.g. \"review this PR\" when a pr-review pipeline exists) — running the pipeline is preferred over doing the equivalent work manually. Also call it before pipeline_run to discover the exact file name and required inputs."
+  },
+  {
+    "type": "function",
+    "name": "pipeline_run",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Directory the pipeline's nodes run in (their default working\ndirectory). If not specified, defaults to the current working\ndirectory."
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Values for the workflow's declared `input:` fields, as key → value.\nProvide every input pipeline_list reports for this pipeline unless it\nhas a default.",
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "name": {
+          "description": "The pipeline file name exactly as returned by pipeline_list (e.g.\n\"pr-review.yaml\").",
+          "type": "string"
+        },
+        "node_timeout_secs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-node wall-clock timeout in seconds (default 300). Raise it for\npipelines whose agent nodes do long tasks."
+        }
+      },
+      "required": [
+        "dir",
+        "inputs",
+        "name",
+        "node_timeout_secs"
+      ],
+      "type": "object"
+    },
+    "strict": true,
+    "description": "Runs one of the user's saved pipelines (a DAG of AI-agent and shell nodes) to completion and returns every node's status, outputs, and errors. Prefer this over doing the equivalent work manually whenever an existing pipeline automates the requested task — e.g. run the pr-review pipeline when asked to review a PR. Call pipeline_list first to get the exact file name and the declared inputs, and pass every required input via `inputs`. Nodes run against `dir` (defaults to the current working directory), so set it when the task targets another repo. This call blocks until the whole pipeline finishes; agent nodes may take minutes, so summarize the returned node outputs for the user afterwards instead of re-doing the work."
   },
   {
     "type": "function",

@@ -18,8 +18,8 @@ use crate::truncation::{
 };
 use crate::utils::{compute_hash, format_display_path};
 use crate::{
-    FsRemoveOutput, FsUndoOutput, FsWriteOutput, HttpResponse, PatchOutput, PlanCreateOutput,
-    ReadOutput, ResponseContext, SearchResult, ShellOutput,
+    FsRemoveOutput, FsUndoOutput, FsWriteOutput, HttpResponse, PatchOutput, PipelineListOutput,
+    PipelineRunOutput, PlanCreateOutput, ReadOutput, ResponseContext, SearchResult, ShellOutput,
 };
 
 #[derive(Debug, Default, Setters)]
@@ -78,6 +78,12 @@ pub enum ToolOperation {
     },
     Skill {
         output: forge_domain::Skill,
+    },
+    PipelineList {
+        output: PipelineListOutput,
+    },
+    PipelineRun {
+        output: PipelineRunOutput,
     },
     TodoWrite {
         before: Vec<forge_domain::Todo>,
@@ -657,6 +663,59 @@ impl ToolOperation {
                     }));
                 }
 
+                forge_domain::ToolOutput::text(elm)
+            }
+            ToolOperation::PipelineList { output } => {
+                let mut elm =
+                    Element::new("pipelines").attr("dir", output.dir.display().to_string());
+                if output.pipelines.is_empty() {
+                    elm = elm.text(
+                        "No pipelines saved yet — the user can build them on the web UI's Pipeline page or drop YAML files into this directory.",
+                    );
+                }
+                elm = elm.append(output.pipelines.into_iter().map(|p| {
+                    let mut e = Element::new("pipeline")
+                        .attr("file", p.file)
+                        .attr("name", p.name)
+                        .attr("nodes", p.nodes.join(", "));
+                    if !p.description.is_empty() {
+                        e = e.attr("description", p.description);
+                    }
+                    e.append(p.inputs.into_iter().map(|(k, default)| {
+                        let mut i = Element::new("input").attr("name", k);
+                        if let Some(d) = default {
+                            i = i.attr("default", d);
+                        }
+                        i
+                    }))
+                }));
+                forge_domain::ToolOutput::text(elm)
+            }
+            ToolOperation::PipelineRun { output } => {
+                let elm = Element::new("pipeline_run")
+                    .attr("id", output.id)
+                    .attr("workflow", output.workflow)
+                    .attr("status", output.status)
+                    .attr("dir", output.dir.display().to_string())
+                    .append(output.nodes.into_iter().map(|n| {
+                        let mut e =
+                            Element::new("node").attr("id", n.id).attr("status", n.status);
+                        if let Some(err) = n.error {
+                            e = e.append(Element::new("error").text(err));
+                        }
+                        e.append(n.outputs.into_iter().map(|(name, value)| {
+                            // Keep node outputs bounded so a chatty node can't blow up
+                            // the context.
+                            let mut value = value;
+                            const MAX: usize = 10_000;
+                            if value.len() > MAX {
+                                let cut = (0..=MAX).rev().find(|i| value.is_char_boundary(*i));
+                                value.truncate(cut.unwrap_or(0));
+                                value.push_str("\n… [truncated]");
+                            }
+                            Element::new("output").attr("name", name).cdata(value)
+                        }))
+                    }));
                 forge_domain::ToolOutput::text(elm)
             }
             ToolOperation::TodoWrite { before, after } => {
