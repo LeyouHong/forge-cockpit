@@ -1,0 +1,205 @@
+# Auto-fix pipeline — copies to ~/.forge-web/pipelines/.
+# Install: cp crates/forge_workspace/examples/pr-*.yaml ~/.forge-web/pipelines/
+#
+#   forge-pipeline run ~/.forge-web/pipelines/pr-auto-fix.yaml \
+#       --input pr=42 --input repo=owner/name --project . --isolate-mcp
+#
+# Companion pipeline: pr-code-review.yaml — run this first to generate the
+# review, then pr-auto-fix to address the findings. Re-run pr-code-review
+# afterwards to verify.
+# Requires the `gh` CLI to be authenticated.
+description: |
+  Automatically fixes the findings raised by the pr-code-review pipeline on a GitHub PR — use this whenever the user asks to fix/address the review comments on a PR. Checks out the PR branch into a temp dir, reads the latest "Forge AI Code Review" comment, verifies each finding in the real code, applies minimal fixes in the PR's own style, runs quick checks (no dependency installs), commits, pushes back to the PR branch, and posts a summary comment of what was fixed. By default fixes 🔴 blockers only; pass scope=all to also address 🟡 suggestions and 🟢 nice-to-haves (use scope=all when the review has no blockers). Re-run pr-code-review afterwards for the next round's verification. IMPORTANT: run with node_timeout_secs 1200 — fixing takes longer than reviewing.
+
+input:
+  pr:
+    default: ""
+    description: PR number to fix
+  repo:
+    default: ""
+    description: Repository in owner/name format
+  scope:
+    default: "blockers"
+    description: What to fix — "blockers" (🔴 only) or "all" (also 🟡 suggestions and 🟢 nice-to-haves)
+
+name: pr-auto-fix
+
+nodes:
+  prep:
+    mode: shell
+    outputs:
+      - extract: result
+        name: workdir
+    prompt: |
+      set -euo pipefail
+      WORK="$(mktemp -d /tmp/forge-pr-fix-XXXXXX)"
+      gh repo clone {{input.repo}} "$WORK" -- --quiet >&2
+      cd "$WORK"
+      gh pr checkout {{input.pr}} --repo {{input.repo}} >&2
+      echo "$WORK"
+
+  context:
+    mode: shell
+    outputs:
+      - extract: result
+        name: meta
+    prompt: |
+      set -euo pipefail
+      META="$(gh pr view {{input.pr}} --repo {{input.repo}} --json title,baseRefName,headRefName)"
+      echo "TITLE: $(printf '%s' "$META" | jq -r .title)"
+      echo "BASE_BRANCH: $(printf '%s' "$META" | jq -r .baseRefName)"
+      echo "HEAD_BRANCH: $(printf '%s' "$META" | jq -r .headRefName)"
+      echo ""
+      echo "--- LATEST AI REVIEW ---"
+      REVIEW="$(gh pr view {{input.pr}} --repo {{input.repo}} --json comments \
+        --jq '[.comments[] | select(.body | contains("Forge AI Code Review"))] | last | .body // empty')"
+      if [ -z "$REVIEW" ]; then
+        echo "(no Forge AI Code Review comment found — run pr-code-review first)"
+      else
+        printf '%s' "$REVIEW" | head -c 8000
+      fi
+
+  fix:
+    depends_on:
+      - prep
+      - context
+    project: "{{nodes.prep.outputs.workdir}}"
+    outputs:
+      - extract: result
+        name: summary
+    prompt: |
+      You are a senior engineer fixing code-review findings. Your working
+      directory is a fresh checkout of the PR branch. The latest AI review of
+      this PR is below.
+
+      PR metadata and review:
+      ---
+      {{nodes.context.outputs.meta}}
+      ---
+
+      Fix scope (from input): {{input.scope}}
+      - "blockers": address ONLY the "🔴 Blockers (must fix)" section.
+      - "all": also address "🟡 Suggestions" and "🟢 Nice-to-have" items.
+
+      ## Your job
+
+      1. If the review above says no review comment was found, or there is
+         nothing within the fix scope to address, do nothing and report
+         NOTHING_TO_FIX (and if blockers-only scope found nothing but
+         suggestions exist, say re-running with scope=all would cover them).
+      2. Otherwise, for EACH item in scope:
+         a. Verify the finding is real by reading the referenced code yourself —
+            reviews can be wrong. If it is not real, skip it and say why.
+         b. Apply the MINIMAL fix, matching the surrounding code's style. Follow
+            the review's suggested fix unless you find a clearly better one.
+      3. Do NOT make changes beyond the review findings in scope.
+      4. Verify your fixes with quick checks that work with what is already
+         installed (e.g. `cargo check -q`, `tsc --noEmit`, targeted tests).
+         NEVER install dependencies or run long builds.
+      5. Commit your changes: stage ONLY the files you edited (never `git add -A`),
+         one commit, message: "fix: address AI review findings" followed by a
+         bullet per finding. Do NOT push — a later step pushes.
+
+      ## Output format (STRICT)
+
+      Your FIRST line must be exactly one of:
+        RESULT: FIXED
+        RESULT: NOTHING_TO_FIX
+        RESULT: BLOCKED
+
+      (BLOCKED = blockers exist but you could not fix them safely; explain why.)
+
+      Then a GitHub-markdown summary:
+
+      ### 🔧 Fixes applied
+      One bullet per finding: **finding title** → what you changed (`file:line`),
+      or "skipped — <reason>" for items you verified as not real.
+
+      ### 🧪 Verification
+      What you ran and the result.
+
+      Formatting: plain GitHub markdown; never indent lines by 4+ spaces; use
+      fenced code blocks for code.
+
+  push:
+    depends_on:
+      - fix
+    mode: shell
+    outputs:
+      - extract: result
+        name: pushed
+    prompt: |
+      set -euo pipefail
+      SUMMARY={{nodes.fix.outputs.summary}}
+      RESULT_LINE="$(printf '%s\n' "$SUMMARY" | head -1)"
+      cd {{nodes.prep.outputs.workdir}}
+
+      case "$RESULT_LINE" in
+        *FIXED*) ;;
+        *)
+          echo "no-push: $RESULT_LINE"
+          exit 0
+          ;;
+      esac
+
+      AHEAD="$(git rev-list @{u}..HEAD --count)"
+      if [ "$AHEAD" -eq 0 ]; then
+        echo "no-push: agent reported FIXED but no commits found"
+        exit 0
+      fi
+      git push
+      echo "pushed: $AHEAD commit(s) -> $(git branch --show-current)"
+
+  comment:
+    depends_on:
+      - push
+    mode: shell
+    outputs:
+      - extract: stdout
+        name: result
+    prompt: |
+      set -euo pipefail
+      SUMMARY={{nodes.fix.outputs.summary}}
+      RESULT_LINE="$(printf '%s\n' "$SUMMARY" | head -1)"
+      REST="$(printf '%s\n' "$SUMMARY" | tail -n +2 | awk 'f||NF{f=1} f')"
+      PUSHED={{nodes.push.outputs.pushed}}
+
+      case "$RESULT_LINE" in
+        *NOTHING_TO_FIX*)
+          echo "DONE: nothing to fix — no comment posted"
+          exit 0
+          ;;
+      esac
+
+      BODY_FILE="$(mktemp)"
+      {
+        printf '## 🔧 Forge Auto-Fix — PR #{{input.pr}}\n\n'
+        case "$RESULT_LINE" in
+          *FIXED*)   printf ':white_check_mark: **Blockers addressed** (`%s`)\n\n' "$PUSHED" ;;
+          *BLOCKED*) printf ':warning: **Could not fix automatically** — see below\n\n' ;;
+        esac
+        printf '%s\n\n' "$REST"
+        printf -- '---\n'
+        printf '_Automated fix by [ForgeCode](https://forgecode.dev) pipeline `pr-auto-fix` — re-run `pr-code-review` to verify._\n'
+      } > "$BODY_FILE"
+
+      gh pr comment {{input.pr}} --repo {{input.repo}} --body-file "$BODY_FILE"
+      rm -f "$BODY_FILE"
+      echo "DONE: $RESULT_LINE — commented"
+
+  cleanup:
+    depends_on:
+      - comment
+    mode: shell
+    prompt: |
+      set -euo pipefail
+      WORK={{nodes.prep.outputs.workdir}}
+      case "$WORK" in
+        /tmp/forge-pr-fix-*|/private/tmp/forge-pr-fix-*)
+          rm -rf "$WORK"
+          echo "cleaned $WORK"
+          ;;
+        *)
+          echo "refusing to delete unexpected path: $WORK"
+          ;;
+      esac
