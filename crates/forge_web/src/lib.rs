@@ -170,6 +170,7 @@ where
         .route("/api/team/files", get(pipeline::team_files::<A>))
         .route("/api/team/file", get(pipeline::team_file::<A>))
         .route("/api/team/diff", get(pipeline::team_diff::<A>))
+        .route("/api/team/yaml", get(pipeline::team_yaml_get::<A>).post(pipeline::team_yaml_set::<A>))
         .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
         .route("/api/team/approve", post(pipeline::team_approve::<A>))
         .route(

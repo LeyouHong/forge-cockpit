@@ -798,6 +798,8 @@
       <label class="sl" style="margin-right:6px">Project</label>
       <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
       <button class="btn btn-sm" id="tm-addagent" title="Add a team member">+ Add Agent</button>
+      <button class="btn btn-sm" id="tm-export" title="Download this team (members, SOPs, connections, layout) as YAML">📤 Export</button>
+      <button class="btn btn-sm" id="tm-import" title="Load a team YAML — replaces this project's team (validated first)">📂 Import</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
@@ -2926,6 +2928,29 @@
         $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — click "+ Project" to add a folder.';
       }
     }
+    $('tm-export').onclick = async () => {
+      if (!TEAM.project) return;
+      const d = await api('/api/team/yaml?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null);
+      if (!d || !d.yaml) { $('tm-status').textContent = '✗ export failed'; return; }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([d.yaml], { type: 'text/yaml' }));
+      a.download = 'team-' + TEAM.project + '.yaml'; a.click(); URL.revokeObjectURL(a.href);
+    };
+    $('tm-import').onclick = () => {
+      if (!TEAM.project) return;
+      const f = document.createElement('input'); f.type = 'file'; f.accept = '.yaml,.yml,text/yaml';
+      f.onchange = async () => {
+        const file = f.files && f.files[0]; if (!file) return;
+        if (!confirm('Replace the "' + TEAM.project + '" team with ' + file.name + '?')) return;
+        const yaml = await file.text();
+        const r = await api('/api/team/yaml', plBody({ b: { project: TEAM.project, yaml } }));
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { $('tm-status').textContent = '✗ ' + (d.error || 'import failed'); $('tm-status').style.color = '#e5484d'; return; }
+        $('tm-status').textContent = '✓ imported ' + d.members + ' members'; $('tm-status').style.color = '#2e9e44';
+        await tmLoadConfig(); TEAM._sig = null; loadTeam();
+      };
+      f.click();
+    };
     $('tm-addproject').onclick = () => openPicker('', async (p) => {
       const name = await addProjectPath(p);
       if (name) { TEAM.project = name; tmLoadProjects(); }

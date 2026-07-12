@@ -616,6 +616,37 @@ pub(crate) async fn team_diff<A: API>(
     Ok(Json(json!({ "diff": d })))
 }
 
+/// GET /api/team/yaml?project= — the team config as YAML (for export).
+pub(crate) async fn team_yaml_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let cfg = forge_workspace::team::load_team(&project.join(".forge-workspace"));
+    let yaml = serde_yml::to_string(&cfg)
+        .map_err(|e| AppError::bad_request(format!("serialize team: {e}")))?;
+    Ok(Json(json!({ "yaml": yaml })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamYamlSet {
+    project: String,
+    yaml: String,
+}
+
+/// POST /api/team/yaml — import a YAML team config (validated like PUT config).
+pub(crate) async fn team_yaml_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamYamlSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let cfg: forge_workspace::team::TeamConfig = serde_yml::from_str(&body.yaml)
+        .map_err(|e| AppError::bad_request(format!("bad team YAML: {e}")))?;
+    forge_workspace::team::save_team(&project.join(".forge-workspace"), &cfg)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "members": cfg.members.len() })))
+}
+
 /// GET /api/team/approvals?project= — pending approval gates.
 pub(crate) async fn team_approvals_get<A: API>(
     State(_): State<AppState<A>>,
