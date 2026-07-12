@@ -2955,7 +2955,9 @@
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
-      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
+      $('tm-empty').textContent = reqs.length ? '' : (d.running
+        ? '⏳ team is running — the planning chain (pm → architect → …) takes a few minutes before requests appear here.'
+        : 'no work on the board yet — enter a goal + Run, or start it from the terminal.');
       // Only rebuild the canvas when the board data actually changed, so an open
       // agent dropdown isn't reset by the 3s poll.
       const sig = JSON.stringify([reqs, msgs, TEAM.cfg]);
