@@ -112,6 +112,18 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
 
         let current_time = Local::now();
 
+        // Load saved pipeline entries once — shared by the system prompt
+        // partial and the per-message reminder below, so we avoid hitting the
+        // filesystem twice per chat invocation.
+        let pipeline_entries = if tool_definitions
+            .iter()
+            .any(|d| d.name.as_str() == "pipeline_run")
+        {
+            crate::system_prompt::load_pipeline_entries(self.services.as_ref()).await
+        } else {
+            Vec::new()
+        };
+
         // Insert system prompt
         let conversation =
             SystemPrompt::new(self.services.clone(), environment.clone(), agent.clone())
@@ -121,20 +133,13 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
                 .files(files.clone())
                 .max_extensions(forge_config.max_extensions)
                 .template_config(build_template_config(&forge_config))
+                .pipelines(pipeline_entries.clone())
                 .add_system_message(conversation)
                 .await?;
 
         // Insert user prompt. When the agent has the pipeline_run tool, attach
         // the saved-pipelines reminder next to the user message — the
         // system-prompt listing alone is unreliable for routing.
-        let pipeline_entries = if tool_definitions
-            .iter()
-            .any(|d| d.name.as_str() == "pipeline_run")
-        {
-            crate::system_prompt::load_pipeline_entries(self.services.as_ref()).await
-        } else {
-            Vec::new()
-        };
         let conversation = UserPromptGenerator::new(
             self.services.clone(),
             agent.clone(),

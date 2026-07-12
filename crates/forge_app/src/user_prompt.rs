@@ -96,7 +96,7 @@ impl<S: AttachmentService + EnvironmentInfra<Config = forge_config::ForgeConfig>
         for p in &self.pipelines {
             // First sentence of the description is enough for matching here;
             // the full text is in the system prompt.
-            let first = p.description.split_inclusive(". ").next().unwrap_or("").trim();
+            let first = p.description.split_inclusive(". ").next().unwrap().trim();
             content.push_str(&format!("- `{}` — {}", p.file, first));
             if !p.inputs.is_empty() {
                 content.push_str(&format!(" (inputs: {})", p.inputs.join(", ")));

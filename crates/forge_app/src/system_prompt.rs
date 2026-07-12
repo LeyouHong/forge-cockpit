@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use derive_setters::Setters;
 use forge_domain::{
-    Agent, Conversation, Environment, Extension, ExtensionStat, File, Model, SystemContext,
-    Template, TemplateConfig, ToolCatalog, ToolDefinition, ToolUsagePrompt,
+    Agent, Conversation, Environment, Extension, ExtensionStat, File, Model, PipelineEntry,
+    SystemContext, Template, TemplateConfig, ToolCatalog, ToolDefinition, ToolUsagePrompt,
 };
 use serde_json::{Map, Value, json};
 use strum::IntoEnumIterator;
@@ -25,6 +25,9 @@ pub struct SystemPrompt<S> {
     max_extensions: usize,
     /// Configuration values passed into tool description templates.
     template_config: TemplateConfig,
+    /// User's saved pipeline entries, loaded once for the system prompt partial
+    /// and per-message reminder to avoid duplicate filesystem I/O.
+    pipelines: Vec<PipelineEntry>,
 }
 
 impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
@@ -39,6 +42,7 @@ impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
             custom_instructions: Vec::default(),
             max_extensions: 0,
             template_config: TemplateConfig::default(),
+            pipelines: Vec::default(),
         }
     }
 
@@ -95,8 +99,9 @@ impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
             let skills = self.services.list_skills().await?;
 
             // The user's saved pipelines: listed in the prompt so matching requests
-            // route through pipeline_run.
-            let pipelines = load_pipeline_entries(self.services.as_ref()).await;
+            // route through pipeline_run. Loaded once by the caller and shared
+            // across the system prompt partial and per-message reminder.
+            let pipelines = self.pipelines.clone();
 
             // Fetch extension statistics from git
             let extensions = self.fetch_extensions(self.max_extensions).await;

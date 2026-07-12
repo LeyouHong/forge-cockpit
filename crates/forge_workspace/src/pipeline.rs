@@ -894,7 +894,9 @@ fn exec_node(
             let mut cmd = Command::new("sh");
             cmd.arg(&script).current_dir(project);
             let result = run_capture(cmd, timeout, log);
-            let _ = std::fs::remove_file(&script);
+            if let Err(e) = std::fs::remove_file(&script) {
+                eprintln!("[forge-pipeline] failed to remove node script {:?}: {e}", script);
+            }
             result?
         }
     };
@@ -986,21 +988,18 @@ fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std
             }
         }
     }
-    // Last few stderr lines, flattened — enough to see *why* it failed.
-    let err_tail = || {
-        let mut tail: Vec<&str> = err_out.trim().lines().rev().take(4).collect();
-        tail.reverse();
-        let joined = tail.join(" | ");
-        match joined.char_indices().rev().nth(399) {
-            Some((i, _)) => format!("…{}", &joined[i..]),
-            None => joined,
-        }
-    };
     match status {
         Some(s) if s.success() => Ok(out),
         Some(s) => {
             let code = s.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into());
-            let tail = err_tail();
+            // Last few stderr lines, flattened — enough to see *why* it failed.
+            let mut tail: Vec<&str> = err_out.trim().lines().rev().take(4).collect();
+            tail.reverse();
+            let tail = tail.join(" | ");
+            let tail = match tail.char_indices().rev().nth(399) {
+                Some((i, _)) => format!("…{}", &tail[i..]),
+                None => tail,
+            };
             if tail.is_empty() {
                 Err(format!("exited with {code}"))
             } else {
