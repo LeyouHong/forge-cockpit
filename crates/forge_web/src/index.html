@@ -2568,6 +2568,8 @@
     function openNodeModal(id) { PL.sel = id; renderCanvas(); $('pl-nodemodal').classList.add('open'); buildNodeForm($('pl-nm-body')); }
     function closeNodeModal() { stopNodeLogPoll(); $('pl-nodemodal').classList.remove('open'); }
     function stopNodeLogPoll() { if (PL.logPoll) { clearInterval(PL.logPoll); PL.logPoll = null; } }
+    // Simple ANSI strip (inline regex). Keep in sync with the server-side
+    // equivalent at crates/forge_workspace/src/pipeline.rs strip_ansi().
     function stripAnsiJs(s) { return (s || '').replace(/\[[0-9;?]*[a-zA-Z]/g, ''); }
     // Existing call sites use renderInspector() to "refresh the editor"; now that
     // means re-rendering the modal body when it's open.

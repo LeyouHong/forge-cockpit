@@ -425,7 +425,9 @@ fn forge_workspace_run_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("forge-workspace-run"))
 }
 
-/// Is `pid` still alive? (`kill -0`)
+/// Is `pid` still alive? (`kill -0`). Unix-only — on Windows this always
+/// returns false, so the "team is already running" guard and Stop button are
+/// not effective on that platform.
 fn pid_alive(pid: &str) -> bool {
     Command::new("kill").arg("-0").arg(pid).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
 }
