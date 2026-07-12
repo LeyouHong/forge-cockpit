@@ -806,14 +806,14 @@
       <section class="kanban-section">
         <div class="tm-bar">
           <input id="tm-goal" placeholder='goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests' />
-          <button class="btn btn-primary btn-sm" id="tm-run">▶ Run</button>
-          <button class="btn btn-sm" id="tm-daemon">⚡ Start Daemon</button>
+          <button class="btn btn-primary btn-sm" id="tm-run" title="One-shot: plan the goal (pm > architect > coordinator), work every request to done, then exit">▶ Run</button>
+          <button class="btn btn-sm" id="tm-daemon" title="Resident mode: keeps polling the board and picks up NEW requests until you press Stop">⚡ Start Daemon</button>
           <span class="sl" id="tm-status"></span>
         </div>
         <div id="tm-alerts" class="tm-alerts"></div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
-          <button class="btn btn-sm" id="tm-tab-ws">🗺 Workspace</button>
-          <button class="btn btn-sm" id="tm-tab-code">📁 Code</button>
+          <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
+          <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
         </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
         <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
@@ -3033,6 +3033,7 @@
       const af = document.createElement('div'); af.className = 'tf';
       const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
       const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
+      sel.title = 'Which forge agent (model + persona + toolset) this member runs as.\nforge = full dev tools; muse = plan-only; sage = read-only research.\nDefine custom agents in ~/forge/agents to pick different models per role.';
       const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
       for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
       sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
@@ -3219,9 +3220,11 @@
       const icoIn = document.createElement('input'); icoIn.value = m ? (m.icon || '') : '🤖'; icoIn.style.maxWidth = '70px';
       row('icon', icoIn);
       const stSel = document.createElement('select');
+      stSel.title = 'Which lifecycle stage this member works:\nplan = runs once per goal, before the pipeline (PRD/design/requests)\nimplement = works requests in open/in_progress\nreview = works requests in review\nqa = works requests in qa';
       for (const st of ['plan', 'implement', 'review', 'qa']) { const o = document.createElement('option'); o.value = st; o.textContent = st; if (m && m.stage === st) o.selected = true; stSel.appendChild(o); }
       row('stage', stSel);
       const agSel = document.createElement('select');
+      agSel.title = 'The forge agent (model + persona + toolset) this member runs as; custom agents in ~/forge/agents appear here';
       const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
       for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
       row('agent / model', agSel);
@@ -3229,11 +3232,13 @@
       apprCb.style.cssText = 'width:auto;margin:0';
       const apprWrap = document.createElement('div');
       apprWrap.style.cssText = 'display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text);cursor:pointer';
+      apprWrap.title = 'When checked, each piece of work for this member parks until you click Approve on the Team page (a ticket lands in the human inbox)';
       const apprTxt = document.createElement('span'); apprTxt.textContent = 'require human approval before each piece of work';
       apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
       apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
       row('approval', apprWrap);
       const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
+      depWrap.title = 'Upstream members (the canvas edges). For plan members this sets the planning ORDER; for workers it feeds topology context and notifications. Tip: drag the port on a card to connect visually.';
       for (const other of members) {
         if (m && other.id === m.id) continue;
         const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:11px';
@@ -3244,6 +3249,7 @@
       row('depends on', depWrap);
       const sopTa = document.createElement('textarea'); sopTa.value = m ? (m.role_prompt || '') : '';
       sopTa.placeholder = 'custom SOP (markdown) — leave empty to use the built-in SOP for this id/stage';
+      sopTa.title = 'The standard operating procedure injected as this member prompt. Empty = built-in SOP for this id or its stage. Use Insert example SOP to start.';
       sopTa.style.minHeight = '130px';
       const sopWrap = document.createElement('div');
       const exBtn = document.createElement('button'); exBtn.className = 'btn btn-sm'; exBtn.textContent = '✨ Insert example SOP';
