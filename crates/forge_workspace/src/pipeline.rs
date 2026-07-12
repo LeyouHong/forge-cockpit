@@ -877,9 +877,27 @@ fn exec_node(
             run_capture(cmd, timeout, log)?
         }
         NodeMode::Shell => {
+            // Run via a script FILE, not `sh -c <string>`: macOS /bin/sh is
+            // bash 3.2, whose `-c` string parser mis-handles some nested
+            // quoting (e.g. `"$(… sed '/./,$!d' …)"` expands the quoted `$!`).
+            // The same interpreter parses the identical script correctly from
+            // a file.
+            let script = std::env::temp_dir().join(format!(
+                "forge-pipeline-node-{}-{}.sh",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default()
+            ));
+            std::fs::write(&script, prompt).map_err(|e| format!("write node script: {e}"))?;
             let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg(prompt).current_dir(project);
-            run_capture(cmd, timeout, log)?
+            cmd.arg(&script).current_dir(project);
+            let result = run_capture(cmd, timeout, log);
+            if let Err(e) = std::fs::remove_file(&script) {
+                eprintln!("[forge-pipeline] failed to remove node script {:?}: {e}", script);
+            }
+            result?
         }
     };
 
@@ -907,11 +925,15 @@ fn exec_node(
 
 /// Spawn a command, drain stdout on a reader thread (so a full pipe can't
 /// deadlock the process), and kill it if it outlives `timeout`. When `log` is
-/// set, stdout is tee'd to that file as it streams (for a live node log).
+/// set, stdout is tee'd to that file as it streams (for a live node log), and
+/// stderr is appended after the run. On failure the error carries the stderr
+/// tail — "exited with 1" alone is undebuggable.
 fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std::result::Result<String, String> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
     let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let log_path = log.clone();
     let reader = std::thread::spawn(move || {
         let mut logf = log.and_then(|p| {
             if let Some(d) = p.parent() {
@@ -936,6 +958,11 @@ fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std
         }
         String::from_utf8_lossy(&buf).into_owned()
     });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    });
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -953,9 +980,32 @@ fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std
         }
     };
     let out = reader.join().unwrap_or_default();
+    let err_out = err_reader.join().unwrap_or_default();
+    if !err_out.trim().is_empty() {
+        if let Some(p) = &log_path {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+                let _ = writeln!(f, "\n--- stderr ---\n{}", err_out.trim_end());
+            }
+        }
+    }
     match status {
         Some(s) if s.success() => Ok(out),
-        Some(s) => Err(format!("exited with {}", s.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into()))),
+        Some(s) => {
+            let code = s.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into());
+            // Last few stderr lines, flattened — enough to see *why* it failed.
+            let mut tail: Vec<&str> = err_out.trim().lines().rev().take(4).collect();
+            tail.reverse();
+            let tail = tail.join(" | ");
+            let tail = match tail.char_indices().rev().nth(399) {
+                Some((i, _)) => format!("…{}", &tail[i..]),
+                None => tail,
+            };
+            if tail.is_empty() {
+                Err(format!("exited with {code}"))
+            } else {
+                Err(format!("exited with {code} — stderr: {tail}"))
+            }
+        }
         None => Err(format!("timed out after {}s", timeout.as_secs())),
     }
 }

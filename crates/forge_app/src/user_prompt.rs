@@ -14,6 +14,11 @@ pub struct UserPromptGenerator<S> {
     agent: Agent,
     event: Event,
     current_time: chrono::DateTime<chrono::Local>,
+    /// The user's saved pipelines; when non-empty, a reminder is attached
+    /// right after the user message so the model reliably routes matching
+    /// requests through `pipeline_run` (the system-prompt listing alone is
+    /// easy to miss inside a large prompt).
+    pipelines: Vec<PipelineEntry>,
 }
 
 impl<S: AttachmentService + EnvironmentInfra<Config = forge_config::ForgeConfig>>
@@ -26,7 +31,20 @@ impl<S: AttachmentService + EnvironmentInfra<Config = forge_config::ForgeConfig>
         event: Event,
         current_time: chrono::DateTime<chrono::Local>,
     ) -> Self {
-        Self { services: service, agent, event, current_time }
+        Self {
+            services: service,
+            agent,
+            event,
+            current_time,
+            pipelines: Vec::new(),
+        }
+    }
+
+    /// Sets the pipelines to remind the model about (pass an empty vec when
+    /// the agent doesn't have the pipeline_run tool).
+    pub fn pipelines(mut self, pipelines: Vec<PipelineEntry>) -> Self {
+        self.pipelines = pipelines;
+        self
     }
 
     /// Sets the user prompt in the context based on agent configuration and
@@ -43,6 +61,11 @@ impl<S: AttachmentService + EnvironmentInfra<Config = forge_config::ForgeConfig>
             .unwrap_or(false);
 
         let (conversation, content) = self.add_rendered_message(conversation).await?;
+        let conversation = if content.is_some() {
+            self.add_pipeline_reminder(conversation)
+        } else {
+            conversation
+        };
         let conversation = if is_resume {
             self.add_todos_on_resume(conversation)?
         } else {
@@ -56,6 +79,45 @@ impl<S: AttachmentService + EnvironmentInfra<Config = forge_config::ForgeConfig>
         };
 
         Ok(conversation)
+    }
+
+    /// Attaches a droppable reminder right after the user message listing the
+    /// saved pipelines, so a request that matches one gets routed through
+    /// `pipeline_run` instead of being re-done manually.
+    fn add_pipeline_reminder(&self, mut conversation: Conversation) -> Conversation {
+        if self.pipelines.is_empty() {
+            return conversation;
+        }
+        let mut context = conversation.context.take().unwrap_or_default();
+
+        let mut content = String::from(
+            "<system-reminder>\nBefore doing this task by hand: the user has saved pipelines that automate recurring tasks. If the request above matches what one of these automates (same goal, wording may differ), you MUST run it with the `pipeline_run` tool instead of doing the work manually — see Pipeline Instructions in the system prompt for how.\n",
+        );
+        for p in &self.pipelines {
+            // First sentence of the description is enough for matching here;
+            // the full text is in the system prompt.
+            let first = p.description.split_inclusive(". ").next().unwrap().trim();
+            content.push_str(&format!("- `{}` — {}", p.file, first));
+            if !p.inputs.is_empty() {
+                content.push_str(&format!(" (inputs: {})", p.inputs.join(", ")));
+            }
+            content.push('\n');
+        }
+        content.push_str("</system-reminder>");
+
+        let message = TextMessage {
+            role: Role::User,
+            content,
+            raw_content: None,
+            tool_calls: None,
+            thought_signature: None,
+            reasoning_details: None,
+            model: Some(self.agent.model.clone()),
+            droppable: true, // reminders may be dropped during compaction
+            phase: None,
+        };
+        context = context.add_message(ContextMessage::Text(message));
+        conversation.context(context)
     }
 
     /// Adds existing todos as a user message when resuming a conversation
@@ -314,6 +376,43 @@ mod tests {
 
     fn fixture_generator(agent: Agent, event: Event) -> UserPromptGenerator<MockService> {
         UserPromptGenerator::new(Arc::new(MockService), agent, event, chrono::Local::now())
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_reminder_attached_after_user_message() {
+        let agent = fixture_agent_without_user_prompt();
+        let event = Event::new("fix the review comments on PR 3");
+        let conversation = fixture_conversation();
+        let generator = fixture_generator(agent.clone(), event).pipelines(vec![PipelineEntry {
+            file: "pr-auto-fix.yaml".to_string(),
+            name: "pr-auto-fix".to_string(),
+            description: "Automatically fixes the findings raised by the review. More detail here.".to_string(),
+            inputs: vec!["pr".to_string(), "repo".to_string()],
+        }]);
+
+        let actual = generator.add_user_prompt(conversation).await.unwrap();
+        let messages = actual.context.unwrap().messages;
+        assert_eq!(messages.len(), 2, "user message + reminder");
+
+        let reminder = messages.last().unwrap();
+        let content = reminder.content().unwrap();
+        assert!(content.starts_with("<system-reminder>"));
+        assert!(content.contains("`pr-auto-fix.yaml`"));
+        assert!(content.contains("Automatically fixes the findings raised by the review."));
+        assert!(!content.contains("More detail here"), "only first sentence");
+        assert!(content.contains("inputs: pr, repo"));
+        assert!(reminder.is_droppable(), "reminder must be droppable");
+    }
+
+    #[tokio::test]
+    async fn test_no_pipeline_reminder_when_empty() {
+        let agent = fixture_agent_without_user_prompt();
+        let event = Event::new("Simple task");
+        let conversation = fixture_conversation();
+        let generator = fixture_generator(agent.clone(), event);
+
+        let actual = generator.add_user_prompt(conversation).await.unwrap();
+        assert_eq!(actual.context.unwrap().messages.len(), 1);
     }
 
     #[tokio::test]

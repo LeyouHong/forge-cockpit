@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use derive_setters::Setters;
 use forge_domain::{
-    Agent, Conversation, Environment, Extension, ExtensionStat, File, Model, SystemContext,
-    Template, TemplateConfig, ToolCatalog, ToolDefinition, ToolUsagePrompt,
+    Agent, Conversation, Environment, Extension, ExtensionStat, File, Model, PipelineEntry,
+    SystemContext, Template, TemplateConfig, ToolCatalog, ToolDefinition, ToolUsagePrompt,
 };
 use serde_json::{Map, Value, json};
 use strum::IntoEnumIterator;
@@ -25,6 +25,9 @@ pub struct SystemPrompt<S> {
     max_extensions: usize,
     /// Configuration values passed into tool description templates.
     template_config: TemplateConfig,
+    /// User's saved pipeline entries, loaded once for the system prompt partial
+    /// and per-message reminder to avoid duplicate filesystem I/O.
+    pipelines: Vec<PipelineEntry>,
 }
 
 impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
@@ -39,6 +42,7 @@ impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
             custom_instructions: Vec::default(),
             max_extensions: 0,
             template_config: TemplateConfig::default(),
+            pipelines: Vec::default(),
         }
     }
 
@@ -95,28 +99,9 @@ impl<S: SkillFetchService + ShellService + PipelineService> SystemPrompt<S> {
             let skills = self.services.list_skills().await?;
 
             // The user's saved pipelines: listed in the prompt so matching requests
-            // route through pipeline_run. Best-effort — a broken dir must not sink
-            // the conversation.
-            let pipelines = match self.services.list_pipelines().await {
-                Ok(out) => out
-                    .pipelines
-                    .into_iter()
-                    .map(|p| forge_domain::PipelineEntry {
-                        file: p.file,
-                        name: p.name,
-                        description: p.description,
-                        inputs: p
-                            .inputs
-                            .into_iter()
-                            .map(|(k, default)| match default {
-                                Some(d) => format!("{k} (default: {d})"),
-                                None => k,
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-                Err(_) => Vec::new(),
-            };
+            // route through pipeline_run. Loaded once by the caller and shared
+            // across the system prompt partial and per-message reminder.
+            let pipelines = self.pipelines.clone();
 
             // Fetch extension statistics from git
             let extensions = self.fetch_extensions(self.max_extensions).await;
@@ -268,6 +253,33 @@ fn parse_extensions(extensions: &str, max_extensions: usize) -> Option<Extension
         total_extensions,
         remaining_percentage,
     })
+}
+
+/// Loads the user's saved pipelines as prompt entries. Best-effort — a broken
+/// pipelines dir must not sink the conversation.
+pub(crate) async fn load_pipeline_entries<S: PipelineService>(
+    services: &S,
+) -> Vec<forge_domain::PipelineEntry> {
+    match services.list_pipelines().await {
+        Ok(out) => out
+            .pipelines
+            .into_iter()
+            .map(|p| forge_domain::PipelineEntry {
+                file: p.file,
+                name: p.name,
+                description: p.description,
+                inputs: p
+                    .inputs
+                    .into_iter()
+                    .map(|(k, default)| match default {
+                        Some(d) => format!("{k} (default: {d})"),
+                        None => k,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 #[cfg(test)]
