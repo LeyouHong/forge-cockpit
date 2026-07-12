@@ -158,7 +158,9 @@ fn stage_for(status: RequestStatus) -> Stage {
         RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
         RequestStatus::Review => Stage::Review,
         RequestStatus::Qa => Stage::Qa,
-        _ => Stage::Implement,
+        RequestStatus::Done | RequestStatus::Rejected => {
+            unreachable!("stage_for called with terminal status {:?} — pending() filters these", status)
+        }
     }
 }
 

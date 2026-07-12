@@ -283,29 +283,31 @@ fn run_body(mut cmd: Command) -> (bool, String) {
     };
     // wait_with_output has no timeout; bodies are killed by their own layers
     // (pipeline node timeouts, forge session limits). 2h is a safety net.
-    let handle = std::thread::spawn(move || child.wait_with_output());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let result = child.wait_with_output();
+        let _ = tx.send(result);
+    });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2 * 60 * 60);
-    loop {
-        if handle.is_finished() {
-            return match handle.join() {
-                Ok(Ok(o)) => {
-                    let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    if !err.trim().is_empty() {
-                        text.push_str("\n--- stderr ---\n");
-                        text.push_str(err.trim_end());
-                    }
-                    (o.status.success(), text)
-                }
-                Ok(Err(e)) => (false, format!("wait failed: {e}")),
-                Err(_) => (false, "body thread panicked".into()),
-            };
+    let result = match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+        Ok(Ok(o)) => {
+            let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+            let err = String::from_utf8_lossy(&o.stderr);
+            if !err.trim().is_empty() {
+                text.push_str("\n--- stderr ---\n");
+                text.push_str(err.trim_end());
+            }
+            (o.status.success(), text)
         }
-        if std::time::Instant::now() >= deadline {
+        Ok(Err(e)) => (false, format!("wait failed: {e}")),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // The child process is orphaned; the 2h cap expired.
+            let _ = handle.join();
             return (false, "timed out after 2h (body still running, orphaned)".into());
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => (false, "body thread panicked".into()),
+    };
+    result
 }
 
 /// The scheduler tick — call from a spawned tokio task at server start.
@@ -313,7 +315,7 @@ pub async fn tick_loop() {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         let now = Utc::now();
-        let (due, stale): (Vec<Schedule>, bool) = {
+        let (due, runs_changed): (Vec<Schedule>, bool) = {
             let _g = LOCK.lock().unwrap();
             let mut list = load_schedules();
             let runs = load_runs();
@@ -361,7 +363,8 @@ pub async fn tick_loop() {
             }
             (due, runs_changed)
         };
-        let _ = stale;
+        // orphaned-run reconciliation already persisted above; not used here
+        let _ = runs_changed;
         for s in due {
             fire(s, "timer");
         }

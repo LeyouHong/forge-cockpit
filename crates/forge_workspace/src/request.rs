@@ -193,16 +193,31 @@ fn write_response(root: &Path, res: &ResponseDocument) -> Result<()> {
 fn notify_stage(root: &Path, req: &RequestDocument, note: &str) {
     use crate::team::Stage;
     let team = crate::team::load_team(root);
-    let stage = match req.status {
-        RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
-        RequestStatus::Review => Stage::Review,
-        RequestStatus::Qa => Stage::Qa,
-        RequestStatus::Done | RequestStatus::Rejected => Stage::Plan,
-    };
     let body = format!(
         "{note} — request `{}` (\"{}\") is now [{:?}].",
         req.id, req.title, req.status
     );
+    // Terminal states (Done / Rejected) are FYI only — limit to the coordinator
+    // so the whole plan-stage trio (PM, Architect, Coordinator) isn't pinged.
+    if matches!(req.status, RequestStatus::Done | RequestStatus::Rejected) {
+        if let Some(coord) = team.members.iter().find(|m| m.id == "coordinator") {
+            let _ = crate::message::send_message(
+                root,
+                "board",
+                &format!("{}-1", coord.id),
+                &body,
+                crate::message::Category::Notification,
+            );
+        }
+        return;
+    }
+    let stage = match req.status {
+        RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
+        RequestStatus::Review => Stage::Review,
+        RequestStatus::Qa => Stage::Qa,
+        // Terminal states handled above; this arm is unreachable.
+        RequestStatus::Done | RequestStatus::Rejected => Stage::Plan,
+    };
     for m in team.members.iter().filter(|m| m.stage == stage) {
         let _ = crate::message::send_message(
             root,

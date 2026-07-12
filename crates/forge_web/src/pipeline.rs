@@ -473,9 +473,11 @@ pub(crate) async fn team_run<A: API>(
         Ok(child) => {
             let pid = child.id();
             let _ = std::fs::write(&pidfile, pid.to_string());
+            let pf = pidfile.clone();
             std::thread::spawn(move || {
                 let mut c = child;
                 let _ = c.wait();
+                let _ = std::fs::remove_file(&pf);
             });
             Ok(Json(json!({ "started": true, "pid": pid, "daemon": body.daemon })))
         }
