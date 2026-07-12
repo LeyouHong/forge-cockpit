@@ -1,3 +1,11 @@
+# Deep AI code review pipeline — copies to ~/.forge-web/pipelines/.
+# Install: cp crates/forge_workspace/examples/pr-*.yaml ~/.forge-web/pipelines/
+#
+#   forge-pipeline run ~/.forge-web/pipelines/pr-code-review.yaml \
+#       --input pr=42 --input repo=owner/name --project . --isolate-mcp
+#
+# Companion pipeline: pr-auto-fix.yaml — addresses findings from this review.
+# Requires the `gh` CLI to be authenticated.
 description: |
   Deep AI code review for a GitHub PR, modeled on multi-round human review. Checks out the PR branch into a temp dir so the reviewer agent can explore the real codebase (grep call sites, verify every claim in the PR description, run quick typechecks), then posts a structured review comment (Summary/Verdict, Description Verification table, Blockers, Suggestions, Nice-to-have, Highlights) and manages a needs-fix label. Re-running on the same PR produces a new "Round N" that re-checks the previous round's blockers. IMPORTANT: run with node_timeout_secs 900 — the review agent needs time to explore.
 
