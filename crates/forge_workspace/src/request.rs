@@ -186,6 +186,49 @@ fn write_response(root: &Path, res: &ResponseDocument) -> Result<()> {
 // Public API (the workspace MCP will wrap these)
 // ---------------------------------------------------------------------------
 
+/// Auto-notification (the reference forge's DAG broadcast): whenever a document
+/// operation moves a request, the board notifies the members whose stage now
+/// owns it — agents never hand-send these. Best-effort; a failed notification
+/// must not fail the document operation.
+fn notify_stage(root: &Path, req: &RequestDocument, note: &str) {
+    use crate::team::Stage;
+    let team = crate::team::load_team(root);
+    let body = format!(
+        "{note} — request `{}` (\"{}\") is now [{:?}].",
+        req.id, req.title, req.status
+    );
+    // Terminal states (Done / Rejected) are FYI only — limit to the coordinator
+    // so the whole plan-stage trio (PM, Architect, Coordinator) isn't pinged.
+    if matches!(req.status, RequestStatus::Done | RequestStatus::Rejected) {
+        if let Some(coord) = team.members.iter().find(|m| m.id == "coordinator") {
+            let _ = crate::message::send_message(
+                root,
+                "board",
+                &format!("{}-1", coord.id),
+                &body,
+                crate::message::Category::Notification,
+            );
+        }
+        return;
+    }
+    let stage = match req.status {
+        RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
+        RequestStatus::Review => Stage::Review,
+        RequestStatus::Qa => Stage::Qa,
+        // Terminal states handled above; this arm is unreachable.
+        RequestStatus::Done | RequestStatus::Rejected => Stage::Plan,
+    };
+    for m in team.members.iter().filter(|m| m.stage == stage) {
+        let _ = crate::message::send_message(
+            root,
+            "board",
+            &format!("{}-1", m.id),
+            &body,
+            crate::message::Category::Notification,
+        );
+    }
+}
+
 /// Create a new request in `status: open`. Returns the stored document.
 pub fn create_request(root: &Path, input: NewRequest) -> Result<RequestDocument> {
     let req = RequestDocument {
@@ -199,6 +242,7 @@ pub fn create_request(root: &Path, input: NewRequest) -> Result<RequestDocument>
         batch: input.batch,
     };
     write_request(root, &req)?;
+    notify_stage(root, &req, "New request on the board — ready for your stage");
     Ok(req)
 }
 
@@ -269,6 +313,11 @@ pub fn update_response(root: &Path, id: &str, section: Section) -> Result<Reques
     let (mut req, res) = get_request(root, id)?.context("no such request")?;
     let mut res = res.unwrap_or(ResponseDocument { request_id: id.to_string(), ..Default::default() });
 
+    let section_kind = match &section {
+        Section::Engineer { .. } => SectionKind::Engineer,
+        Section::Review { .. } => SectionKind::Review,
+        Section::Qa { .. } => SectionKind::Qa,
+    };
     let next = match section {
         Section::Engineer { files_changed, notes } => {
             res.engineer = Some(EngineerResponse { files_changed, notes, completed_at: now() });
@@ -294,7 +343,26 @@ pub fn update_response(root: &Path, id: &str, section: Section) -> Result<Reques
     req.status = next;
     write_response(root, &res)?;
     write_request(root, &req)?;
+    let note = match (&req.status, &section_kind) {
+        (RequestStatus::Review, _) => "Engineer work submitted — ready for your review",
+        (RequestStatus::Qa, _) => "Review approved — ready for your QA",
+        (RequestStatus::InProgress, SectionKind::Review) => {
+            "Review requested changes — back to implementation"
+        }
+        (RequestStatus::InProgress, SectionKind::Qa) => "QA failed — back to implementation",
+        (RequestStatus::Done, _) => "QA passed — request complete (FYI)",
+        (RequestStatus::Rejected, _) => "Review rejected the request (FYI)",
+        _ => "Request status changed",
+    };
+    notify_stage(root, &req, note);
     Ok(req)
+}
+
+/// Which section an update came from (for notification wording).
+enum SectionKind {
+    Engineer,
+    Review,
+    Qa,
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +401,53 @@ mod tests {
         assert_eq!(claimed.status, RequestStatus::InProgress);
         assert_eq!(claimed.claimed_by.as_deref(), Some("eng-1"));
         assert!(claim_request(d.path(), &req.id, "eng-2").is_err());
+    }
+
+    #[test]
+    fn transitions_auto_notify_the_next_stage() {
+        // Default team applies (no .team.json): engineer / reviewer / qa /
+        // plan trio. Each transition should drop a Notification in the inbox
+        // of the stage that now owns the request.
+        let d = tmp();
+        let unread = |who: &str| crate::message::get_inbox(d.path(), who, true).unwrap().len();
+
+        let req = create_request(d.path(), NewRequest { title: "x".into(), ..Default::default() }).unwrap();
+        assert_eq!(unread("engineer-1"), 1, "create → implementers notified");
+
+        claim_request(d.path(), &req.id, "engineer-1").unwrap();
+        update_response(
+            d.path(),
+            &req.id,
+            Section::Engineer { files_changed: vec![], notes: "done".into() },
+        )
+        .unwrap();
+        assert_eq!(unread("reviewer-1"), 1, "submit → reviewer notified");
+
+        update_response(
+            d.path(),
+            &req.id,
+            Section::Review { result: ReviewResult::ChangesRequested, findings: vec![] },
+        )
+        .unwrap();
+        // get_inbox marks messages read on fetch, so this is the NEW unread one.
+        assert_eq!(unread("engineer-1"), 1, "changes requested → engineer re-notified");
+
+        update_response(
+            d.path(),
+            &req.id,
+            Section::Engineer { files_changed: vec![], notes: "fixed".into() },
+        )
+        .unwrap();
+        update_response(
+            d.path(),
+            &req.id,
+            Section::Review { result: ReviewResult::Approved, findings: vec![] },
+        )
+        .unwrap();
+        assert_eq!(unread("qa-1"), 1, "approved → qa notified");
+
+        update_response(d.path(), &req.id, Section::Qa { result: QaResult::Passed, notes: "ok".into() }).unwrap();
+        assert_eq!(unread("coordinator-1"), 1, "done → lead gets the FYI");
     }
 
     #[test]

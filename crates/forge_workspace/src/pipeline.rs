@@ -1016,7 +1016,7 @@ fn run_capture(mut cmd: Command, timeout: Duration, log: Option<PathBuf>) -> std
 /// agent's reasoning + answer. NOTE: forge has no clean-answer output mode, so
 /// this still includes the model's thinking — isolating just the final answer
 /// would need a structured output from forge itself.
-fn clean_result(raw: &str) -> String {
+pub fn clean_result(raw: &str) -> String {
     let stripped = strip_ansi(raw);
     let mut out: Vec<&str> = Vec::new();
     for line in stripped.lines() {
@@ -1037,7 +1037,7 @@ fn clean_result(raw: &str) -> String {
 }
 
 /// Strip ANSI/VT escape sequences (forge -p emits heavy spinner output).
-fn strip_ansi(s: &str) -> String {
+pub fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

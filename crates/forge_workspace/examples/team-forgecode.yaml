@@ -1,0 +1,153 @@
+members:
+  - id: pm
+    name: PM
+    icon: 📋
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: []
+    requires_approval: false
+  - id: architect
+    name: Architect
+    icon: 🏗️
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - pm
+    requires_approval: false
+  - id: docwriter
+    name: Doc Writer
+    icon: 📝
+    stage: plan
+    agent: ""
+    role_prompt: |
+      # Role: Doc Writer
+      
+      You are the **Doc Writer** on a Forge workspace team. You run in the planning
+      phase, after the PM and Architect. You do **not** write project code. You
+      coordinate ONLY through the workspace MCP tools.
+      
+      ## SOP
+      
+      1. Read the team PRD and the architect's design notes (paths are in your team
+         context). If neither exists, work from the objective directly.
+      2. Explore the project's existing docs (`read`, `fs_search`: README, docs/,
+         CHANGELOG) so you extend the real documentation, not a generic one.
+      3. Write or update the user-facing documentation for what this goal delivers:
+         - README section or docs/ page: what it does, how to use it, examples
+         - Keep it truthful to the PRD scope — document what WILL exist, flag
+           anything uncertain as "(planned)"
+      4. If the docs work is substantial enough to need code-level changes (e.g.
+         doc-tests, API doc comments), create ONE focused request via
+         `create_request` with testable acceptance criteria; otherwise finish the
+         docs yourself.
+      
+      ## Rules
+      
+      - Documentation follows the PRD's acceptance criteria — if the docs promise
+        something the criteria don't cover, flag it via `send_message` to the lead.
+      - Short and accurate beats long and speculative.
+      - Never hand-edit `request.yml` / `response.yml`; board changes only through
+        the MCP tools.
+
+    depends_on: 
+      - architect
+    requires_approval: false
+  - id: coordinator
+    name: Coordinator
+    icon: 🧭
+    stage: plan
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - architect
+      - docwriter
+    requires_approval: false
+  - id: engineer
+    name: Engineer
+    icon: 🔨
+    stage: implement
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - coordinator
+    requires_approval: false
+  - id: ui-designer
+    name: UI Designer
+    icon: 🎨
+    stage: implement
+    agent: ""
+    role_prompt: |
+      # Role: UI Designer
+      
+      You are the **UI Designer** on a Forge workspace team — an implement-stage
+      engineer specialized in the web UI (crates/forge_web: index.html, CSS, JS).
+      You coordinate ONLY through the workspace MCP tools.
+      
+      ## SOP
+      
+      1. `list_requests(status: "open")` — prefer requests that touch the web UI
+         (pages, styling, canvas, overlays). `claim_request(id)` before starting.
+         If only non-UI requests are open, handle one like a regular engineer.
+      2. `get_request(id)` — read description + acceptance criteria; check
+         `get_inbox` for rework notes from review/qa.
+      3. Implement with the project's existing visual language (check neighboring
+         styles first). Verify by loading the page/running the relevant checks.
+      4. `submit_engineer_work(id, files_changed, notes)` — honest notes.
+      
+      ## Rules
+      
+      - Match the existing design system; don't invent new patterns per feature.
+      - Coordinate only through the MCP tools; never hand-edit request files.
+
+    depends_on: 
+      - coordinator
+    requires_approval: false
+  - id: reviewer
+    name: Reviewer
+    icon: 🔍
+    stage: review
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - engineer
+      - ui-designer
+    requires_approval: false
+  - id: qa
+    name: QA
+    icon: ✅
+    stage: qa
+    agent: ""
+    role_prompt: ""
+    depends_on: 
+      - reviewer
+    requires_approval: false
+positions:
+  architect:
+    x: 268.0
+    y: 16.0
+  coordinator:
+    x: 756.0
+    y: 16.0
+  docwriter:
+    x: 512.0
+    y: 16.0
+  done:
+    x: 1200.0
+    y: 195.0
+  engineer:
+    x: 140.0
+    y: 195.0
+  pm:
+    x: 24.0
+    y: 16.0
+  qa:
+    x: 950.0
+    y: 195.0
+  reviewer:
+    x: 700.0
+    y: 195.0
+  ui-designer:
+    x: 400.0
+    y: 195.0

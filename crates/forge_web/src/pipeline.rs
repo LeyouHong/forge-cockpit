@@ -473,14 +473,289 @@ pub(crate) async fn team_run<A: API>(
         Ok(child) => {
             let pid = child.id();
             let _ = std::fs::write(&pidfile, pid.to_string());
+            let pf = pidfile.clone();
             std::thread::spawn(move || {
                 let mut c = child;
                 let _ = c.wait();
+                let _ = std::fs::remove_file(&pf);
             });
             Ok(Json(json!({ "started": true, "pid": pid, "daemon": body.daemon })))
         }
         Err(e) => Err(AppError::bad_request(format!("could not launch forge-workspace-run ({}): {e}", bin.display()))),
     }
+}
+
+/// GET /api/team/config?project=NAME — the team roster (members + canvas
+/// positions). Falls back to the built-in six-role team.
+pub(crate) async fn team_config_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let cfg = forge_workspace::team::load_team(&ws);
+    Ok(Json(serde_json::to_value(&cfg).unwrap_or_else(|_| json!({}))))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamConfigSet {
+    project: String,
+    #[serde(flatten)]
+    config: forge_workspace::team::TeamConfig,
+}
+
+/// PUT /api/team/config — save the team roster (validated: unique ids, known
+/// depends_on, acyclic, at least one implement member).
+pub(crate) async fn team_config_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamConfigSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::save_team(&ws, &body.config)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CodeQuery {
+    project: String,
+    #[serde(default)]
+    path: String,
+}
+
+/// GET /api/team/files?project=&path= — list a project directory (code view).
+pub(crate) async fn team_files<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<CodeQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    if q.path.contains("..") {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    let dir = if q.path.is_empty() { project.clone() } else { project.join(&q.path) };
+    // Changed paths (repo-relative) from git — marks dirty files/dirs in the tree.
+    let changed: Vec<String> = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&project)
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.get(3..).map(|p| p.split(" -> ").last().unwrap_or(p).trim_matches('"').to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let rel = |name: &str| if q.path.is_empty() { name.to_string() } else { format!("{}/{}", q.path, name) };
+    let mut dirs: Vec<Value> = Vec::new();
+    let mut files: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "node_modules" || name == "target" {
+                continue;
+            }
+            let r = rel(&name);
+            if e.path().is_dir() {
+                let dirty = changed.iter().any(|c| c.starts_with(&format!("{r}/")));
+                dirs.push(json!({ "name": name, "changed": dirty }));
+            } else {
+                files.push(json!({ "name": name, "changed": changed.iter().any(|c| c == &r) }));
+            }
+        }
+    }
+    let by_name = |a: &Value, b: &Value| a["name"].as_str().cmp(&b["name"].as_str());
+    dirs.sort_by(by_name); files.sort_by(by_name);
+    Ok(Json(json!({ "path": q.path, "dirs": dirs, "files": files })))
+}
+
+/// GET /api/team/file?project=&path= — read a project file (capped).
+pub(crate) async fn team_file<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<CodeQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    if q.path.contains("..") || q.path.is_empty() {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    let mut content = std::fs::read_to_string(project.join(&q.path))
+        .map_err(|_| AppError::not_found("not a readable text file"))?;
+    if content.len() > 200_000 {
+        content.truncate(200_000);
+        content.push_str("\n… [truncated]");
+    }
+    Ok(Json(json!({ "path": q.path, "content": content })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DiffQuery {
+    project: String,
+    files: String,
+}
+
+/// GET /api/team/diff?project=&files=a,b — the code changes for a request's
+/// files: uncommitted diff, else the last commit that touched them.
+pub(crate) async fn team_diff<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<DiffQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let files: Vec<&str> = q.files.split(',').map(str::trim).filter(|f| !f.is_empty() && !f.contains("..")).collect();
+    if files.is_empty() {
+        return Ok(Json(json!({ "diff": "" })));
+    }
+    let run = |args: &[&str]| -> String {
+        let mut cmd = Command::new("git");
+        cmd.args(args).arg("--").args(&files).current_dir(&project);
+        cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    };
+    let mut diff = run(&["diff", "HEAD"]);
+    if diff.trim().is_empty() {
+        diff = run(&["log", "-p", "--max-count=1"]);
+    }
+    let mut d = diff;
+    if d.len() > 60000 { d.truncate(60000); d.push_str("\n… [truncated]"); }
+    Ok(Json(json!({ "diff": d })))
+}
+
+/// GET /api/team/yaml?project= — the team config as YAML (for export).
+pub(crate) async fn team_yaml_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let cfg = forge_workspace::team::load_team(&project.join(".forge-workspace"));
+    let yaml = serde_yml::to_string(&cfg)
+        .map_err(|e| AppError::bad_request(format!("serialize team: {e}")))?;
+    Ok(Json(json!({ "yaml": yaml })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamYamlSet {
+    project: String,
+    yaml: String,
+}
+
+/// POST /api/team/yaml — import a YAML team config (validated like PUT config).
+pub(crate) async fn team_yaml_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamYamlSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let cfg: forge_workspace::team::TeamConfig = serde_yml::from_str(&body.yaml)
+        .map_err(|e| AppError::bad_request(format!("bad team YAML: {e}")))?;
+    forge_workspace::team::save_team(&project.join(".forge-workspace"), &cfg)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "members": cfg.members.len() })))
+}
+
+/// GET /api/team/approvals?project= — pending approval gates.
+pub(crate) async fn team_approvals_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let map: serde_json::Map<String, Value> =
+        std::fs::read_to_string(project.join(".forge-workspace").join(".team-approvals.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    let pending: Vec<String> = map
+        .iter()
+        .filter(|(_, v)| v.as_str() == Some("pending"))
+        .map(|(k, _)| k.clone())
+        .collect();
+    Ok(Json(json!({ "pending": pending })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ApproveReq {
+    project: String,
+    key: String,
+}
+
+/// POST /api/team/approve — grant a pending approval gate.
+pub(crate) async fn team_approve<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<ApproveReq>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let path = project.join(".forge-workspace").join(".team-approvals.json");
+    let mut map: serde_json::Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    if !map.contains_key(&body.key) {
+        return Err(AppError::not_found("no such pending approval"));
+    }
+    map.insert(body.key.clone(), json!("approved"));
+    std::fs::write(&path, serde_json::to_string_pretty(&map).unwrap_or_default())?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ─── Team member templates (global: ~/.forge-web/team-templates.json) ───────
+// Mirrors the reference forge's smith templates: save a configured member,
+// reuse it in any project's team, export/import as JSON.
+
+fn team_templates_path() -> PathBuf {
+    forge_workspace::pipeline::home_dir().join(".forge-web").join("team-templates.json")
+}
+
+fn load_team_templates() -> Vec<Value> {
+    std::fs::read_to_string(team_templates_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_team_templates(list: &[Value]) {
+    if let Some(d) = team_templates_path().parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(team_templates_path(), serde_json::to_string_pretty(list).unwrap_or_default());
+}
+
+/// GET /api/team/templates — saved member templates.
+pub(crate) async fn team_templates_get<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
+    Json(json!({ "templates": load_team_templates() }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TemplateSave {
+    name: String,
+    member: Value,
+}
+
+/// POST /api/team/templates — upsert a template by name.
+pub(crate) async fn team_templates_save<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TemplateSave>,
+) -> Result<Json<Value>, AppError> {
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::bad_request("template name required"));
+    }
+    let mut list = load_team_templates();
+    list.retain(|t| t.get("name").and_then(Value::as_str) != Some(name.as_str()));
+    list.push(json!({ "name": name, "member": body.member }));
+    save_team_templates(&list);
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TemplateRef {
+    name: String,
+}
+
+/// POST /api/team/templates/delete
+pub(crate) async fn team_templates_delete<A: API>(
+    State(_): State<AppState<A>>,
+    Json(q): Json<TemplateRef>,
+) -> Json<Value> {
+    let mut list = load_team_templates();
+    list.retain(|t| t.get("name").and_then(Value::as_str) != Some(q.name.as_str()));
+    save_team_templates(&list);
+    Json(json!({ "ok": true }))
 }
 
 /// GET /api/team/agents?project=NAME — the role→agent map for this project.

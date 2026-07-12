@@ -30,12 +30,15 @@ use std::time::{Duration, Instant};
 
 use forge_workspace::message::{self, Category};
 use forge_workspace::request::{self, RequestDocument, RequestStatus};
+use forge_workspace::team::{self, Stage, TeamConfig, TeamMember};
 use serde_json::json;
 
 const ENGINEER_SOP: &str = include_str!("../../roles/engineer.md");
 const REVIEWER_SOP: &str = include_str!("../../roles/reviewer.md");
 const QA_SOP: &str = include_str!("../../roles/qa.md");
 const COORDINATOR_SOP: &str = include_str!("../../roles/coordinator.md");
+const PM_SOP: &str = include_str!("../../roles/pm.md");
+const ARCHITECT_SOP: &str = include_str!("../../roles/architect.md");
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     if let Some(i) = args.iter().position(|a| a == name) {
@@ -98,7 +101,10 @@ struct Cfg {
     /// Optional per-role forge agent (role name → agent id), loaded from
     /// `<workspace>/.team-agents.json`. When a role has one, its `forge -p` gets
     /// `--agent <id>` — that's how a role picks a different model/persona.
+    /// (Member.agent in the team config takes precedence.)
     agents: HashMap<String, String>,
+    /// The team roster (`<workspace>/.team.json`, or the built-in six roles).
+    team: TeamConfig,
 }
 
 /// Load the role→agent map from `<workspace>/.team-agents.json` (if present).
@@ -117,12 +123,130 @@ fn pending(r: &RequestDocument) -> bool {
     )
 }
 
-fn role_for(status: RequestStatus) -> (&'static str, &'static str) {
+/// The built-in SOP for a well-known member id.
+fn builtin_sop(id: &str) -> Option<&'static str> {
+    match id {
+        "pm" => Some(PM_SOP),
+        "architect" => Some(ARCHITECT_SOP),
+        "coordinator" => Some(COORDINATOR_SOP),
+        "engineer" => Some(ENGINEER_SOP),
+        "reviewer" => Some(REVIEWER_SOP),
+        "qa" => Some(QA_SOP),
+        _ => None,
+    }
+}
+
+/// A member's SOP: its custom role_prompt, else the built-in SOP for its id,
+/// else the built-in SOP of its stage (so a custom second engineer works).
+fn member_sop(m: &TeamMember) -> String {
+    if !m.role_prompt.trim().is_empty() {
+        return m.role_prompt.clone();
+    }
+    if let Some(s) = builtin_sop(&m.id) {
+        return s.to_string();
+    }
+    match m.stage {
+        Stage::Plan => COORDINATOR_SOP.to_string(),
+        Stage::Implement => ENGINEER_SOP.to_string(),
+        Stage::Review => REVIEWER_SOP.to_string(),
+        Stage::Qa => QA_SOP.to_string(),
+    }
+}
+
+fn stage_for(status: RequestStatus) -> Stage {
     match status {
-        RequestStatus::Open | RequestStatus::InProgress => ("engineer", ENGINEER_SOP),
-        RequestStatus::Review => ("reviewer", REVIEWER_SOP),
-        RequestStatus::Qa => ("qa", QA_SOP),
-        _ => ("engineer", ENGINEER_SOP),
+        RequestStatus::Open | RequestStatus::InProgress => Stage::Implement,
+        RequestStatus::Review => Stage::Review,
+        RequestStatus::Qa => Stage::Qa,
+        RequestStatus::Done | RequestStatus::Rejected => {
+            unreachable!("stage_for called with terminal status {:?} — pending() filters these", status)
+        }
+    }
+}
+
+/// The built-in SOP for the work a stage does (used for gap coverage).
+fn stage_sop(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Plan => COORDINATOR_SOP,
+        Stage::Implement => ENGINEER_SOP,
+        Stage::Review => REVIEWER_SOP,
+        Stage::Qa => QA_SOP,
+    }
+}
+
+/// The member that works a request in `status` — stable pick (by request id)
+/// when several members share the stage, so retries reuse the same member.
+///
+/// When NO member handles the stage, the Lead covers the gap (mirrors the
+/// reference forge's Lead SOP): coordinator if present, else any plan-stage
+/// member, else the first member. The second tuple field is true in that case
+/// so the spawn swaps in the stage's SOP instead of the member's own.
+fn member_for(team: &TeamConfig, status: RequestStatus, req_id: &str) -> Option<(TeamMember, bool)> {
+    let stage = stage_for(status);
+    let pool: Vec<&TeamMember> = team.members.iter().filter(|m| m.stage == stage).collect();
+    if !pool.is_empty() {
+        let n: usize = req_id.bytes().map(|b| b as usize).sum();
+        return Some((pool[n % pool.len()].clone(), false));
+    }
+    let lead = team
+        .members
+        .iter()
+        .find(|m| m.id == "coordinator")
+        .or_else(|| team.members.iter().find(|m| m.stage == Stage::Plan))
+        .or_else(|| team.members.first())?;
+    Some((lead.clone(), true))
+}
+
+/// Approval gate state, persisted at `<workspace>/.team-approvals.json` as
+/// `{"<req_id>@<Status>": "pending" | "approved"}`. Approving is done by the
+/// web UI (or by editing the file); the entry is consumed on spawn so each
+/// new status pass needs a fresh approval.
+fn approval_key(req: &RequestDocument) -> String {
+    format!("{}@{:?}", req.id, req.status)
+}
+
+fn approvals_path(workspace: &Path) -> PathBuf {
+    workspace.join(".team-approvals.json")
+}
+
+fn load_approvals(workspace: &Path) -> HashMap<String, String> {
+    std::fs::read_to_string(approvals_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_approvals(workspace: &Path, map: &HashMap<String, String>) {
+    let _ = std::fs::write(approvals_path(workspace), serde_json::to_string_pretty(map).unwrap_or_default());
+}
+
+/// Returns true when the member may work this request now. Creates the
+/// pending entry (and alerts the human once) on first sight.
+fn approval_granted(cfg: &Cfg, req: &RequestDocument, member: &TeamMember) -> bool {
+    if !member.requires_approval {
+        return true;
+    }
+    let key = approval_key(req);
+    let mut map = load_approvals(&cfg.workspace);
+    match map.get(&key).map(String::as_str) {
+        Some("approved") => {
+            map.remove(&key); // consumed — the next status pass re-asks
+            save_approvals(&cfg.workspace, &map);
+            true
+        }
+        Some(_) => false, // pending — wait for the human
+        None => {
+            map.insert(key.clone(), "pending".into());
+            save_approvals(&cfg.workspace, &map);
+            let body = format!(
+                "APPROVAL NEEDED: member `{}` requires approval to work request `{}` (\"{}\") in \
+                 [{:?}]. Approve it on the Team page (or mark `{key}` approved in .team-approvals.json).",
+                member.id, req.id, req.title, req.status
+            );
+            let _ = message::send_message(&cfg.workspace, "orchestrator", &cfg.alert_to, &body, Category::Ticket);
+            println!("  ⏸ {} [{:?}] waiting for approval of member `{}`", req.id, req.status, member.id);
+            false
+        }
     }
 }
 
@@ -146,6 +270,10 @@ fn run() -> anyhow::Result<()> {
     let isolate = has(&mut args, "--isolate-mcp");
     let home = if isolate { Some(setup_isolated_home(&workspace, &mcp_bin)?) } else { None };
     let agents = load_role_agents(&workspace);
+    let team_cfg = team::load_team(&workspace);
+    if let Err(e) = team::validate_team(&team_cfg) {
+        anyhow::bail!("invalid team config (<workspace>/.team.json): {e}");
+    }
     let cfg = Cfg {
         project,
         workspace,
@@ -163,6 +291,7 @@ fn run() -> anyhow::Result<()> {
         plan_only: has(&mut args, "--plan-only"),
         home,
         agents,
+        team: team_cfg,
     };
 
     // With an isolated base_path the workspace MCP is provided there; otherwise
@@ -177,10 +306,11 @@ fn run() -> anyhow::Result<()> {
         cfg.goal.as_deref().map(|g| format!(" goal={g:?}")).unwrap_or_default()
     );
 
-    // Planning phase (⑧): a coordinator turns the goal into requests on the board
-    // before the pipeline runs. Synchronous — the board must be populated first.
+    // Planning phase (⑧): PM → Architect → Lead turn the goal into a PRD,
+    // design, and requests on the board before the pipeline runs. Synchronous —
+    // the board must be populated first.
     if let Some(goal) = cfg.goal.clone() {
-        run_coordinator(&cfg, &goal);
+        run_planning(&cfg, &goal);
         if cfg.plan_only {
             println!("\n===== board after planning =====");
             for r in request::list_requests(&cfg.workspace, None)? {
@@ -227,6 +357,16 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
+                // Approval gate — checked before the attempt counter so a
+                // request waiting on a human never accrues stuck-attempts.
+                let Some((member, covering)) = member_for(&cfg.team, req.status, &req.id) else {
+                    println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
+                    continue;
+                };
+                if !cfg.dry_run && !approval_granted(&cfg, req, &member) {
+                    continue;
+                }
+
                 // This request gets a turn. Consume an attempt; park it (once) if
                 // it has burned its budget without the status ever advancing.
                 let attempts = {
@@ -253,10 +393,16 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
-                let (role, sop) = role_for(req.status);
-                println!("  → {} [{:?}] attempt {attempts} → {role}{}", req.id, req.status, if cfg.dry_run { " (dry-run)" } else { "" });
+                println!(
+                    "  → {} [{:?}] attempt {attempts} → {}{}{}",
+                    req.id,
+                    req.status,
+                    member.id,
+                    if covering { " (covering gap — no member for this stage)" } else { "" },
+                    if cfg.dry_run { " (dry-run)" } else { "" }
+                );
                 st.running.insert(req.id.clone());
-                spawn_agent(cfg.clone(), state.clone(), req.clone(), role, sop);
+                spawn_agent(cfg.clone(), state.clone(), req.clone(), member, covering);
             }
         }
 
@@ -302,19 +448,44 @@ fn run() -> anyhow::Result<()> {
 /// A "Workspace Team" snapshot injected into every agent's context — the team
 /// roster, the pipeline, and a live view of all requests. This is what gives
 /// each agent global awareness (who's upstream/downstream, current state).
-fn topology(workspace: &Path, role: &str) -> String {
+fn topology(cfg: &Cfg, role: &str) -> String {
+    let workspace = &cfg.workspace;
     let reqs = request::list_requests(workspace, None).unwrap_or_default();
     let mut t = String::from(
         "## Workspace Team\n\
-         You are one agent on a pipeline team. Work flows **engineer → reviewer → qa → done**, \
-         handed off automatically by request status. Agents coordinate ONLY through the shared \
-         request documents and messages — never talk to each other directly.\n\
-         - **coordinator** (Lead) — decomposes goals into requests (upstream of all)\n\
-         - **engineer** — implements requests in `open` / `in_progress`\n\
-         - **reviewer** — reviews requests in `review` (downstream of engineer)\n\
-         - **qa** — verifies requests in `qa` (downstream of reviewer)\n\n\
-         Current requests on the board:\n",
+         You are one agent on a pipeline team. Plan-stage members run first (in dependency \
+         order), then work flows through request statuses: implement-stage members take \
+         `open`/`in_progress`, review-stage `review`, qa-stage `qa`. Agents coordinate ONLY \
+         through the shared request documents and messages — never talk to each other directly.\n\
+         Team roster:\n",
     );
+    for m in &cfg.team.members {
+        let deps = if m.depends_on.is_empty() {
+            String::new()
+        } else {
+            format!(" — downstream of {}", m.depends_on.join(", "))
+        };
+        t.push_str(&format!(
+            "  - **{}** ({}, {:?} stage){}\n",
+            m.id,
+            m.name,
+            m.stage,
+            deps
+        ));
+    }
+    let prd = workspace.join("prd.md");
+    if prd.exists() {
+        t.push_str(&format!(
+            "\nThe team PRD (product contract) is at `{}` — requirements and acceptance criteria \
+             live there.\n",
+            prd.display()
+        ));
+    }
+    let design = workspace.join("design.md");
+    if design.exists() {
+        t.push_str(&format!("The architect's design notes are at `{}`.\n", design.display()));
+    }
+    t.push_str("\nCurrent requests on the board:\n");
     if reqs.is_empty() {
         t.push_str("  (none)\n");
     } else {
@@ -332,34 +503,63 @@ fn topology(workspace: &Path, role: &str) -> String {
     t
 }
 
-/// Run the coordinator (Lead) once, synchronously, to decompose `goal` into
-/// requests on the board. Blocks until the agent finishes so the pipeline sees a
-/// populated board. In dry-run it only announces what it would do.
-fn run_coordinator(cfg: &Cfg, goal: &str) {
+/// The planning chain: every plan-stage member runs once, synchronously, in
+/// dependency order (PM → Architect → Lead in the default team). Each sees the
+/// artifacts its upstream wrote; the pipeline starts on a populated board.
+fn run_planning(cfg: &Cfg, goal: &str) {
     let before = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(0);
-    println!("  ⚑ coordinator planning{}: {goal}", if cfg.dry_run { " (dry-run)" } else { "" });
+    let prd = cfg.workspace.join("prd.md");
+    let design = cfg.workspace.join("design.md");
+
+    let ordered = team::topo_order(&cfg.team.members).unwrap_or_else(|_| cfg.team.members.clone());
+    for m in ordered.iter().filter(|m| m.stage == Stage::Plan) {
+        let upstream_note = if m.depends_on.is_empty() {
+            "You are the FIRST planner — nothing exists yet.".to_string()
+        } else {
+            format!(
+                "Members upstream of you ({}) have already planned. Read their artifacts and the \
+                 board first, and do NOT duplicate their work — only add what your SOP owns.",
+                m.depends_on.join(", ")
+            )
+        };
+        let tail = format!(
+            "The team objective:\n\n{goal}\n\nShared planning artifacts live in the workspace: \
+             the PRD belongs at `{}` and design notes at `{}`. {} If your SOP says to create work \
+             requests, use create_request.",
+            prd.display(),
+            design.display(),
+            upstream_note
+        );
+        run_planner(cfg, m, &tail);
+    }
+
+    let after = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(before);
+    println!("  ⚑ planning done — {} request(s) created.", after.saturating_sub(before));
+}
+
+/// Run one synchronous planning-phase member.
+fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
+    println!("  ⚑ {} planning{}", m.id, if cfg.dry_run { " (dry-run)" } else { "" });
     if cfg.dry_run {
         return;
     }
-    let topo = topology(&cfg.workspace, "coordinator");
+    let topo = topology(cfg, &m.id);
+    let sop = member_sop(m);
     let prompt = format!(
-        "{topo}\n{sop}\n\n---\nYou are agent `coordinator-1`. The workspace tools are available as \
-         MCP tools (create_request, list_requests, get_request, send_message). Your objective:\n\n\
-         {goal}\n\nFollow your SOP: explore the project, then break this objective into focused \
-         work requests via create_request. Start now.",
-        sop = COORDINATOR_SOP,
+        "{topo}\n{sop}\n\n---\nYou are agent `{id}-1`. The workspace tools are available as MCP \
+         tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now.",
+        id = m.id
     );
     let mut cmd = Command::new(&cfg.forge);
     cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
-    if let Some(agent) = cfg.agents.get("coordinator") {
+    let agent = if !m.agent.trim().is_empty() { Some(m.agent.clone()) } else { cfg.agents.get(&m.id).cloned() };
+    if let Some(agent) = agent {
         cmd.arg("--agent").arg(agent);
     }
     if let Some(home) = &cfg.home {
         cmd.env("FORGE_CONFIG", home);
     }
     let _ = cmd.status();
-    let after = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(before);
-    println!("  ⚑ coordinator done — {} request(s) created.", after.saturating_sub(before));
 }
 
 /// Spawn a role agent for a request on its own thread; clear `running` when done.
@@ -367,22 +567,37 @@ fn run_coordinator(cfg: &Cfg, goal: &str) {
 /// The subprocess is bounded by `cfg.agent_timeout`: if it runs longer it is
 /// killed (recovery from a hung/runaway agent) so the concurrency slot is freed
 /// and the request is retried on the next poll instead of wedging the pipeline.
-fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, role: &'static str, sop: &'static str) {
+fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, member: TeamMember, covering: bool) {
     std::thread::spawn(move || {
         let mut timed_out = false;
         if !cfg.dry_run {
-            let topo = topology(&cfg.workspace, role);
+            let topo = topology(&cfg, &member.id);
+            // Gap coverage: the team has no member for this request's stage, so
+            // the Lead does the stage's work itself — stage SOP, not its own.
+            let sop = if covering {
+                format!(
+                    "## Gap coverage\nYour team has NO dedicated member for this request's current \
+                     stage — as the Lead you are covering it yourself for this request. Do the \
+                     stage's work per the SOP below and submit through the normal tools; do not \
+                     wait for or delegate to a member that doesn't exist.\n\n{}",
+                    stage_sop(stage_for(req.status))
+                )
+            } else {
+                member_sop(&member)
+            };
             let prompt = format!(
                 "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
                  submit_engineer_work, submit_review, submit_qa, send_message, get_inbox). Follow \
                  your SOP to find the request that needs your role and complete exactly your step. \
                  The request likely waiting for you is `{}`. Start now.",
-                req.id
+                req.id,
+                role = member.id
             );
             let mut cmd = Command::new(&cfg.forge);
             cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
-            if let Some(agent) = cfg.agents.get(role) {
+            let agent = if !member.agent.trim().is_empty() { Some(member.agent.clone()) } else { cfg.agents.get(&member.id).cloned() };
+            if let Some(agent) = agent {
                 cmd.arg("--agent").arg(agent);
             }
             if let Some(home) = &cfg.home {

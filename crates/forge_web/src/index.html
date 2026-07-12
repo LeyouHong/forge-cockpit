@@ -535,6 +535,9 @@
     .tm-canvas { position: relative; height: 340px; border: 1px solid var(--border); border-radius: 10px; overflow: auto;
       background: radial-gradient(circle, rgba(127,127,127,.16) 1px, transparent 1px) 0 0 / 18px 18px; }
     .tm-edges { position: absolute; inset: 0; width: 1400px; height: 340px; pointer-events: none; overflow: visible; }
+    .tm-edges path.hit { pointer-events: stroke; cursor: pointer; }
+    .tm-port { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; border-radius: 50%; background: var(--accent, #5e6ad2); border: 2px solid var(--bg, #fff); cursor: crosshair; z-index: 3; }
+    .tm-port:hover { transform: translateY(-50%) scale(1.25); }
     .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
     .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
     .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
@@ -595,7 +598,8 @@
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
-      <button class="icon-btn" id="team-open" title="Team — the resident agent team (engineer → reviewer → qa)">🤝</button>
+      <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
+      <button class="icon-btn" id="sched-open" title="Schedules — timed automation (pipeline or prompt on a trigger)">⏰</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -762,12 +766,40 @@
   </div>
 
   <!-- Team (resident agent team) page -->
+  <div class="kanban-overlay" id="sched-overlay">
+    <div class="kanban-head">
+      <span><b>⏰ Schedules</b> <span class="drawer-hint">timed automation — a trigger fires a pipeline or a prompt</span></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary btn-sm" id="sched-new">+ New schedule</button>
+      <button class="btn btn-ghost btn-sm" id="sched-refresh">Refresh</button>
+      <button class="icon-btn" id="sched-close" title="Close">✕</button>
+    </div>
+    <div class="kanban-scroll">
+      <section class="kanban-section">
+        <div id="sched-list" style="display:flex;flex-direction:column;gap:8px;max-width:980px"></div>
+        <div class="sl" id="sched-empty" style="margin-top:8px"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Schedules: create/edit modal -->
+  <div class="pl-picker-overlay" id="sched-modal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b id="sched-m-title">New schedule</b><div style="flex:1"></div><button class="icon-btn" id="sched-m-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="sched-m-body"></div>
+      <div class="pl-picker-foot"><span class="sl" id="sched-m-msg"></span><div style="flex:1"></div><button class="btn btn-primary btn-sm" id="sched-m-save">Save</button></div>
+    </div>
+  </div>
+
   <div class="kanban-overlay" id="team-overlay">
     <div class="kanban-head">
-      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — engineer → reviewer → qa</span></span>
+      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — pm → architect → coordinator → engineer → reviewer → qa</span></span>
       <div style="flex:1"></div>
       <label class="sl" style="margin-right:6px">Project</label>
       <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
+      <button class="btn btn-sm" id="tm-addagent" title="Add a team member">+ Add Agent</button>
+      <button class="btn btn-sm" id="tm-export" title="Download this team (members, SOPs, connections, layout) as YAML">📤 Export</button>
+      <button class="btn btn-sm" id="tm-import" title="Load a team YAML — replaces this project's team (validated first)">📂 Import</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
@@ -775,13 +807,23 @@
     <div class="kanban-scroll">
       <section class="kanban-section">
         <div class="tm-bar">
-          <input id="tm-goal" placeholder='goal for the coordinator (optional) — e.g. "harden calc.py: add validation + tests"' />
-          <button class="btn btn-primary btn-sm" id="tm-run">▶ Run</button>
-          <button class="btn btn-sm" id="tm-daemon">⚡ Start Daemon</button>
+          <input id="tm-goal" placeholder='goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests' />
+          <button class="btn btn-primary btn-sm" id="tm-run" title="One-shot: plan the goal (pm > architect > coordinator), work every request to done, then exit">▶ Run</button>
+          <button class="btn btn-sm" id="tm-daemon" title="Resident mode: keeps polling the board and picks up NEW requests until you press Stop">⚡ Start Daemon</button>
           <span class="sl" id="tm-status"></span>
         </div>
         <div id="tm-alerts" class="tm-alerts"></div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
+          <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
+        </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
+        <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
+          <div style="display:flex;height:100%">
+            <div id="tm-code-list" style="width:240px;overflow:auto;border-right:1px solid var(--border);padding:8px;font-size:12px"></div>
+            <pre id="tm-code-view" class="code" style="flex:1;overflow:auto;margin:0;padding:10px;font-size:11.5px;white-space:pre"></pre>
+          </div>
+        </div>
         <div id="tm-empty" class="sl" style="margin-top:10px"></div>
       </section>
     </div>
@@ -801,6 +843,15 @@
     <div class="pl-picker pl-node-modal">
       <div class="pl-picker-head"><b id="tm-req-title">Request</b><div style="flex:1"></div><button class="icon-btn" id="tm-req-close" title="Close">✕</button></div>
       <div class="pl-nm-body" id="tm-req-body"></div>
+    </div>
+  </div>
+
+  <!-- Team: member edit modal -->
+  <div class="pl-picker-overlay" id="tm-memmodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b id="tm-mem-title">Agent</b><div style="flex:1"></div><button class="icon-btn" id="tm-mem-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="tm-mem-body"></div>
+      <div class="pl-picker-foot"><span class="sl" id="tm-mem-msg"></span><div style="flex:1"></div><button class="btn btn-sm" id="tm-mem-del" style="color:#e5484d">Delete</button><button class="btn btn-primary btn-sm" id="tm-mem-save">Save</button></div>
     </div>
   </div>
 
@@ -2657,18 +2708,210 @@
       PL.sel = nid; renderCanvas(); if (nodeModalOpen()) buildNodeForm($('pl-nm-body'));
     }
 
+    /* ---------- schedules (timed automation) ---------- */
+    const SCH = { list: [], poll: null };
+    $('sched-open').onclick = () => { $('sched-overlay').classList.add('open'); schedLoad(); SCH.poll = setInterval(() => { if (!$('sched-overlay').classList.contains('open')) { clearInterval(SCH.poll); return; } schedLoad(); }, 5000); };
+    $('sched-close').onclick = () => { clearInterval(SCH.poll); $('sched-overlay').classList.remove('open'); };
+    $('sched-refresh').onclick = () => schedLoad(true);
+    $('sched-m-close').onclick = () => $('sched-modal').classList.remove('open');
+    $('sched-new').onclick = () => schedOpenModal(null);
+
+    async function schedLoad(force) {
+      const d = await api('/api/schedules').then((r) => r.json()).catch(() => ({ schedules: [] }));
+      SCH.list = d.schedules || [];
+      // Don't rebuild (and collapse expanded histories) when nothing changed.
+      const sig = JSON.stringify(SCH.list);
+      if (!force && sig === SCH._sig) return;
+      SCH._sig = sig;
+      SCH.expanded = SCH.expanded || new Set();
+      const box = $('sched-list'); box.innerHTML = '';
+      $('sched-empty').textContent = SCH.list.length ? '' : 'no schedules yet — "+ New schedule" fires a pipeline or a prompt on a timer.';
+      for (const s of SCH.list) box.appendChild(schedRow(s));
+    }
+    function schedTrigDesc(s) {
+      if (s.trigger === 'every') return 'every ' + s.every_minutes + ' min';
+      if (s.trigger === 'cron') return 'cron ' + s.cron;
+      if (s.trigger === 'once') return 'once at ' + s.at;
+      return 'manual only';
+    }
+    function schedRow(s) {
+      const colors = { idle: '#2e9e44', running: '#f59e0b', last_failed: '#e5484d', paused: '#8a8f98' };
+      const el = document.createElement('div'); el.className = 'pl-run';
+      const rh = document.createElement('div'); rh.className = 'rh';
+      rh.innerHTML = '<span style="color:' + colors[s.state] + '">●</span> <b>' + escapeHtml(s.name) + '</b>'
+        + ' <span class="sl">' + (s.body_kind === 'pipeline' ? '🧬 ' + escapeHtml(s.pipeline) : '💬 prompt') + ' · ' + escapeHtml(schedTrigDesc(s)) + '</span>'
+        + '<span class="sl" style="margin-left:auto">' + (s.next_run_at && s.enabled ? 'next ' + new Date(s.next_run_at).toLocaleString() : '') + '</span>';
+      const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:6px;margin-top:5px;align-items:center';
+      const btn = (label, fn, title) => { const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = label; if (title) b.title = title; b.onclick = fn; bar.appendChild(b); };
+      btn('▶ Run now', async () => { await api('/api/schedules/fire', plBody({ b: { id: s.id } })); schedLoad(true); });
+      btn(s.enabled ? '⏸ Pause' : '▶ Resume', async () => { const u = Object.assign({}, s, { enabled: !s.enabled }); await api('/api/schedules/update', plBody({ b: u })); schedLoad(true); });
+      btn('✎ Edit', () => schedOpenModal(s));
+      btn('✕ Delete', async () => { if (!confirm('Delete schedule "' + s.name + '"?')) return; await api('/api/schedules/delete', plBody({ b: { id: s.id } })); schedLoad(true); });
+      const hist = document.createElement('a'); hist.href = '#'; hist.className = 'sl'; hist.textContent = 'runs ▾'; hist.style.marginLeft = 'auto';
+      const runsBox = document.createElement('div'); runsBox.style.cssText = 'display:none;margin-top:6px;border-top:1px solid var(--border);padding-top:6px';
+      const loadRunHistory = async () => {
+        const d = await api('/api/schedule-runs?id=' + encodeURIComponent(s.id)).then((r) => r.json()).catch(() => ({ runs: [] }));
+        runsBox.innerHTML = '';
+        if (!(d.runs || []).length) runsBox.innerHTML = '<span class="sl">(no runs yet)</span>';
+        for (const r of d.runs || []) {
+          const row = document.createElement('div'); row.style.cssText = 'font-size:11px;margin-bottom:4px';
+          row.innerHTML = '<b style="color:' + (r.status === 'done' ? '#2e9e44' : r.status === 'failed' ? '#e5484d' : '#f59e0b') + '">' + r.status + '</b> · '
+            + new Date(r.started_at).toLocaleString() + ' · ' + escapeHtml(r.fired_by);
+          if (r.output_tail) { const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.04));padding:5px;border-radius:6px;margin:3px 0 0'; pre.textContent = r.output_tail; row.appendChild(pre); }
+          runsBox.appendChild(row);
+        }
+        runsBox.style.display = '';
+        hist.textContent = 'runs ▴';
+      };
+      hist.onclick = async (e) => {
+        e.preventDefault();
+        SCH.expanded = SCH.expanded || new Set();
+        if (runsBox.style.display === 'none') { SCH.expanded.add(s.id); await loadRunHistory(); }
+        else { SCH.expanded.delete(s.id); runsBox.style.display = 'none'; hist.textContent = 'runs ▾'; }
+      };
+      // A rebuild (data changed) re-opens histories the user had expanded.
+      if (SCH.expanded && SCH.expanded.has(s.id)) loadRunHistory();
+      bar.appendChild(hist);
+      el.appendChild(rh); el.appendChild(bar); el.appendChild(runsBox);
+      return el;
+    }
+
+    async function schedOpenModal(s) {
+      $('sched-m-title').textContent = s ? 'Edit — ' + s.name : 'New schedule';
+      $('sched-m-msg').textContent = '';
+      const b = $('sched-m-body'); b.innerHTML = '';
+      const row = (label, node) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(node); b.appendChild(r); };
+      const nameIn = document.createElement('input'); nameIn.value = s ? s.name : ''; nameIn.placeholder = 'e.g. nightly PR review';
+      row('name', nameIn);
+
+      const kindSel = document.createElement('select');
+      for (const k of ['pipeline', 'prompt']) { const o = document.createElement('option'); o.value = k; o.textContent = k === 'pipeline' ? '🧬 pipeline' : '💬 prompt (one-shot forge task)'; if (s && s.body_kind === k) o.selected = true; kindSel.appendChild(o); }
+      row('body', kindSel);
+
+      const pipeWrap = document.createElement('div');
+      const pipeSel = document.createElement('select');
+      const files = await api('/api/pipeline/files').then((r) => r.json()).catch(() => ({ files: [] }));
+      for (const f of files.files || []) { const o = document.createElement('option'); o.value = f; o.textContent = f; if (s && s.pipeline === f) o.selected = true; pipeSel.appendChild(o); }
+      pipeWrap.appendChild(pipeSel);
+      const inputsBox = document.createElement('div'); inputsBox.style.marginTop = '6px'; pipeWrap.appendChild(inputsBox);
+      const renderInputs = async () => {
+        inputsBox.innerHTML = '';
+        if (!pipeSel.value) return;
+        const g = await api('/api/pipeline/graph?name=' + encodeURIComponent(pipeSel.value)).then((r) => r.json()).catch(() => null);
+        const keys = Object.keys((g && g.workflow && g.workflow.input) || {});
+        for (const k of keys) {
+          const l = document.createElement('div'); l.className = 'sl'; l.textContent = k; inputsBox.appendChild(l);
+          const i = document.createElement('input'); i.dataset.k = k; i.className = 'sched-inp';
+          i.value = (s && s.inputs && s.inputs[k]) || '';
+          inputsBox.appendChild(i);
+        }
+      };
+      pipeSel.onchange = renderInputs;
+      row('pipeline', pipeWrap);
+      await renderInputs();
+
+      const promptTa = document.createElement('textarea'); promptTa.value = s ? (s.prompt || '') : '';
+      promptTa.placeholder = 'free-text instructions run as a one-shot forge task on each fire';
+      row('prompt', promptTa);
+      const agentIn = document.createElement('input'); agentIn.value = s ? (s.agent || '') : ''; agentIn.placeholder = 'optional forge agent id (prompt body)';
+      row('agent', agentIn);
+      const dirIn = document.createElement('input'); dirIn.value = s ? (s.dir || '') : ''; dirIn.placeholder = '~/path/to/project (working dir; empty = home)';
+      row('directory', dirIn);
+
+      const trigSel = document.createElement('select');
+      for (const t of ['every', 'cron', 'once', 'manual']) { const o = document.createElement('option'); o.value = t; o.textContent = { every: 'every N minutes', cron: 'cron expression', once: 'once at a time', manual: 'manual only' }[t]; if (s && s.trigger === t) o.selected = true; trigSel.appendChild(o); }
+      row('trigger', trigSel);
+      const everyIn = document.createElement('input'); everyIn.type = 'number'; everyIn.min = '1'; everyIn.value = s && s.every_minutes ? s.every_minutes : 60;
+      row('every (minutes)', everyIn);
+      const cronIn = document.createElement('input'); cronIn.value = s ? (s.cron || '') : ''; cronIn.placeholder = '0 9 * * 1-5  (9am Mon–Fri)';
+      row('cron', cronIn);
+      const atIn = document.createElement('input'); atIn.type = 'datetime-local'; if (s && s.at) atIn.value = s.at.slice(0, 16);
+      row('once at', atIn);
+
+      const syncVis = () => {
+        pipeWrap.parentElement.style.display = kindSel.value === 'pipeline' ? '' : 'none';
+        promptTa.parentElement.style.display = kindSel.value === 'prompt' ? '' : 'none';
+        agentIn.parentElement.style.display = kindSel.value === 'prompt' ? '' : 'none';
+        everyIn.parentElement.style.display = trigSel.value === 'every' ? '' : 'none';
+        cronIn.parentElement.style.display = trigSel.value === 'cron' ? '' : 'none';
+        atIn.parentElement.style.display = trigSel.value === 'once' ? '' : 'none';
+      };
+      kindSel.onchange = syncVis; trigSel.onchange = syncVis; syncVis();
+
+      $('sched-m-save').onclick = async () => {
+        const inputs = {}; for (const el of inputsBox.querySelectorAll('.sched-inp')) inputs[el.dataset.k] = el.value;
+        const body = {
+          id: s ? s.id : '', name: nameIn.value.trim(), enabled: s ? s.enabled : true,
+          body_kind: kindSel.value, pipeline: pipeSel.value || '', inputs,
+          dir: dirIn.value.trim(), prompt: promptTa.value, agent: agentIn.value.trim(),
+          trigger: trigSel.value, every_minutes: parseInt(everyIn.value, 10) || 0,
+          cron: cronIn.value.trim(), at: atIn.value,
+        };
+        const r = await api(s ? '/api/schedules/update' : '/api/schedules', plBody({ b: body, m: s ? 'POST' : 'POST' }));
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { $('sched-m-msg').textContent = d.error || 'save failed'; return; }
+        $('sched-modal').classList.remove('open');
+        schedLoad();
+      };
+      $('sched-modal').classList.add('open');
+    }
+
     /* ---------- team (resident agent team) page ---------- */
     const TEAM = { project: null, poll: null };
-    const TM_ROLES = [
-      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [] },
-      { key: 'engineer', name: 'Engineer', ico: '🔨', statuses: ['open', 'in_progress'] },
-      { key: 'reviewer', name: 'Reviewer', ico: '🔍', statuses: ['review'] },
-      { key: 'qa', name: 'QA', ico: '✅', statuses: ['qa'] },
-      { key: 'done', name: 'Done', ico: '🏁', statuses: ['done', 'rejected'] },
-    ];
-    const TM_ORDER = ['coordinator', 'engineer', 'reviewer', 'qa', 'done'];
-    const TM_POS = { coordinator: { x: 24, y: 90 }, engineer: { x: 268, y: 90 }, reviewer: { x: 512, y: 90 }, qa: { x: 756, y: 90 }, done: { x: 1000, y: 90 } };
-    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
+    /* The team roster is DATA (.team.json via /api/team/config): members carry
+       id/name/icon/stage/agent/role_prompt/depends_on, the canvas edits them. */
+    const TM_STAGES = {
+      plan: { statuses: [], desc: 'plans before the pipeline' },
+      implement: { statuses: ['open', 'in_progress'] },
+      review: { statuses: ['review'] },
+      qa: { statuses: ['qa'] },
+    };
+    const TM_DONE = { id: 'done', name: 'Done', icon: '🏁', statuses: ['done', 'rejected'] };
+    async function tmLoadConfig() {
+      const d = await api('/api/team/config?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null);
+      TEAM.cfg = d && Array.isArray(d.members) ? d : { members: [], positions: {} };
+    }
+    function tmPos(id, i) {
+      const p = (TEAM.cfg && TEAM.cfg.positions || {})[id];
+      return p && typeof p.x === 'number' ? p : { x: 24 + i * 244, y: 90 };
+    }
+    async function tmSaveConfig() {
+      const body = Object.assign({ project: TEAM.project }, TEAM.cfg);
+      const r = await api('/api/team/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        $('tm-status').textContent = '✗ ' + (d.error || 'team save failed'); $('tm-status').style.color = '#e5484d';
+        await tmLoadConfig(); TEAM._sig = null; loadTeam();
+        return false;
+      }
+      TEAM._sig = null;
+      return true;
+    }
+    function tmMakeDraggable(el, id) {
+      const th = el.querySelector('.th'); if (!th) return;
+      th.style.cursor = 'grab';
+      th.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button,select,input')) return;
+        e.preventDefault();
+        const sx = e.clientX, sy = e.clientY, ox = el.offsetLeft, oy = el.offsetTop;
+        let moved = false;
+        const move = (ev) => {
+          moved = true;
+          el.style.left = Math.max(0, ox + ev.clientX - sx) + 'px';
+          el.style.top = Math.max(0, oy + ev.clientY - sy) + 'px';
+          tmEdges();
+        };
+        const up = () => {
+          document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+          if (!moved) return;
+          TEAM.cfg.positions = TEAM.cfg.positions || {};
+          TEAM.cfg.positions[id] = { x: el.offsetLeft, y: el.offsetTop };
+          tmSaveConfig();
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      });
+    }
+    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); tmShowTab(TEAM.tab || 'ws'); }
     $('team-open').onclick = openTeam;
     $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
     $('tm-refresh').onclick = () => loadTeam();
@@ -2685,6 +2928,29 @@
         $('tm-edges').innerHTML = ''; $('tm-alerts').innerHTML = ''; $('tm-empty').textContent = 'no projects — click "+ Project" to add a folder.';
       }
     }
+    $('tm-export').onclick = async () => {
+      if (!TEAM.project) return;
+      const d = await api('/api/team/yaml?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null);
+      if (!d || !d.yaml) { $('tm-status').textContent = '✗ export failed'; return; }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([d.yaml], { type: 'text/yaml' }));
+      a.download = 'team-' + TEAM.project + '.yaml'; a.click(); URL.revokeObjectURL(a.href);
+    };
+    $('tm-import').onclick = () => {
+      if (!TEAM.project) return;
+      const f = document.createElement('input'); f.type = 'file'; f.accept = '.yaml,.yml,text/yaml';
+      f.onchange = async () => {
+        const file = f.files && f.files[0]; if (!file) return;
+        if (!confirm('Replace the "' + TEAM.project + '" team with ' + file.name + '?')) return;
+        const yaml = await file.text();
+        const r = await api('/api/team/yaml', plBody({ b: { project: TEAM.project, yaml } }));
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { $('tm-status').textContent = '✗ ' + (d.error || 'import failed'); $('tm-status').style.color = '#e5484d'; return; }
+        $('tm-status').textContent = '✓ imported ' + d.members + ' members'; $('tm-status').style.color = '#2e9e44';
+        await tmLoadConfig(); TEAM._sig = null; loadTeam();
+      };
+      f.click();
+    };
     $('tm-addproject').onclick = () => openPicker('', async (p) => {
       const name = await addProjectPath(p);
       if (name) { TEAM.project = name; tmLoadProjects(); }
@@ -2714,7 +2980,7 @@
       TEAM.agentList = Array.isArray(al) ? al : [];
       TEAM.agentMap = (am && am.agents) || {};
     }
-    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadAgents().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
       const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
@@ -2724,45 +2990,365 @@
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
-      $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
+      if (!d.running && ($('tm-status').textContent || '').indexOf('started') !== -1) { $('tm-status').textContent = '✓ team finished — all work processed'; $('tm-status').style.color = 'var(--muted)'; }
+      $('tm-empty').textContent = reqs.length ? '' : (d.running
+        ? '⏳ team is running — the planning chain (pm → architect → …) takes a few minutes before requests appear here.'
+        : 'no work on the board yet — enter a goal + Run, or start it from the terminal.');
       // Only rebuild the canvas when the board data actually changed, so an open
       // agent dropdown isn't reset by the 3s poll.
-      const sig = JSON.stringify([reqs, msgs]);
+      const sig = JSON.stringify([reqs, msgs, TEAM.cfg]);
       if (sig === TEAM._sig) return;
       TEAM._sig = sig;
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
       const ab = $('tm-alerts'); ab.innerHTML = '';
+      api('/api/team/approvals?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).then((d) => {
+        for (const key of d.pending || []) {
+          const el = document.createElement('div'); el.className = 'tm-alert';
+          el.innerHTML = '<b>⏸ approval</b> — ' + escapeHtml(key) + ' ';
+          const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = '✓ Approve';
+          b.onclick = async () => { await api('/api/team/approve', plBody({ b: { project: TEAM.project, key } })); TEAM._sig = null; loadTeam(); };
+          el.appendChild(b); ab.appendChild(el);
+        }
+      }).catch(() => {});
       for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
       const canvas = $('tm-canvas'); [...canvas.querySelectorAll('.tm-card')].forEach((c) => c.remove());
-      for (const role of TM_ROLES) canvas.appendChild(tmCard(role, reqs, msgs));
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      members.forEach((m, i) => canvas.appendChild(tmCard(m, i, reqs, msgs)));
+      canvas.appendChild(tmDoneCard(members.length, reqs));
       tmEdges();
     }
-    function tmCard(role, reqs, msgs) {
-      const pos = TM_POS[role.key];
-      const mine = role.key === 'coordinator' ? [] : reqs.filter((r) => role.statuses.includes(r.status));
-      const cnt = role.key === 'coordinator' ? reqs.length : mine.length;
-      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(role.key) === 0);
-      const inbox = msgs.filter((m) => m.to === role.key + '-1' && !m.read && m.category === 'ticket').length;
-      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + role.key;
+    function tmCard(m, i, reqs, msgs) {
+      const meta = TM_STAGES[m.stage] || TM_STAGES.implement;
+      const pos = tmPos(m.id, i);
+      const mine = reqs.filter((r) => meta.statuses.includes(r.status));
+      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
+      const inbox = msgs.filter((x) => x.to === m.id + '-1' && !x.read && x.category === 'ticket').length;
+      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + m.id;
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
       const th = document.createElement('div'); th.className = 'th';
-      th.innerHTML = '<span class="ico">' + role.ico + '</span><span class="nm">' + role.name + '</span><span class="cnt' + (cnt ? '' : ' zero') + '">' + cnt + '</span>';
+      th.innerHTML = '<span class="ico">' + escapeHtml(m.icon || '🤖') + '</span><span class="nm">' + escapeHtml(m.name || m.id) + '</span>';
+      const edit = document.createElement('button'); edit.className = 'icon-btn'; edit.textContent = '✎'; edit.title = 'edit agent';
+      edit.style.cssText = 'margin-left:auto;font-size:11px;padding:0 4px';
+      edit.onclick = (e) => { e.stopPropagation(); tmOpenMember(m.id); };
+      th.appendChild(edit);
+      const cnt = document.createElement('span'); cnt.className = 'cnt' + (mine.length ? '' : ' zero'); cnt.textContent = mine.length; th.appendChild(cnt);
       const tb = document.createElement('div'); tb.className = 'tb';
-      if (role.key === 'coordinator') { const s = document.createElement('div'); s.className = 'rq'; s.textContent = 'plans goals → requests'; tb.appendChild(s); }
-      else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
-      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
-      el.appendChild(th); el.appendChild(tb);
-      if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
-      if (role.key !== 'done') {
-        const af = document.createElement('div'); af.className = 'tf';
-        const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
-        const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
-        const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
-        for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if ((TEAM.agentMap || {})[role.key] === a.id) o.selected = true; sel.appendChild(o); }
-        sel.onchange = async () => { TEAM.agentMap = TEAM.agentMap || {}; TEAM.agentMap[role.key] = sel.value; await api('/api/team/agents', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, agents: TEAM.agentMap }) }); };
-        af.appendChild(sel); el.appendChild(af);
+      if (m.stage === 'plan') {
+        const d = document.createElement('div'); d.className = 'rq';
+        d.textContent = (m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc;
+        tb.appendChild(d);
+      } else if (!mine.length) {
+        const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n);
+      } else {
+        for (const r of mine.slice(0, 3)) {
+          const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request';
+          q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(m.id) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id);
+          q.onclick = () => tmShowRequest(r.id); tb.appendChild(q);
+        }
       }
+      el.appendChild(th); el.appendChild(tb);
+      const allMine = msgs.filter((x) => x.to === m.id + '-1');
+      const unreadMine = allMine.filter((x) => !x.read);
+      if (allMine.length) {
+        const tf = document.createElement('div'); tf.className = 'tf'; tf.style.cursor = 'pointer'; tf.title = 'view inbox';
+        tf.innerHTML = '📨 <span class="box">' + (unreadMine.length ? unreadMine.length + ' unread' : allMine.length + ' msg') + (inbox ? ' · ' + inbox + ' ticket' + (inbox > 1 ? 's' : '') : '') + '</span>';
+        tf.onclick = (e) => { e.stopPropagation(); tmShowInbox(m, allMine); };
+        el.appendChild(tf);
+      }
+      const af = document.createElement('div'); af.className = 'tf';
+      const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
+      const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
+      sel.title = 'Which forge agent (model + persona + toolset) this member runs as.\nforge = full dev tools; muse = plan-only; sage = read-only research.\nDefine custom agents in ~/forge/agents to pick different models per role.';
+      const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
+      sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
+      af.appendChild(sel); el.appendChild(af);
+      tmMakeDraggable(el, m.id);
+      const port = document.createElement('div'); port.className = 'tm-port';
+      port.title = 'drag to another card to connect (that card will depend on this one)';
+      port.onmousedown = (e) => tmStartConnect(e, m.id, el);
+      el.appendChild(port);
       return el;
+    }
+    /* drag-to-connect: from a card's ◉ port to another card = target depends_on source */
+    function tmStartConnect(e, sourceId, sourceEl) {
+      e.preventDefault(); e.stopPropagation();
+      const canvas = $('tm-canvas'); const svg = $('tm-edges');
+      const temp = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      temp.setAttribute('stroke-dasharray', '4 3'); svg.appendChild(temp);
+      const local = (ev) => {
+        const r = canvas.getBoundingClientRect();
+        return { x: ev.clientX - r.left + canvas.scrollLeft, y: ev.clientY - r.top + canvas.scrollTop };
+      };
+      const sx = sourceEl.offsetLeft + sourceEl.offsetWidth, sy = sourceEl.offsetTop + sourceEl.offsetHeight / 2;
+      const move = (ev) => {
+        const pt = local(ev); const mx = (sx + pt.x) / 2;
+        temp.setAttribute('d', 'M' + sx + ',' + sy + ' C' + mx + ',' + sy + ' ' + mx + ',' + pt.y + ' ' + pt.x + ',' + pt.y);
+      };
+      const up = async (ev) => {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+        temp.remove();
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        const card = hit && hit.closest ? hit.closest('.tm-card') : null;
+        if (!card) return;
+        const targetId = card.id.replace(/^tm-/, '');
+        if (targetId === sourceId) return;
+        if (targetId === 'done') { $('tm-status').textContent = 'Done is automatic — qa-stage members already flow into it'; return; }
+        const target = (TEAM.cfg.members || []).find((x) => x.id === targetId);
+        if (!target) return;
+        target.depends_on = target.depends_on || [];
+        if (target.depends_on.includes(sourceId)) return;
+        target.depends_on.push(sourceId);
+        if (!(await tmSaveConfig())) { target.depends_on = target.depends_on.filter((d) => d !== sourceId); return; }
+        loadTeam();
+      };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }
+    function tmDoneCard(i, reqs) {
+      const pos = tmPos('done', i);
+      const mine = reqs.filter((r) => TM_DONE.statuses.includes(r.status));
+      const el = document.createElement('div'); el.className = 'tm-card'; el.id = 'tm-done';
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const th = document.createElement('div'); th.className = 'th';
+      th.innerHTML = '<span class="ico">🏁</span><span class="nm">Done</span><span class="cnt' + (mine.length ? '' : ' zero') + '">' + mine.length + '</span>';
+      const tb = document.createElement('div'); tb.className = 'tb';
+      if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(none yet)'; tb.appendChild(n); }
+      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.innerHTML = escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
+      el.appendChild(th); el.appendChild(tb);
+      tmMakeDraggable(el, 'done');
+      return el;
+    }
+    /* member add/edit modal */
+    $('tm-mem-close').onclick = () => $('tm-memmodal').classList.remove('open');
+    $('tm-addagent').onclick = () => tmOpenMember(null);
+    /* Workspace / Code tabs */
+    function tmShowTab(t) {
+      TEAM.tab = t;
+      $('tm-canvas').style.display = t === 'ws' ? '' : 'none';
+      $('tm-code').style.display = t === 'code' ? '' : 'none';
+      $('tm-tab-ws').className = 'btn btn-sm' + (t === 'ws' ? ' btn-primary' : '');
+      $('tm-tab-code').className = 'btn btn-sm' + (t === 'code' ? ' btn-primary' : '');
+      if (t === 'code') tmCodeBrowse(TEAM.codePath || '');
+    }
+    $('tm-tab-ws').onclick = () => tmShowTab('ws');
+    $('tm-tab-code').onclick = () => tmShowTab('code');
+    async function tmCodeBrowse(path) {
+      TEAM.codePath = path;
+      const d = await api('/api/team/files?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path)).then((r) => r.json()).catch(() => ({ dirs: [], files: [] }));
+      const box = $('tm-code-list'); box.innerHTML = '';
+      const item = (label, fn, bold, dirty) => { const el = document.createElement('div'); el.textContent = label; el.style.cssText = 'cursor:pointer;padding:2px 4px;border-radius:4px' + (bold ? ';font-weight:600' : '') + (dirty || label.endsWith(' ●') ? ';color:#d97706' : ''); el.onmouseenter = () => el.style.background = 'var(--bg-2,rgba(0,0,0,.05))'; el.onmouseleave = () => el.style.background = ''; el.onclick = fn; box.appendChild(el); };
+      const crumb = document.createElement('div'); crumb.className = 'sl'; crumb.textContent = '/' + (path || ''); crumb.style.marginBottom = '4px'; box.appendChild(crumb);
+      if (path) item('⬆ ..', () => tmCodeBrowse(path.split('/').slice(0, -1).join('/')), true);
+      for (const dir of d.dirs || []) item('📁 ' + dir.name + (dir.changed ? ' ●' : ''), () => tmCodeBrowse(path ? path + '/' + dir.name : dir.name), true);
+      for (const f of d.files || []) item('📄 ' + f.name + (f.changed ? ' ●' : ''), () => tmShowCode(path ? path + '/' + f.name : f.name, f.changed), false, f.changed);
+    }
+    function tmHlDiff(text) {
+      return text.split('\n').map((l) => {
+        const e = escapeHtml(l);
+        if (l.startsWith('+') && !l.startsWith('+++')) return '<span style="color:#2e9e44">' + e + '</span>';
+        if (l.startsWith('-') && !l.startsWith('---')) return '<span style="color:#e5484d">' + e + '</span>';
+        if (l.startsWith('@@')) return '<span style="color:#8b8fd6">' + e + '</span>';
+        if (l.startsWith('diff ') || l.startsWith('commit ')) return '<b>' + e + '</b>';
+        return e;
+      }).join('\n');
+    }
+    async function tmShowCode(rel, changed, mode) {
+      mode = mode || 'file';
+      const view = $('tm-code-view'); view.innerHTML = '<span class="sl">…</span>';
+      let bar = '';
+      if (changed) {
+        bar = '<div style="margin-bottom:6px"><button class="btn btn-sm' + (mode === 'file' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'file\')">File</button> ' +
+              '<button class="btn btn-sm' + (mode === 'diff' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'diff\')">Diff</button></div>';
+      }
+      if (mode === 'diff') {
+        const dd = await api('/api/team/diff?project=' + encodeURIComponent(TEAM.project) + '&files=' + encodeURIComponent(rel)).then((r) => r.json()).catch(() => ({ diff: '' }));
+        view.innerHTML = bar + tmHlDiff(dd.diff || '(no diff)');
+        return;
+      }
+      const ff = await api('/api/team/file?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(rel)).then((r) => r.json()).catch(() => null);
+      if (!ff || ff.content == null) { view.innerHTML = bar + '(cannot read file)'; return; }
+      const lang = (rel.split('.').pop() || '').toLowerCase();
+      view.innerHTML = bar + highlightCode(ff.content, lang);
+    }
+    function tmExampleSop(name, stage) {
+      const work = {
+        plan: ['1. Explore the project (`read`, `fs_search`) so your plan references real files and conventions.',
+               '2. `list_requests()` — never duplicate work already on the board.',
+               '3. Produce your planning artifact (PRD / design notes) in the workspace, then break the work into',
+               '   small, independently-shippable requests via `create_request` — each with 2-5 TESTABLE acceptance criteria.'].join('\n'),
+        implement: ['1. `list_requests(status: "open")` — find work for your stage; `claim_request(id)` before starting.',
+               '2. `get_request(id)` — read the description and acceptance criteria; check `get_inbox` for rework notes.',
+               '3. Implement the change WITH tests, following the project conventions.',
+               '4. `submit_engineer_work(id, files_changed, notes)` — honest notes on what you did and verified.'].join('\n'),
+        review: ['1. `list_requests(status: "review")` — find work waiting for review. If none, stop.',
+               '2. Read the diff of every changed file; verify each acceptance criterion is actually met.',
+               '3. Check correctness, security, performance, and maintainability — verify findings before reporting.',
+               '4. `submit_review(id, result: "approved" | "changes_requested", findings)` — each finding: file, severity, description.'].join('\n'),
+        qa: ['1. `list_requests(status: "qa")` — find work waiting for QA. If none, stop.',
+               '2. `get_request(id)` — read the acceptance criteria and the engineer notes.',
+               '3. Verify EACH criterion concretely: write and run a real test (`shell`); never guess.',
+               '4. `submit_qa(id, result: "passed" | "failed", notes)` — what you tested and the results.'].join('\n'),
+      }[stage] || '';
+      return '# Role: ' + name + '\n\n' +
+        'You are the **' + name + '** on a Forge workspace team. You coordinate ONLY through\n' +
+        'the workspace MCP tools.\n\n## SOP\n\n' + work + '\n\n## Rules\n\n' +
+        '- Coordinate only through the MCP tools — never hand-edit `request.yml` / `response.yml`.\n' +
+        '- Verify against the acceptance criteria, not vibes.\n' +
+        '- If blocked or unsure, `send_message` the lead instead of guessing.\n';
+    }
+    async function tmOpenMember(id) {
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      const m = id ? members.find((x) => x.id === id) : null;
+      $('tm-mem-title').textContent = m ? 'Edit — ' + (m.name || m.id) : 'Add Agent';
+      $('tm-mem-del').style.display = m ? '' : 'none';
+      $('tm-mem-msg').textContent = '';
+      const b = $('tm-mem-body'); b.innerHTML = '';
+      const row = (label, node) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(node); b.appendChild(r); };
+      const idIn = document.createElement('input'); idIn.value = m ? m.id : ''; idIn.placeholder = 'e.g. ui-designer (letters/digits/-/_)'; idIn.disabled = !!m;
+      // fills the form fields from a member-shaped object (template / import)
+      let applyMember = null;
+      if (!m) {
+        const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px;align-items:center';
+        const tplSel = document.createElement('select'); tplSel.style.flex = '1';
+        const d0 = document.createElement('option'); d0.value = ''; d0.textContent = '— start from a saved template —'; tplSel.appendChild(d0);
+        const tpls = await api('/api/team/templates').then((r) => r.json()).catch(() => ({ templates: [] }));
+        for (const t of tpls.templates || []) { const o = document.createElement('option'); o.value = t.name; o.textContent = t.name; tplSel.appendChild(o); }
+        tplSel.onchange = () => {
+          const t = (tpls.templates || []).find((x) => x.name === tplSel.value);
+          if (t && t.member && applyMember) applyMember(t.member);
+        };
+        const delT = document.createElement('button'); delT.className = 'btn btn-sm'; delT.textContent = '✕'; delT.title = 'delete selected template';
+        delT.onclick = async () => {
+          if (!tplSel.value || !confirm('Delete template "' + tplSel.value + '"?')) return;
+          await api('/api/team/templates/delete', plBody({ b: { name: tplSel.value } }));
+          tmOpenMember(null);
+        };
+        const imp = document.createElement('button'); imp.className = 'btn btn-sm'; imp.textContent = '📂 Import';
+        imp.title = 'load a member JSON file';
+        imp.onclick = () => {
+          const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json';
+          f.onchange = () => {
+            const file = f.files && f.files[0]; if (!file) return;
+            file.text().then((txt) => {
+              try { const obj = JSON.parse(txt); if (applyMember) applyMember(obj.member || obj); }
+              catch (e) { $('tm-mem-msg').textContent = 'bad JSON: ' + e.message; }
+            });
+          };
+          f.click();
+        };
+        wrap.appendChild(tplSel); wrap.appendChild(delT); wrap.appendChild(imp);
+        row('template', wrap);
+      }
+      row('id', idIn);
+      const nameIn = document.createElement('input'); nameIn.value = m ? m.name : ''; nameIn.placeholder = 'display name';
+      row('name', nameIn);
+      const icoIn = document.createElement('input'); icoIn.value = m ? (m.icon || '') : '🤖'; icoIn.style.maxWidth = '70px';
+      row('icon', icoIn);
+      const stSel = document.createElement('select');
+      stSel.title = 'Which lifecycle stage this member works:\nplan = runs once per goal, before the pipeline (PRD/design/requests)\nimplement = works requests in open/in_progress\nreview = works requests in review\nqa = works requests in qa';
+      for (const st of ['plan', 'implement', 'review', 'qa']) { const o = document.createElement('option'); o.value = st; o.textContent = st; if (m && m.stage === st) o.selected = true; stSel.appendChild(o); }
+      row('stage', stSel);
+      const agSel = document.createElement('select');
+      agSel.title = 'The forge agent (model + persona + toolset) this member runs as; custom agents in ~/forge/agents appear here';
+      const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
+      row('agent / model', agSel);
+      const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
+      apprCb.style.cssText = 'width:auto;margin:0';
+      const apprWrap = document.createElement('div');
+      apprWrap.style.cssText = 'display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text);cursor:pointer';
+      apprWrap.title = 'When checked, each piece of work for this member parks until you click Approve on the Team page (a ticket lands in the human inbox)';
+      const apprTxt = document.createElement('span'); apprTxt.textContent = 'require human approval before each piece of work';
+      apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
+      apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
+      row('approval', apprWrap);
+      const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
+      depWrap.title = 'Upstream members (the canvas edges). For plan members this sets the planning ORDER; for workers it feeds topology context and notifications. Tip: drag the port on a card to connect visually.';
+      for (const other of members) {
+        if (m && other.id === m.id) continue;
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:11px';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = other.id;
+        if (m && (m.depends_on || []).includes(other.id)) cb.checked = true;
+        l.appendChild(cb); l.appendChild(document.createTextNode(other.id)); depWrap.appendChild(l);
+      }
+      row('depends on', depWrap);
+      const sopTa = document.createElement('textarea'); sopTa.value = m ? (m.role_prompt || '') : '';
+      sopTa.placeholder = 'custom SOP (markdown) — leave empty to use the built-in SOP for this id/stage';
+      sopTa.title = 'The standard operating procedure injected as this member prompt. Empty = built-in SOP for this id or its stage. Use Insert example SOP to start.';
+      sopTa.style.minHeight = '130px';
+      const sopWrap = document.createElement('div');
+      const exBtn = document.createElement('button'); exBtn.className = 'btn btn-sm'; exBtn.textContent = '✨ Insert example SOP';
+      exBtn.style.marginTop = '5px';
+      exBtn.title = 'generate a starter SOP for the selected stage';
+      exBtn.onclick = () => {
+        if (sopTa.value.trim() && !confirm('Replace the current SOP with an example?')) return;
+        sopTa.value = tmExampleSop(nameIn.value.trim() || idIn.value.trim() || 'Agent', stSel.value);
+      };
+      sopWrap.appendChild(sopTa); sopWrap.appendChild(exBtn);
+      row('role prompt (SOP)', sopWrap);
+      applyMember = (t) => {
+        if (!idIn.disabled && t.id) idIn.value = t.id;
+        if (t.name) nameIn.value = t.name;
+        if (t.icon) icoIn.value = t.icon;
+        if (t.stage) stSel.value = t.stage;
+        if (typeof t.agent === 'string') agSel.value = t.agent;
+        if (typeof t.role_prompt === 'string') sopTa.value = t.role_prompt;
+      };
+      if (m) {
+        const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px';
+        const saveT = document.createElement('button'); saveT.className = 'btn btn-sm'; saveT.textContent = '💾 Save as template';
+        saveT.onclick = async () => {
+          const name = prompt('Template name:', m.name || m.id); if (!name) return;
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const r = await api('/api/team/templates', plBody({ b: { name, member } }));
+          $('tm-mem-msg').textContent = r.ok ? '✓ template saved' : 'save failed';
+        };
+        const expT = document.createElement('button'); expT.className = 'btn btn-sm'; expT.textContent = '📤 Export JSON';
+        expT.onclick = () => {
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([JSON.stringify({ member }, null, 2)], { type: 'application/json' }));
+          a.download = m.id + '.json'; a.click(); URL.revokeObjectURL(a.href);
+        };
+        wrap.appendChild(saveT); wrap.appendChild(expT);
+        row('template', wrap);
+      }
+      $('tm-mem-save').onclick = async () => {
+        const nid = (m ? m.id : idIn.value).trim();
+        if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
+        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
+        const list = (TEAM.cfg.members || []).slice();
+        const at = list.findIndex((x) => x.id === nid);
+        if (m) { list[at] = nm; } else { if (at !== -1) { $('tm-mem-msg').textContent = 'id already exists'; return; } list.push(nm); }
+        const prev = TEAM.cfg.members; TEAM.cfg.members = list;
+        if (await tmSaveConfig()) { $('tm-memmodal').classList.remove('open'); loadTeam(); }
+        else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
+      };
+      $('tm-mem-del').onclick = async () => {
+        if (!m || !confirm('Remove agent "' + m.id + '" from the team?')) return;
+        const prev = TEAM.cfg.members;
+        TEAM.cfg.members = (TEAM.cfg.members || []).filter((x) => x.id !== m.id)
+          .map((x) => Object.assign({}, x, { depends_on: (x.depends_on || []).filter((d) => d !== m.id) }));
+        if (TEAM.cfg.positions) delete TEAM.cfg.positions[m.id];
+        if (await tmSaveConfig()) { $('tm-memmodal').classList.remove('open'); loadTeam(); }
+        else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
+      };
+      $('tm-memmodal').classList.add('open');
+    }
+    function tmShowInbox(m, msgs) {
+      $('tm-req-title').textContent = '📨 ' + (m.name || m.id) + ' — inbox';
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const sorted = msgs.slice().sort((a, x) => (a.created_at < x.created_at ? 1 : -1));
+      for (const msg of sorted.slice(0, 30)) {
+        const r = document.createElement('div'); r.className = 'pl-insp-row';
+        const l = document.createElement('label');
+        const ts = new Date(msg.created_at || msg.at || 0);
+        l.textContent = (msg.category === 'ticket' ? '🎫 ' : '🔔 ') + (msg.from || '?') + ' · ' + (isNaN(ts) ? (msg.created_at || '') : ts.toLocaleString()) + (msg.read ? '' : ' · unread');
+        const c = document.createElement('div'); c.style.cssText = 'font-size:12px;white-space:pre-wrap;line-height:1.5'; c.textContent = msg.body || '';
+        r.appendChild(l); r.appendChild(c); b.appendChild(r);
+      }
+      if (!sorted.length) b.innerHTML = '<span class="sl">(empty)</span>';
+      $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
     async function tmShowRequest(id) {
@@ -2776,7 +3362,22 @@
       if (req.description) sec('description', escapeHtml(req.description));
       if ((req.acceptance_criteria || []).length) sec('acceptance criteria', '<ul style="margin:0;padding-left:18px">' + req.acceptance_criteria.map((c) => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul>');
       if (res) {
-        if (res.engineer) sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+        if (res.engineer) {
+          sec('🔨 engineer', escapeHtml(res.engineer.notes || '') + ((res.engineer.files_changed || []).length ? '<div class="sl" style="margin-top:3px">files: ' + res.engineer.files_changed.map(escapeHtml).join(', ') + '</div>' : ''));
+          if ((res.engineer.files_changed || []).length) {
+            const dr = document.createElement('div'); dr.className = 'pl-insp-row';
+            const btn = document.createElement('button'); btn.className = 'btn btn-sm'; btn.textContent = '📄 View code changes';
+            btn.onclick = async () => {
+              btn.textContent = '…';
+              const dd = await api('/api/team/diff?project=' + encodeURIComponent(TEAM.project) + '&files=' + encodeURIComponent(res.engineer.files_changed.join(','))).then((r) => r.json()).catch(() => ({ diff: '' }));
+              const pre = document.createElement('pre');
+              pre.style.cssText = 'font-size:10.5px;white-space:pre-wrap;max-height:340px;overflow:auto;background:var(--bg-2,rgba(0,0,0,.05));padding:8px;border-radius:6px';
+              pre.textContent = dd.diff || '(no diff found — the change may be in older commits)';
+              btn.replaceWith(pre);
+            };
+            dr.appendChild(btn); b.appendChild(dr);
+          }
+        }
         if (res.review) sec('🔍 review — ' + escapeHtml(res.review.result || ''), (res.review.findings || []).length ? '<ul style="margin:0;padding-left:18px">' + res.review.findings.map((f) => '<li>[' + escapeHtml(f.severity || '') + '] ' + escapeHtml(f.file || '') + ' — ' + escapeHtml(f.description || '') + '</li>').join('') + '</ul>' : '(no findings)');
         if (res.qa) sec('✅ qa — ' + escapeHtml(res.qa.result || ''), escapeHtml(res.qa.notes || ''));
       }
@@ -2784,19 +3385,44 @@
     }
     function tmEdges() {
       const svg = $('tm-edges'); svg.innerHTML = '';
-      const dims = (k) => { const el = document.getElementById('tm-' + k), p = TM_POS[k]; return { x: p.x, y: p.y, w: el ? el.offsetWidth : 200, h: el ? el.offsetHeight : 80 }; };
+      const dims = (k) => { const el = document.getElementById('tm-' + k); if (!el) return null; return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }; };
       const path = (d, cls) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); if (cls) p.setAttribute('class', cls); svg.appendChild(p); };
-      for (let i = 0; i < TM_ORDER.length - 1; i++) {
-        const a = dims(TM_ORDER[i]), b = dims(TM_ORDER[i + 1]);
+      const flow = (fromId, toId, cls) => {
+        const a = dims(fromId), b = dims(toId); if (!a || !b) return;
         const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
-        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
-      }
-      // rework back-edges (dashed) from reviewer/qa down to engineer
-      const eng = dims('engineer');
-      for (const from of ['reviewer', 'qa']) {
-        const f = dims(from);
-        const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
-        path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by, cls);
+      };
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      // solid edges = depends_on (dep → member), plus every qa member → done.
+      // Each depends_on edge gets an invisible wide twin that deletes on click.
+      const clickable = (fromId, toId) => {
+        const a = dims(fromId), b = dims(toId); if (!a || !b) return;
+        const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
+        const h = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        h.setAttribute('d', 'M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
+        h.setAttribute('class', 'hit'); h.setAttribute('stroke', 'transparent'); h.setAttribute('stroke-width', '12'); h.setAttribute('fill', 'none');
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        t.textContent = fromId + ' → ' + toId + ' (click to remove)'; h.appendChild(t);
+        h.onclick = async () => {
+          if (!confirm('Remove connection ' + fromId + ' → ' + toId + '?')) return;
+          const m = (TEAM.cfg.members || []).find((x) => x.id === toId); if (!m) return;
+          m.depends_on = (m.depends_on || []).filter((d) => d !== fromId);
+          if (await tmSaveConfig()) loadTeam();
+        };
+        svg.appendChild(h);
+      };
+      for (const m of members) for (const dep of (m.depends_on || [])) { flow(dep, m.id); clickable(dep, m.id); }
+      for (const m of members) if (m.stage === 'qa') flow(m.id, 'done');
+      // rework back-edges (dashed): review/qa members hand work back to implementers
+      const impl = members.filter((m) => m.stage === 'implement');
+      if (impl.length) {
+        const eng = dims(impl[0].id);
+        for (const m of members) {
+          if (m.stage !== 'review' && m.stage !== 'qa') continue;
+          const f = dims(m.id); if (!f || !eng) continue;
+          const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
+          path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+        }
       }
     }
 
