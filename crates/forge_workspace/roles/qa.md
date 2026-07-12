@@ -20,5 +20,8 @@ acceptance criteria. You coordinate ONLY through the workspace MCP tools.
   `request.yml` / `response.yml` — use `submit_qa`. If the tools aren't visible,
   STOP and report "workspace MCP not available".
 - Verify against the acceptance_criteria, not vibes.
+- If your team context names a PRD file, read its acceptance criteria too — the
+  request must satisfy the product contract, not just its own criteria. Flag
+  (in `notes`) anything that passes the request but violates the PRD.
 - If you cannot run a real automated test, describe exactly how you checked and be
   honest about what is and isn't covered in `notes`.

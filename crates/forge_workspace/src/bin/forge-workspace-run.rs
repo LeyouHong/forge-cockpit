@@ -36,6 +36,8 @@ const ENGINEER_SOP: &str = include_str!("../../roles/engineer.md");
 const REVIEWER_SOP: &str = include_str!("../../roles/reviewer.md");
 const QA_SOP: &str = include_str!("../../roles/qa.md");
 const COORDINATOR_SOP: &str = include_str!("../../roles/coordinator.md");
+const PM_SOP: &str = include_str!("../../roles/pm.md");
+const ARCHITECT_SOP: &str = include_str!("../../roles/architect.md");
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     if let Some(i) = args.iter().position(|a| a == name) {
@@ -177,10 +179,11 @@ fn run() -> anyhow::Result<()> {
         cfg.goal.as_deref().map(|g| format!(" goal={g:?}")).unwrap_or_default()
     );
 
-    // Planning phase (⑧): a coordinator turns the goal into requests on the board
-    // before the pipeline runs. Synchronous — the board must be populated first.
+    // Planning phase (⑧): PM → Architect → Lead turn the goal into a PRD,
+    // design, and requests on the board before the pipeline runs. Synchronous —
+    // the board must be populated first.
     if let Some(goal) = cfg.goal.clone() {
-        run_coordinator(&cfg, &goal);
+        run_planning(&cfg, &goal);
         if cfg.plan_only {
             println!("\n===== board after planning =====");
             for r in request::list_requests(&cfg.workspace, None)? {
@@ -306,15 +309,30 @@ fn topology(workspace: &Path, role: &str) -> String {
     let reqs = request::list_requests(workspace, None).unwrap_or_default();
     let mut t = String::from(
         "## Workspace Team\n\
-         You are one agent on a pipeline team. Work flows **engineer → reviewer → qa → done**, \
-         handed off automatically by request status. Agents coordinate ONLY through the shared \
-         request documents and messages — never talk to each other directly.\n\
-         - **coordinator** (Lead) — decomposes goals into requests (upstream of all)\n\
+         You are one agent on a pipeline team. Planning flows **pm → architect → coordinator**, \
+         then work flows **engineer → reviewer → qa → done**, handed off automatically by request \
+         status. Agents coordinate ONLY through the shared request documents and messages — never \
+         talk to each other directly.\n\
+         - **pm** — writes the PRD (requirements + acceptance criteria) for a goal\n\
+         - **architect** — designs against the PRD and decomposes it into requests\n\
+         - **coordinator** (Lead) — sanity-checks the board against the goal, fills gaps\n\
          - **engineer** — implements requests in `open` / `in_progress`\n\
          - **reviewer** — reviews requests in `review` (downstream of engineer)\n\
-         - **qa** — verifies requests in `qa` (downstream of reviewer)\n\n\
-         Current requests on the board:\n",
+         - **qa** — verifies requests in `qa` (downstream of reviewer)\n",
     );
+    let prd = workspace.join("prd.md");
+    if prd.exists() {
+        t.push_str(&format!(
+            "\nThe team PRD (product contract) is at `{}` — requirements and acceptance criteria \
+             live there.\n",
+            prd.display()
+        ));
+    }
+    let design = workspace.join("design.md");
+    if design.exists() {
+        t.push_str(&format!("The architect's design notes are at `{}`.\n", design.display()));
+    }
+    t.push_str("\nCurrent requests on the board:\n");
     if reqs.is_empty() {
         t.push_str("  (none)\n");
     } else {
@@ -332,34 +350,78 @@ fn topology(workspace: &Path, role: &str) -> String {
     t
 }
 
-/// Run the coordinator (Lead) once, synchronously, to decompose `goal` into
-/// requests on the board. Blocks until the agent finishes so the pipeline sees a
-/// populated board. In dry-run it only announces what it would do.
-fn run_coordinator(cfg: &Cfg, goal: &str) {
+/// The planning chain: PM writes the PRD, the Architect designs and creates the
+/// requests, the Lead sanity-checks the board. Each step runs synchronously so
+/// the next one sees its artifacts; the pipeline starts on a populated board.
+fn run_planning(cfg: &Cfg, goal: &str) {
     let before = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(0);
-    println!("  ⚑ coordinator planning{}: {goal}", if cfg.dry_run { " (dry-run)" } else { "" });
+    let prd = cfg.workspace.join("prd.md");
+    let design = cfg.workspace.join("design.md");
+
+    run_planner(
+        cfg,
+        "pm",
+        PM_SOP,
+        &format!(
+            "Your objective:\n\n{goal}\n\nWrite the PRD to `{}` (create or overwrite that exact \
+             file). Follow your SOP.",
+            prd.display()
+        ),
+    );
+
+    let prd_note = if prd.exists() {
+        format!("The PM's PRD is at `{}` — read it FIRST.", prd.display())
+    } else {
+        "No PRD file was produced; design directly from the objective.".to_string()
+    };
+    run_planner(
+        cfg,
+        "architect",
+        ARCHITECT_SOP,
+        &format!(
+            "The objective:\n\n{goal}\n\n{prd_note} Write your design notes to `{}`, then \
+             decompose into work requests via create_request. Follow your SOP.",
+            design.display()
+        ),
+    );
+
+    run_planner(
+        cfg,
+        "coordinator",
+        COORDINATOR_SOP,
+        &format!(
+            "The objective:\n\n{goal}\n\nThe PM and architect have already planned: the PRD is at \
+             `{}` and the architect created the requests now on the board. Your job is a final \
+             sanity pass: compare the board against the objective/PRD, create requests ONLY for \
+             genuine gaps (never duplicates), and report the final plan (request ids + titles).",
+            prd.display()
+        ),
+    );
+
+    let after = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(before);
+    println!("  ⚑ planning done — {} request(s) created.", after.saturating_sub(before));
+}
+
+/// Run one synchronous planning-phase agent (pm / architect / coordinator).
+fn run_planner(cfg: &Cfg, role: &str, sop: &str, tail: &str) {
+    println!("  ⚑ {role} planning{}", if cfg.dry_run { " (dry-run)" } else { "" });
     if cfg.dry_run {
         return;
     }
-    let topo = topology(&cfg.workspace, "coordinator");
+    let topo = topology(&cfg.workspace, role);
     let prompt = format!(
-        "{topo}\n{sop}\n\n---\nYou are agent `coordinator-1`. The workspace tools are available as \
-         MCP tools (create_request, list_requests, get_request, send_message). Your objective:\n\n\
-         {goal}\n\nFollow your SOP: explore the project, then break this objective into focused \
-         work requests via create_request. Start now.",
-        sop = COORDINATOR_SOP,
+        "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available as MCP \
+         tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now."
     );
     let mut cmd = Command::new(&cfg.forge);
     cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
-    if let Some(agent) = cfg.agents.get("coordinator") {
+    if let Some(agent) = cfg.agents.get(role) {
         cmd.arg("--agent").arg(agent);
     }
     if let Some(home) = &cfg.home {
         cmd.env("FORGE_CONFIG", home);
     }
     let _ = cmd.status();
-    let after = request::list_requests(&cfg.workspace, None).map(|r| r.len()).unwrap_or(before);
-    println!("  ⚑ coordinator done — {} request(s) created.", after.saturating_sub(before));
 }
 
 /// Spawn a role agent for a request on its own thread; clear `running` when done.

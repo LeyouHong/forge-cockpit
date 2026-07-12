@@ -595,7 +595,7 @@
       <button class="icon-btn" id="kanban-open" title="Dashboard — platform boards">📋</button>
       <button class="icon-btn" id="integrations-open" title="Integrations (GitHub / Jira / Sentry / MCP)">🧩</button>
       <button class="icon-btn" id="pipeline-open" title="Pipeline — build &amp; run workflows">🧬</button>
-      <button class="icon-btn" id="team-open" title="Team — the resident agent team (engineer → reviewer → qa)">🤝</button>
+      <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -764,7 +764,7 @@
   <!-- Team (resident agent team) page -->
   <div class="kanban-overlay" id="team-overlay">
     <div class="kanban-head">
-      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — engineer → reviewer → qa</span></span>
+      <span><b>🤝 Team</b> <span class="drawer-hint">the resident agent team — pm → architect → coordinator → engineer → reviewer → qa</span></span>
       <div style="flex:1"></div>
       <label class="sl" style="margin-right:6px">Project</label>
       <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
@@ -775,7 +775,7 @@
     <div class="kanban-scroll">
       <section class="kanban-section">
         <div class="tm-bar">
-          <input id="tm-goal" placeholder='goal for the coordinator (optional) — e.g. "harden calc.py: add validation + tests"' />
+          <input id="tm-goal" placeholder='goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests' />
           <button class="btn btn-primary btn-sm" id="tm-run">▶ Run</button>
           <button class="btn btn-sm" id="tm-daemon">⚡ Start Daemon</button>
           <span class="sl" id="tm-status"></span>
@@ -2660,14 +2660,16 @@
     /* ---------- team (resident agent team) page ---------- */
     const TEAM = { project: null, poll: null };
     const TM_ROLES = [
-      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [] },
+      { key: 'pm', name: 'PM', ico: '📋', statuses: [], desc: 'goal → PRD + acceptance criteria' },
+      { key: 'architect', name: 'Architect', ico: '🏗️', statuses: [], desc: 'PRD → design + requests' },
+      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [], desc: 'sanity-checks the board' },
       { key: 'engineer', name: 'Engineer', ico: '🔨', statuses: ['open', 'in_progress'] },
       { key: 'reviewer', name: 'Reviewer', ico: '🔍', statuses: ['review'] },
       { key: 'qa', name: 'QA', ico: '✅', statuses: ['qa'] },
       { key: 'done', name: 'Done', ico: '🏁', statuses: ['done', 'rejected'] },
     ];
-    const TM_ORDER = ['coordinator', 'engineer', 'reviewer', 'qa', 'done'];
-    const TM_POS = { coordinator: { x: 24, y: 90 }, engineer: { x: 268, y: 90 }, reviewer: { x: 512, y: 90 }, qa: { x: 756, y: 90 }, done: { x: 1000, y: 90 } };
+    const TM_ORDER = ['pm', 'architect', 'coordinator', 'engineer', 'reviewer', 'qa', 'done'];
+    const TM_POS = { pm: { x: 24, y: 90 }, architect: { x: 268, y: 90 }, coordinator: { x: 512, y: 90 }, engineer: { x: 756, y: 90 }, reviewer: { x: 1000, y: 90 }, qa: { x: 1244, y: 90 }, done: { x: 1488, y: 90 } };
     function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
     $('team-open').onclick = openTeam;
     $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
@@ -2739,7 +2741,7 @@
     }
     function tmCard(role, reqs, msgs) {
       const pos = TM_POS[role.key];
-      const mine = role.key === 'coordinator' ? [] : reqs.filter((r) => role.statuses.includes(r.status));
+      const mine = reqs.filter((r) => role.statuses.includes(r.status));
       const cnt = role.key === 'coordinator' ? reqs.length : mine.length;
       const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(role.key) === 0);
       const inbox = msgs.filter((m) => m.to === role.key + '-1' && !m.read && m.category === 'ticket').length;
@@ -2748,7 +2750,7 @@
       const th = document.createElement('div'); th.className = 'th';
       th.innerHTML = '<span class="ico">' + role.ico + '</span><span class="nm">' + role.name + '</span><span class="cnt' + (cnt ? '' : ' zero') + '">' + cnt + '</span>';
       const tb = document.createElement('div'); tb.className = 'tb';
-      if (role.key === 'coordinator') { const s = document.createElement('div'); s.className = 'rq'; s.textContent = 'plans goals → requests'; tb.appendChild(s); }
+      if (role.desc) { const s = document.createElement('div'); s.className = 'rq'; s.textContent = role.desc; tb.appendChild(s); }
       else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
       else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
       el.appendChild(th); el.appendChild(tb);
