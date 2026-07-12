@@ -3034,7 +3034,7 @@
       const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
       const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
       const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
       sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
       af.appendChild(sel); el.appendChild(af);
       tmMakeDraggable(el, m.id);
@@ -3223,7 +3223,7 @@
       row('stage', stSel);
       const agSel = document.createElement('select');
       const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
       row('agent / model', agSel);
       const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
       apprCb.style.cssText = 'width:auto;margin:0';
