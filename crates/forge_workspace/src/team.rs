@@ -49,6 +49,10 @@ pub struct TeamMember {
     /// the topology snapshot every agent sees.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// When true, a human must approve each piece of work before this member
+    /// is spawned for it (the orchestrator parks the request and alerts).
+    #[serde(default)]
+    pub requires_approval: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -74,6 +78,7 @@ fn member(id: &str, name: &str, icon: &str, stage: Stage, depends_on: &[&str]) -
         agent: String::new(),
         role_prompt: String::new(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
+        requires_approval: false,
     }
 }
 

@@ -2960,6 +2960,15 @@
       TEAM._sig = sig;
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
       const ab = $('tm-alerts'); ab.innerHTML = '';
+      api('/api/team/approvals?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).then((d) => {
+        for (const key of d.pending || []) {
+          const el = document.createElement('div'); el.className = 'tm-alert';
+          el.innerHTML = '<b>⏸ approval</b> — ' + escapeHtml(key) + ' ';
+          const b = document.createElement('button'); b.className = 'btn btn-sm'; b.textContent = '✓ Approve';
+          b.onclick = async () => { await api('/api/team/approve', plBody({ b: { project: TEAM.project, key } })); TEAM._sig = null; loadTeam(); };
+          el.appendChild(b); ab.appendChild(el);
+        }
+      }).catch(() => {});
       for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
       const canvas = $('tm-canvas'); [...canvas.querySelectorAll('.tm-card')].forEach((c) => c.remove());
       const members = (TEAM.cfg && TEAM.cfg.members) || [];
@@ -3087,6 +3096,10 @@
       const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
       for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
       row('agent / model', agSel);
+      const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
+      const apprWrap = document.createElement('label'); apprWrap.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+      apprWrap.appendChild(apprCb); apprWrap.appendChild(document.createTextNode('require human approval before each piece of work'));
+      row('approval', apprWrap);
       const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
       for (const other of members) {
         if (m && other.id === m.id) continue;
@@ -3130,7 +3143,7 @@
       $('tm-mem-save').onclick = async () => {
         const nid = (m ? m.id : idIn.value).trim();
         if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
-        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
+        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
         const list = (TEAM.cfg.members || []).slice();
         const at = list.findIndex((x) => x.id === nid);
         if (m) { list[at] = nm; } else { if (at !== -1) { $('tm-mem-msg').textContent = 'id already exists'; return; } list.push(nm); }

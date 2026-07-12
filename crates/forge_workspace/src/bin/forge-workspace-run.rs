@@ -195,6 +195,59 @@ fn member_for(team: &TeamConfig, status: RequestStatus, req_id: &str) -> Option<
     Some((lead.clone(), true))
 }
 
+/// Approval gate state, persisted at `<workspace>/.team-approvals.json` as
+/// `{"<req_id>@<Status>": "pending" | "approved"}`. Approving is done by the
+/// web UI (or by editing the file); the entry is consumed on spawn so each
+/// new status pass needs a fresh approval.
+fn approval_key(req: &RequestDocument) -> String {
+    format!("{}@{:?}", req.id, req.status)
+}
+
+fn approvals_path(workspace: &Path) -> PathBuf {
+    workspace.join(".team-approvals.json")
+}
+
+fn load_approvals(workspace: &Path) -> HashMap<String, String> {
+    std::fs::read_to_string(approvals_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_approvals(workspace: &Path, map: &HashMap<String, String>) {
+    let _ = std::fs::write(approvals_path(workspace), serde_json::to_string_pretty(map).unwrap_or_default());
+}
+
+/// Returns true when the member may work this request now. Creates the
+/// pending entry (and alerts the human once) on first sight.
+fn approval_granted(cfg: &Cfg, req: &RequestDocument, member: &TeamMember) -> bool {
+    if !member.requires_approval {
+        return true;
+    }
+    let key = approval_key(req);
+    let mut map = load_approvals(&cfg.workspace);
+    match map.get(&key).map(String::as_str) {
+        Some("approved") => {
+            map.remove(&key); // consumed — the next status pass re-asks
+            save_approvals(&cfg.workspace, &map);
+            true
+        }
+        Some(_) => false, // pending — wait for the human
+        None => {
+            map.insert(key.clone(), "pending".into());
+            save_approvals(&cfg.workspace, &map);
+            let body = format!(
+                "APPROVAL NEEDED: member `{}` requires approval to work request `{}` (\"{}\") in \
+                 [{:?}]. Approve it on the Team page (or mark `{key}` approved in .team-approvals.json).",
+                member.id, req.id, req.title, req.status
+            );
+            let _ = message::send_message(&cfg.workspace, "orchestrator", &cfg.alert_to, &body, Category::Ticket);
+            println!("  ⏸ {} [{:?}] waiting for approval of member `{}`", req.id, req.status, member.id);
+            false
+        }
+    }
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("orchestrator error: {e:#}");
@@ -302,6 +355,16 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
+                // Approval gate — checked before the attempt counter so a
+                // request waiting on a human never accrues stuck-attempts.
+                let Some((member, covering)) = member_for(&cfg.team, req.status, &req.id) else {
+                    println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
+                    continue;
+                };
+                if !cfg.dry_run && !approval_granted(&cfg, req, &member) {
+                    continue;
+                }
+
                 // This request gets a turn. Consume an attempt; park it (once) if
                 // it has burned its budget without the status ever advancing.
                 let attempts = {
@@ -328,10 +391,6 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
-                let Some((member, covering)) = member_for(&cfg.team, req.status, &req.id) else {
-                    println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
-                    continue;
-                };
                 println!(
                     "  → {} [{:?}] attempt {attempts} → {}{}{}",
                     req.id,

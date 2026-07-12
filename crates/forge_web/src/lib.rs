@@ -167,6 +167,8 @@ where
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )
+        .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
+        .route("/api/team/approve", post(pipeline::team_approve::<A>))
         .route(
             "/api/team/templates",
             get(pipeline::team_templates_get::<A>).post(pipeline::team_templates_save::<A>),

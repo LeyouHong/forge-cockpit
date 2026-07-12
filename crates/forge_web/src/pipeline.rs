@@ -515,6 +515,50 @@ pub(crate) async fn team_config_set<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// GET /api/team/approvals?project= — pending approval gates.
+pub(crate) async fn team_approvals_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let map: serde_json::Map<String, Value> =
+        std::fs::read_to_string(project.join(".forge-workspace").join(".team-approvals.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    let pending: Vec<String> = map
+        .iter()
+        .filter(|(_, v)| v.as_str() == Some("pending"))
+        .map(|(k, _)| k.clone())
+        .collect();
+    Ok(Json(json!({ "pending": pending })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ApproveReq {
+    project: String,
+    key: String,
+}
+
+/// POST /api/team/approve — grant a pending approval gate.
+pub(crate) async fn team_approve<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<ApproveReq>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let path = project.join(".forge-workspace").join(".team-approvals.json");
+    let mut map: serde_json::Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    if !map.contains_key(&body.key) {
+        return Err(AppError::not_found("no such pending approval"));
+    }
+    map.insert(body.key.clone(), json!("approved"));
+    std::fs::write(&path, serde_json::to_string_pretty(&map).unwrap_or_default())?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 // ─── Team member templates (global: ~/.forge-web/team-templates.json) ───────
 // Mirrors the reference forge's smith templates: save a configured member,
 // reuse it in any project's team, export/import as JSON.
