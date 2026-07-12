@@ -14,6 +14,7 @@ mod dto;
 mod live;
 mod pipeline;
 mod schedule;
+mod usage;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -183,6 +184,7 @@ where
         .route("/api/schedules/delete", post(schedule::delete::<A>))
         .route("/api/schedules/fire", post(schedule::fire_now::<A>))
         .route("/api/schedule-runs", get(schedule::runs::<A>))
+        .route("/api/usage", get(usage::usage::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
