@@ -811,7 +811,17 @@
           <span class="sl" id="tm-status"></span>
         </div>
         <div id="tm-alerts" class="tm-alerts"></div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button class="btn btn-sm" id="tm-tab-ws">🗺 Workspace</button>
+          <button class="btn btn-sm" id="tm-tab-code">📁 Code</button>
+        </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
+        <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
+          <div style="display:flex;height:100%">
+            <div id="tm-code-list" style="width:240px;overflow:auto;border-right:1px solid var(--border);padding:8px;font-size:12px"></div>
+            <pre id="tm-code-view" style="flex:1;overflow:auto;margin:0;padding:10px;font-size:11.5px;white-space:pre"></pre>
+          </div>
+        </div>
         <div id="tm-empty" class="sl" style="margin-top:10px"></div>
       </section>
     </div>
@@ -2899,7 +2909,7 @@
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
       });
     }
-    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
+    function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); tmShowTab(TEAM.tab || 'ws'); }
     $('team-open').onclick = openTeam;
     $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
     $('tm-refresh').onclick = () => loadTeam();
@@ -3085,6 +3095,30 @@
     /* member add/edit modal */
     $('tm-mem-close').onclick = () => $('tm-memmodal').classList.remove('open');
     $('tm-addagent').onclick = () => tmOpenMember(null);
+    /* Workspace / Code tabs */
+    function tmShowTab(t) {
+      TEAM.tab = t;
+      $('tm-canvas').style.display = t === 'ws' ? '' : 'none';
+      $('tm-code').style.display = t === 'code' ? '' : 'none';
+      $('tm-tab-ws').className = 'btn btn-sm' + (t === 'ws' ? ' btn-primary' : '');
+      $('tm-tab-code').className = 'btn btn-sm' + (t === 'code' ? ' btn-primary' : '');
+      if (t === 'code') tmCodeBrowse(TEAM.codePath || '');
+    }
+    $('tm-tab-ws').onclick = () => tmShowTab('ws');
+    $('tm-tab-code').onclick = () => tmShowTab('code');
+    async function tmCodeBrowse(path) {
+      TEAM.codePath = path;
+      const d = await api('/api/team/files?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path)).then((r) => r.json()).catch(() => ({ dirs: [], files: [] }));
+      const box = $('tm-code-list'); box.innerHTML = '';
+      const item = (label, fn, bold) => { const el = document.createElement('div'); el.textContent = label; el.style.cssText = 'cursor:pointer;padding:2px 4px;border-radius:4px' + (bold ? ';font-weight:600' : ''); el.onmouseenter = () => el.style.background = 'var(--bg-2,rgba(0,0,0,.05))'; el.onmouseleave = () => el.style.background = ''; el.onclick = fn; box.appendChild(el); };
+      const crumb = document.createElement('div'); crumb.className = 'sl'; crumb.textContent = '/' + (path || ''); crumb.style.marginBottom = '4px'; box.appendChild(crumb);
+      if (path) item('⬆ ..', () => tmCodeBrowse(path.split('/').slice(0, -1).join('/')), true);
+      for (const dir of d.dirs || []) item('📁 ' + dir, () => tmCodeBrowse(path ? path + '/' + dir : dir), true);
+      for (const f of d.files || []) item('📄 ' + f, async () => {
+        const ff = await api('/api/team/file?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path ? path + '/' + f : f)).then((r) => r.json()).catch(() => null);
+        $('tm-code-view').textContent = ff && ff.content != null ? ff.content : '(cannot read file)';
+      });
+    }
     function tmExampleSop(name, stage) {
       const work = {
         plan: ['1. Explore the project (`read`, `fs_search`) so your plan references real files and conventions.',

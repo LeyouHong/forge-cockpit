@@ -516,6 +516,56 @@ pub(crate) async fn team_config_set<A: API>(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct CodeQuery {
+    project: String,
+    #[serde(default)]
+    path: String,
+}
+
+/// GET /api/team/files?project=&path= — list a project directory (code view).
+pub(crate) async fn team_files<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<CodeQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    if q.path.contains("..") {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    let dir = if q.path.is_empty() { project.clone() } else { project.join(&q.path) };
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "node_modules" || name == "target" {
+                continue;
+            }
+            if e.path().is_dir() { dirs.push(name) } else { files.push(name) }
+        }
+    }
+    dirs.sort(); files.sort();
+    Ok(Json(json!({ "path": q.path, "dirs": dirs, "files": files })))
+}
+
+/// GET /api/team/file?project=&path= — read a project file (capped).
+pub(crate) async fn team_file<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<CodeQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    if q.path.contains("..") || q.path.is_empty() {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    let mut content = std::fs::read_to_string(project.join(&q.path))
+        .map_err(|_| AppError::not_found("not a readable text file"))?;
+    if content.len() > 200_000 {
+        content.truncate(200_000);
+        content.push_str("\n… [truncated]");
+    }
+    Ok(Json(json!({ "path": q.path, "content": content })))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct DiffQuery {
     project: String,
     files: String,
