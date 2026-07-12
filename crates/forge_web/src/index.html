@@ -2746,10 +2746,19 @@
       const dailyAvg = d.days_with_activity ? t.cost / d.days_with_activity : 0;
       const card = (label, big, sub, tip) => '<div title="' + (tip || '') + '" style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
         '<div class="sl">' + label + '</div><div style="font-size:22px;font-weight:700;margin:2px 0">' + big + '</div><div class="sl">' + (sub || '') + '</div></div>';
+      const srcNote = { forge: 'your forge agents (chat / team / pipeline) — real spend at your provider\'s rate', 'claude-code': 'interactive Claude Code CLI sessions — Anthropic models, covered by your subscription' };
       let html = '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">' +
-        'ℹ️ These are <b>estimated pay-as-you-go API prices</b> for the tokens in your sessions — <b>not what you were billed</b>. ' +
-        'On a Claude subscription (Pro/Max/Code) you pay a flat fee and these tokens are included. Cache reads (usually the bulk) are shown separately since they are near-free.</div>' +
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+        'ℹ️ Estimated <b>API-equivalent</b> prices for the tokens in your sessions — <b>not a bill</b>. ' +
+        'Two sources: <b>forge</b> = your agents (e.g. DeepSeek) — this is real per-token spend; <b>claude-code</b> = interactive Claude Code, covered by your Claude subscription (flat fee, not per-token). Cache reads are near-free and shown separately.</div>';
+      const bySrc = d.by_source || [];
+      if (bySrc.length) {
+        html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' + bySrc.map((sc) =>
+          '<div title="' + (srcNote[sc.source] || '') + '" style="flex:1;min-width:220px;border:1px solid var(--border);border-radius:10px;padding:12px 14px' + (sc.source === 'forge' ? ';border-color:var(--accent,#5e6ad2)' : '') + '">' +
+          '<div class="sl">' + (sc.source === 'forge' ? '🔥 forge agents (real spend)' : '💬 ' + sc.source + ' (subscription)') + '</div>' +
+          '<div style="font-size:22px;font-weight:700;margin:2px 0">' + fmtUsd(sc.cost) + '</div>' +
+          '<div class="sl">' + (sc.messages || 0) + ' msgs · +' + fmtUsd(sc.cache_cost) + ' cache</div></div>').join('') + '</div>';
+      }
+      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
         card('Est. new-work cost', fmtUsd(t.cost), (t.sessions || 0) + ' sessions · ' + (t.messages || 0) + ' msgs', 'API-equivalent cost of input + output + cache-write tokens (excludes cache reads). Not your actual bill.') +
         card('+ cache reads', fmtUsd(t.cache_cost), 'API-equiv; ~$0 on subscription', 'What the ' + fmtNum(t.cache_read) + ' cache-read tokens would cost at API rates — effectively free on a subscription plan.') +
         card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out · ' + fmtNum(t.cache_read) + ' cached') +
