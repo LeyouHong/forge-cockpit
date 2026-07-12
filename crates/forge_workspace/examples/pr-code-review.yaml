@@ -1,0 +1,186 @@
+description: |
+  Deep AI code review for a GitHub PR, modeled on multi-round human review. Checks out the PR branch into a temp dir so the reviewer agent can explore the real codebase (grep call sites, verify every claim in the PR description, run quick typechecks), then posts a structured review comment (Summary/Verdict, Description Verification table, Blockers, Suggestions, Nice-to-have, Highlights) and manages a needs-fix label. Re-running on the same PR produces a new "Round N" that re-checks the previous round's blockers. IMPORTANT: run with node_timeout_secs 900 — the review agent needs time to explore.
+
+input:
+  pr:
+    default: ""
+    description: PR number to review
+  repo:
+    default: ""
+    description: Repository in owner/name format
+
+name: pr-code-review
+
+nodes:
+  prep:
+    mode: shell
+    outputs:
+      - extract: result
+        name: workdir
+    prompt: |
+      set -euo pipefail
+      WORK="$(mktemp -d /tmp/forge-pr-review-XXXXXX)"
+      gh repo clone {{input.repo}} "$WORK" -- --quiet >&2
+      cd "$WORK"
+      gh pr checkout {{input.pr}} --repo {{input.repo}} >&2
+      echo "$WORK"
+
+  context:
+    mode: shell
+    outputs:
+      - extract: result
+        name: meta
+    prompt: |
+      set -euo pipefail
+      META="$(gh pr view {{input.pr}} --repo {{input.repo}} --json title,baseRefName,headRefName,body)"
+      PREV_COUNT="$(gh pr view {{input.pr}} --repo {{input.repo}} --json comments --jq '[.comments[] | select(.body | contains("Forge AI Code Review"))] | length')"
+      ROUND=$((PREV_COUNT + 1))
+      echo "TITLE: $(printf '%s' "$META" | jq -r .title)"
+      echo "BASE_BRANCH: $(printf '%s' "$META" | jq -r .baseRefName)"
+      echo "HEAD_BRANCH: $(printf '%s' "$META" | jq -r .headRefName)"
+      echo "ROUND: $ROUND"
+      echo ""
+      echo "--- PR DESCRIPTION ---"
+      printf '%s' "$META" | jq -r .body | head -c 6000
+      echo ""
+      if [ "$PREV_COUNT" -gt 0 ]; then
+        echo "--- PREVIOUS REVIEW (latest) ---"
+        gh pr view {{input.pr}} --repo {{input.repo}} --json comments \
+          --jq '[.comments[] | select(.body | contains("Forge AI Code Review"))] | last | .body' | head -c 5000
+      fi
+
+  review:
+    depends_on:
+      - prep
+      - context
+    project: "{{nodes.prep.outputs.workdir}}"
+    outputs:
+      - extract: result
+        name: findings
+    prompt: |
+      You are a senior code reviewer. Your working directory is a fresh checkout of
+      the PR branch under review. Do a DEEP, evidence-based review — never guess
+      when you can verify by reading code or running a command.
+
+      PR metadata, description, and (if any) the previous review round:
+      ---
+      {{nodes.context.outputs.meta}}
+      ---
+
+      ## How to review
+
+      1. See what changed: `git log --oneline origin/<BASE_BRANCH>..HEAD` and
+         `git diff origin/<BASE_BRANCH>...HEAD --stat`, then read the full diff
+         (`git diff origin/<BASE_BRANCH>...HEAD`) file by file.
+      2. VERIFY EVERY CLAIM in the PR description against the actual code: grep
+         the repo, read the files, check call sites. Mark each claim
+         ✓ implemented / ⚠ partial / ✗ not found, with evidence (file:line).
+         Also note anything in the diff NOT mentioned by the description.
+      3. For each changed function, check its callers/callees for breakage
+         (changed signatures, changed semantics, removed guards).
+      4. If this is Round 2+, re-check each blocker from the previous review:
+         confirm fixed (cite the fix) or still open.
+      5. Run cheap verification only if it finishes quickly with what is already
+         installed (e.g. `cargo check -q`, `tsc --noEmit`, existing lint). If the
+         same errors exist on the base branch, say so instead of blaming the PR.
+         NEVER install dependencies or run long builds.
+      6. Time-box yourself: prefer targeted reads over exhaustive scans.
+
+      ## Output format (STRICT)
+
+      Your FIRST line must be exactly one of:
+        VERDICT: APPROVE
+        VERDICT: REQUEST_CHANGES
+
+      Then a complete GitHub-markdown review with these sections:
+
+      ## 🤖 Forge AI Code Review — PR #{{input.pr}} (Round <ROUND>)
+
+      ### 📋 Summary
+      Verdict badge + 2-3 sentences: what the PR does, overall quality, and the
+      single most important finding.
+
+      ### ✅ PR Description Verification
+      A table: | Claim | Status | Notes | — one row per claim, with evidence.
+      After the table, note undisclosed changes found in the diff (or "none").
+
+      ### 🔴 Blockers (must fix)
+      Numbered. Each: **bold title**, `file:line`, a short code snippet when it
+      helps, why it breaks, and a concrete suggested fix. Write "None." if none.
+      In Round 2+, start with the previous round's blockers: ✅ fixed / ❌ still open.
+
+      ### 🟡 Suggestions
+      Non-blocking issues, same evidence discipline.
+
+      ### 🟢 Nice-to-have
+      Minor polish items.
+
+      ### 💡 Highlights
+      Genuinely good patterns in the PR worth calling out.
+
+      ### 🧪 Build / typecheck
+      What you ran and the result, or why you skipped it.
+
+      Formatting rules: plain GitHub markdown; never indent lines by 4+ spaces
+      (GitHub renders them as code blocks) — use fenced code blocks instead;
+      use backticks for file names and identifiers.
+
+  act:
+    depends_on:
+      - review
+    mode: shell
+    outputs:
+      - extract: stdout
+        name: result
+    prompt: |
+      set -euo pipefail
+
+      FINDINGS={{nodes.review.outputs.findings}}
+
+      VERDICT_LINE="$(printf '%s\n' "$FINDINGS" | head -1)"
+      REST="$(printf '%s\n' "$FINDINGS" | tail -n +2 | awk 'f||NF{f=1} f')"
+
+      BODY_FILE="$(mktemp)"
+      {
+        printf '%s\n\n' "$REST"
+        printf -- '---\n'
+        printf '_Automated review by [ForgeCode](https://forgecode.dev) pipeline `pr-code-review`_\n'
+      } > "$BODY_FILE"
+
+      case "$VERDICT_LINE" in
+        *REQUEST_CHANGES*)
+          gh label create {{vars.label}} --repo {{input.repo}} --color {{vars.label_color}} --description "AI code review found issues that need fixing" 2>/dev/null || true
+          echo "-> Adding label {{vars.label}} to PR #{{input.pr}}"
+          gh pr edit {{input.pr}} --repo {{input.repo}} --add-label {{vars.label}}
+          ;;
+        *APPROVE*)
+          echo "-> Verdict approve: removing label {{vars.label}} if present"
+          gh pr edit {{input.pr}} --repo {{input.repo}} --remove-label {{vars.label}} 2>/dev/null || true
+          ;;
+      esac
+
+      echo "-> Posting review comment to PR #{{input.pr}}"
+      gh pr comment {{input.pr}} --repo {{input.repo}} --body-file "$BODY_FILE"
+      rm -f "$BODY_FILE"
+      echo "DONE: ${VERDICT_LINE:-no verdict} — commented"
+
+  cleanup:
+    depends_on:
+      - act
+    mode: shell
+    prompt: |
+      set -euo pipefail
+      WORK={{nodes.prep.outputs.workdir}}
+      case "$WORK" in
+        /tmp/forge-pr-review-*|/private/tmp/forge-pr-review-*)
+          rm -rf "$WORK"
+          echo "cleaned $WORK"
+          ;;
+        *)
+          echo "refusing to delete unexpected path: $WORK"
+          ;;
+      esac
+
+vars:
+  label: needs-fix
+  label_color: FBCA04
