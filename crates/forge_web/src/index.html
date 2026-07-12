@@ -3174,7 +3174,11 @@
     function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
-      const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
+      const [d, st] = await Promise.all([
+        api('/api/team?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null),
+        api('/api/team/status?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ members: {} })),
+      ]);
+      TEAM.status = (st && st.members) || {};
       if (d) renderTeam(d);
     }
     function renderTeam(d) {
@@ -3187,7 +3191,7 @@
         : 'no work on the board yet — enter a goal + Run, or start it from the terminal.');
       // Only rebuild the canvas when the board data actually changed, so an open
       // agent dropdown isn't reset by the 3s poll.
-      const sig = JSON.stringify([reqs, msgs, TEAM.cfg]);
+      const sig = JSON.stringify([reqs, msgs, TEAM.cfg, TEAM.status]);
       if (sig === TEAM._sig) return;
       TEAM._sig = sig;
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
@@ -3223,6 +3227,18 @@
       edit.onclick = (e) => { e.stopPropagation(); tmOpenMember(m.id); };
       th.appendChild(edit);
       const cnt = document.createElement('span'); cnt.className = 'cnt' + (mine.length ? '' : ' zero'); cnt.textContent = mine.length; th.appendChild(cnt);
+      const ms = (TEAM.status || {})[m.id];
+      if (ms) {
+        const dotColor = ms.status === 'working' ? '#2e9e44' : '#8a8f98';
+        const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '');
+        dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:4px' + (ms.status === 'working' ? ';box-shadow:0 0 0 3px rgba(46,158,68,.25)' : '');
+        th.appendChild(dot);
+        if (ms.has_log) {
+          const lg = document.createElement('span'); lg.textContent = '📜'; lg.title = 'view resident session log'; lg.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+          lg.onclick = (e) => { e.stopPropagation(); tmShowSession(m); };
+          th.appendChild(lg);
+        }
+      }
       const tb = document.createElement('div'); tb.className = 'tb';
       if (m.stage === 'plan') {
         const d = document.createElement('div'); d.className = 'rq';
@@ -3539,6 +3555,28 @@
         r.appendChild(l); r.appendChild(c); b.appendChild(r);
       }
       if (!sorted.length) b.innerHTML = '<span class="sl">(empty)</span>';
+      $('tm-reqmodal').classList.add('open');
+    }
+    async function tmShowSession(m) {
+      $('tm-req-title').textContent = '📜 ' + (m.name || m.id) + ' — resident session';
+      const b = $('tm-req-body'); b.innerHTML = '<span class="sl">…</span>';
+      const fetchLog = async () => {
+        const d = await api('/api/team/session-log?project=' + encodeURIComponent(TEAM.project) + '&member=' + encodeURIComponent(m.id)).then((r) => r.json()).catch(() => ({ log: '' }));
+        return (d && d.log) || '(no session log yet)';
+      };
+      const head = document.createElement('div'); head.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+      head.innerHTML = '<span class="sl" style="flex:1">this member keeps one persistent conversation across tasks — resuming its own memory each run</span>';
+      const reset = document.createElement('button'); reset.className = 'btn btn-sm'; reset.textContent = '↻ Reset session';
+      reset.title = 'Forget this member\'s conversation — next run starts with fresh context';
+      reset.onclick = async () => {
+        if (!confirm('Reset ' + m.id + '\'s session? It loses its accumulated memory.')) return;
+        await api('/api/team/reset-session', plBody({ b: { project: TEAM.project, member: m.id } }));
+        pre.textContent = '(session reset — cleared)';
+      };
+      head.appendChild(reset);
+      const pre = document.createElement('pre'); pre.style.cssText = 'font-size:10.5px;white-space:pre-wrap;max-height:60vh;overflow:auto;background:var(--bg-2,rgba(0,0,0,.05));padding:8px;border-radius:6px;margin:0';
+      pre.textContent = await fetchLog();
+      b.innerHTML = ''; b.appendChild(head); b.appendChild(pre);
       $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');

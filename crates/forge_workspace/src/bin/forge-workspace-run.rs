@@ -24,7 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -250,6 +250,81 @@ fn approval_granted(cfg: &Cfg, req: &RequestDocument, member: &TeamMember) -> bo
     }
 }
 
+/// Per-member conversation ids give each agent a PERSISTENT session that
+/// survives across tasks: `forge -p --conversation-id <id>` resumes the same
+/// conversation, so the member keeps its own memory (what it built, decided,
+/// was told) instead of starting cold every spawn. Stored at
+/// `<workspace>/.team-sessions.json` (member id -> conversation id).
+fn sessions_path(workspace: &Path) -> PathBuf {
+    workspace.join(".team-sessions.json")
+}
+
+fn get_or_create_session(workspace: &Path, member_id: &str) -> String {
+    let path = sessions_path(workspace);
+    let mut map: HashMap<String, String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    if let Some(id) = map.get(member_id) {
+        return id.clone();
+    }
+    // Reuse forge's id shape so `--conversation-id` accepts it.
+    let id = forge_workspace::pipeline::new_conversation_id();
+    map.insert(member_id.to_string(), id.clone());
+    let _ = std::fs::write(&path, serde_json::to_string_pretty(&map).unwrap_or_default());
+    id
+}
+
+/// Per-member live log (the resident session's streamed output).
+fn member_log_path(workspace: &Path, member_id: &str) -> PathBuf {
+    workspace.join(".team-logs").join(format!("{member_id}.log"))
+}
+
+/// Open (append) the member log, prefixed with a run banner.
+fn open_member_log(workspace: &Path, member_id: &str, banner: &str) -> Option<std::fs::File> {
+    let path = member_log_path(workspace, member_id);
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok()?;
+    use std::io::Write;
+    let _ = writeln!(f, "\n===== {} {} =====", now_banner(), banner);
+    Some(f)
+}
+
+fn now_banner() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+/// Write `<workspace>/.team-status.json`: per-member `{status, request}` plus
+/// whether each has a persistent session log. Read by the Team page.
+fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocument]) {
+    let running = state.lock().unwrap().running.clone();
+    // Which member owns each running request (stable pick, mirrors scheduling).
+    let mut working: HashMap<String, String> = HashMap::new();
+    for req in todo {
+        if running.contains(&req.id) {
+            if let Some((m, _)) = member_for(&cfg.team, req.status, &req.id) {
+                working.insert(m.id, req.id.clone());
+            }
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for m in &cfg.team.members {
+        let has_log = member_log_path(&cfg.workspace, &m.id).exists();
+        let (status, request) = match working.get(&m.id) {
+            Some(r) => ("working", Some(r.clone())),
+            None => ("idle", None),
+        };
+        out.insert(
+            m.id.clone(),
+            serde_json::json!({ "status": status, "request": request, "has_log": has_log }),
+        );
+    }
+    let path = cfg.workspace.join(".team-status.json");
+    let _ = std::fs::write(&path, serde_json::to_string_pretty(&out).unwrap_or_default());
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("orchestrator error: {e:#}");
@@ -406,6 +481,11 @@ fn run() -> anyhow::Result<()> {
             }
         }
 
+        // Publish per-member status (down/idle/working) for the web UI: a member
+        // is `working` when it owns a running request, else `idle`. `down` is the
+        // absence of the orchestrator pid, decided by the reader.
+        write_member_status(&cfg, &state, &todo);
+
         // Termination: nothing pending-and-workable and nothing running.
         let active = state.lock().unwrap().running.len();
         let all_parked = {
@@ -552,12 +632,18 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
     );
     let mut cmd = Command::new(&cfg.forge);
     cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
+    cmd.arg("--conversation-id").arg(get_or_create_session(&cfg.workspace, &m.id));
     let agent = if !m.agent.trim().is_empty() { Some(m.agent.clone()) } else { cfg.agents.get(&m.id).cloned() };
     if let Some(agent) = agent {
         cmd.arg("--agent").arg(agent);
     }
     if let Some(home) = &cfg.home {
         cmd.env("FORGE_CONFIG", home);
+    }
+    if let Some(log) = open_member_log(&cfg.workspace, &m.id, "planning") {
+        if let Ok(err) = log.try_clone() {
+            cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err));
+        }
     }
     let _ = cmd.status();
 }
@@ -602,6 +688,12 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
             }
             if let Some(home) = &cfg.home {
                 cmd.env("FORGE_CONFIG", home);
+            }
+            cmd.arg("--conversation-id").arg(get_or_create_session(&cfg.workspace, &member.id));
+            if let Some(log) = open_member_log(&cfg.workspace, &member.id, &format!("working {}", req.id)) {
+                if let Ok(err) = log.try_clone() {
+                    cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err));
+                }
             }
             match cmd.spawn() {
                 Ok(mut child) => {

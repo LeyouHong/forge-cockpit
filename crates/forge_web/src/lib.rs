@@ -173,6 +173,9 @@ where
         .route("/api/team/file", get(pipeline::team_file::<A>))
         .route("/api/team/diff", get(pipeline::team_diff::<A>))
         .route("/api/team/yaml", get(pipeline::team_yaml_get::<A>).post(pipeline::team_yaml_set::<A>))
+        .route("/api/team/status", get(pipeline::team_status::<A>))
+        .route("/api/team/session-log", get(pipeline::team_session_log::<A>))
+        .route("/api/team/reset-session", post(pipeline::team_reset_session::<A>))
         .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
         .route("/api/team/approve", post(pipeline::team_approve::<A>))
         .route(

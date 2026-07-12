@@ -1162,6 +1162,12 @@ fn new_id() -> String {
     format!("pl-{short}")
 }
 
+/// A fresh forge conversation id (the format `forge -p --conversation-id`
+/// accepts). Used to give each resident team member a persistent session.
+pub fn new_conversation_id() -> String {
+    forge_domain::ConversationId::generate().into_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
