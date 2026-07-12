@@ -2744,13 +2744,16 @@
       const totalTok = (t.input || 0) + (t.output || 0) + (t.cache_read || 0) + (t.cache_write || 0);
       const cacheHit = (t.input + t.cache_read) ? (t.cache_read / (t.input + t.cache_read) * 100) : 0;
       const dailyAvg = d.days_with_activity ? t.cost / d.days_with_activity : 0;
-      const card = (label, big, sub) => '<div style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
+      const card = (label, big, sub, tip) => '<div title="' + (tip || '') + '" style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
         '<div class="sl">' + label + '</div><div style="font-size:22px;font-weight:700;margin:2px 0">' + big + '</div><div class="sl">' + (sub || '') + '</div></div>';
-      let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
-        card('Total cost', fmtUsd(t.cost), (t.sessions || 0) + ' sessions · ' + (t.messages || 0) + ' msgs') +
-        card('Daily avg', fmtUsd(dailyAvg), d.days_with_activity + ' active days') +
-        card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out') +
-        card('Cache hit', cacheHit.toFixed(0) + '%', fmtNum(t.cache_read) + ' cached') +
+      let html = '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">' +
+        'ℹ️ These are <b>estimated pay-as-you-go API prices</b> for the tokens in your sessions — <b>not what you were billed</b>. ' +
+        'On a Claude subscription (Pro/Max/Code) you pay a flat fee and these tokens are included. Cache reads (usually the bulk) are shown separately since they are near-free.</div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+        card('Est. new-work cost', fmtUsd(t.cost), (t.sessions || 0) + ' sessions · ' + (t.messages || 0) + ' msgs', 'API-equivalent cost of input + output + cache-write tokens (excludes cache reads). Not your actual bill.') +
+        card('+ cache reads', fmtUsd(t.cache_cost), 'API-equiv; ~$0 on subscription', 'What the ' + fmtNum(t.cache_read) + ' cache-read tokens would cost at API rates — effectively free on a subscription plan.') +
+        card('Tokens', fmtNum(totalTok), fmtNum(t.input) + ' in · ' + fmtNum(t.output) + ' out · ' + fmtNum(t.cache_read) + ' cached') +
+        card('Daily avg', fmtUsd(dailyAvg), d.days_with_activity + ' active days · ' + cacheHit.toFixed(0) + '% cache hit') +
         '</div>';
 
       // cost trend (inline SVG)
@@ -2764,7 +2767,7 @@
           return px.toFixed(1) + ',' + py.toFixed(1);
         }).join(' ');
         html += '<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-          '<div class="sl" style="margin-bottom:6px">Cost trend — peak day ' + fmtUsd(max) + '</div>' +
+          '<div class="sl" style="margin-bottom:6px">Est. new-work cost per day — peak ' + fmtUsd(max) + '</div>' +
           '<svg viewBox="0 0 ' + W + ' ' + Hh + '" style="width:100%;height:120px"><polyline points="' + pts + '" fill="none" stroke="var(--accent,#5e6ad2)" stroke-width="2"/></svg>' +
           '<div class="sl">' + (trend[0] || {}).day + ' → ' + (trend[trend.length - 1] || {}).day + '</div></div>';
       }

@@ -39,7 +39,11 @@ struct Agg {
     output: u64,
     cache_read: u64,
     cache_write: u64,
+    /// API-equivalent cost EXCLUDING cache reads (the "new work" cost).
     cost: f64,
+    /// API-equivalent cost of cache reads alone (usually the bulk, and $0 on
+    /// subscription plans).
+    cache_cost: f64,
     messages: u64,
     sessions: std::collections::HashSet<String>,
 }
@@ -51,6 +55,7 @@ impl Agg {
         self.cache_read += other.cache_read;
         self.cache_write += other.cache_write;
         self.cost += other.cost;
+        self.cache_cost += other.cache_cost;
         self.messages += 1;
         self.sessions.insert(other.session.clone());
     }
@@ -59,6 +64,7 @@ impl Agg {
             "input": self.input, "output": self.output,
             "cache_read": self.cache_read, "cache_write": self.cache_write,
             "cost": (self.cost * 10000.0).round() / 10000.0,
+            "cache_cost": (self.cache_cost * 10000.0).round() / 10000.0,
             "messages": self.messages, "sessions": self.sessions.len(),
         })
     }
@@ -74,6 +80,7 @@ struct Row {
     cache_read: u64,
     cache_write: u64,
     cost: f64,
+    cache_cost: f64,
 }
 
 fn claude_projects_dir() -> PathBuf {
@@ -115,11 +122,11 @@ fn parse_row(line: &str, project: &str) -> Option<Row> {
         .unwrap_or_default();
     let session = o.get("sessionId").and_then(Value::as_str).unwrap_or("").to_string();
     let (pi, po, pr, pw) = price(&model);
-    let cost = input as f64 / 1e6 * pi
-        + output as f64 / 1e6 * po
-        + cache_read as f64 / 1e6 * pr
-        + cache_write as f64 / 1e6 * pw;
-    Some(Row { day, project: project.to_string(), model, session, input, output, cache_read, cache_write, cost })
+    // Cache reads are the bulk of token volume and $0 on subscription plans;
+    // track them separately so the headline number reflects "new work".
+    let cost = input as f64 / 1e6 * pi + output as f64 / 1e6 * po + cache_write as f64 / 1e6 * pw;
+    let cache_cost = cache_read as f64 / 1e6 * pr;
+    Some(Row { day, project: project.to_string(), model, session, input, output, cache_read, cache_write, cost, cache_cost })
 }
 
 #[derive(Deserialize)]
@@ -215,9 +222,10 @@ mod tests {
         assert_eq!(r.day, "2026-07-11");
         assert_eq!(r.input, 1000);
         assert_eq!(r.output, 2000);
-        // opus: 1000/1e6*15 + 2000/1e6*75 + 500/1e6*1.5 + 100/1e6*18.75
-        let expect = 0.015 + 0.15 + 0.00075 + 0.001875;
+        // opus new-work cost excludes cache read: in + out + cache_write
+        let expect = 0.015 + 0.15 + 0.001875;
         assert!((r.cost - expect).abs() < 1e-9, "cost {} vs {}", r.cost, expect);
+        assert!((r.cache_cost - 0.00075).abs() < 1e-9);
     }
 
     #[test]
