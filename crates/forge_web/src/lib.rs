@@ -162,6 +162,10 @@ where
             "/api/team/agents",
             get(pipeline::team_agents_get::<A>).put(pipeline::team_agents_set::<A>),
         )
+        .route(
+            "/api/team/config",
+            get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
+        )
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()

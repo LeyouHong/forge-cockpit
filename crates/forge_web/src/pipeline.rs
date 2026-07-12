@@ -483,6 +483,38 @@ pub(crate) async fn team_run<A: API>(
     }
 }
 
+/// GET /api/team/config?project=NAME — the team roster (members + canvas
+/// positions). Falls back to the built-in six-role team.
+pub(crate) async fn team_config_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let cfg = forge_workspace::team::load_team(&ws);
+    Ok(Json(serde_json::to_value(&cfg).unwrap_or_else(|_| json!({}))))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TeamConfigSet {
+    project: String,
+    #[serde(flatten)]
+    config: forge_workspace::team::TeamConfig,
+}
+
+/// PUT /api/team/config — save the team roster (validated: unique ids, known
+/// depends_on, acyclic, at least one implement member).
+pub(crate) async fn team_config_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<TeamConfigSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::save_team(&ws, &body.config)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 /// GET /api/team/agents?project=NAME — the role→agent map for this project.
 pub(crate) async fn team_agents_get<A: API>(
     State(_): State<AppState<A>>,
