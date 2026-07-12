@@ -252,6 +252,13 @@ fn fire(s: Schedule, fired_by: &str) {
                 run_body(cmd)
             }
         };
+        // forge -p streams a spinner + ANSI chrome to stdout; clean it so the
+        // stored tail is the agent's actual work, not progress-bar junk.
+        let cleaned = if s.body_kind == "prompt" {
+            forge_workspace::pipeline::clean_result(&out)
+        } else {
+            forge_workspace::pipeline::strip_ansi(&out)
+        };
         let _g = LOCK.lock().unwrap();
         let mut runs = load_runs();
         if let Some(r) = runs
@@ -261,7 +268,7 @@ fn fire(s: Schedule, fired_by: &str) {
         {
             r.finished_at = Some(Utc::now());
             r.status = if status { "done".into() } else { "failed".into() };
-            r.output_tail = tail(&out, 2000);
+            r.output_tail = tail(&cleaned, 3000);
         }
         save_runs(&runs);
     });
