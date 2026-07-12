@@ -768,6 +768,7 @@
       <div style="flex:1"></div>
       <label class="sl" style="margin-right:6px">Project</label>
       <select id="tm-project" class="repo-select" style="border:1px solid var(--border);min-width:150px"></select>
+      <button class="btn btn-sm" id="tm-addagent" title="Add a team member">+ Add Agent</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
@@ -801,6 +802,15 @@
     <div class="pl-picker pl-node-modal">
       <div class="pl-picker-head"><b id="tm-req-title">Request</b><div style="flex:1"></div><button class="icon-btn" id="tm-req-close" title="Close">✕</button></div>
       <div class="pl-nm-body" id="tm-req-body"></div>
+    </div>
+  </div>
+
+  <!-- Team: member edit modal -->
+  <div class="pl-picker-overlay" id="tm-memmodal">
+    <div class="pl-picker pl-node-modal">
+      <div class="pl-picker-head"><b id="tm-mem-title">Agent</b><div style="flex:1"></div><button class="icon-btn" id="tm-mem-close" title="Close">✕</button></div>
+      <div class="pl-nm-body" id="tm-mem-body"></div>
+      <div class="pl-picker-foot"><span class="sl" id="tm-mem-msg"></span><div style="flex:1"></div><button class="btn btn-sm" id="tm-mem-del" style="color:#e5484d">Delete</button><button class="btn btn-primary btn-sm" id="tm-mem-save">Save</button></div>
     </div>
   </div>
 
@@ -2659,17 +2669,59 @@
 
     /* ---------- team (resident agent team) page ---------- */
     const TEAM = { project: null, poll: null };
-    const TM_ROLES = [
-      { key: 'pm', name: 'PM', ico: '📋', statuses: [], desc: 'goal → PRD + acceptance criteria' },
-      { key: 'architect', name: 'Architect', ico: '🏗️', statuses: [], desc: 'PRD → design + requests' },
-      { key: 'coordinator', name: 'Coordinator', ico: '🧭', statuses: [], desc: 'sanity-checks the board' },
-      { key: 'engineer', name: 'Engineer', ico: '🔨', statuses: ['open', 'in_progress'] },
-      { key: 'reviewer', name: 'Reviewer', ico: '🔍', statuses: ['review'] },
-      { key: 'qa', name: 'QA', ico: '✅', statuses: ['qa'] },
-      { key: 'done', name: 'Done', ico: '🏁', statuses: ['done', 'rejected'] },
-    ];
-    const TM_ORDER = ['pm', 'architect', 'coordinator', 'engineer', 'reviewer', 'qa', 'done'];
-    const TM_POS = { pm: { x: 24, y: 90 }, architect: { x: 268, y: 90 }, coordinator: { x: 512, y: 90 }, engineer: { x: 756, y: 90 }, reviewer: { x: 1000, y: 90 }, qa: { x: 1244, y: 90 }, done: { x: 1488, y: 90 } };
+    /* The team roster is DATA (.team.json via /api/team/config): members carry
+       id/name/icon/stage/agent/role_prompt/depends_on, the canvas edits them. */
+    const TM_STAGES = {
+      plan: { statuses: [], desc: 'plans before the pipeline' },
+      implement: { statuses: ['open', 'in_progress'] },
+      review: { statuses: ['review'] },
+      qa: { statuses: ['qa'] },
+    };
+    const TM_DONE = { id: 'done', name: 'Done', icon: '🏁', statuses: ['done', 'rejected'] };
+    async function tmLoadConfig() {
+      const d = await api('/api/team/config?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null);
+      TEAM.cfg = d && Array.isArray(d.members) ? d : { members: [], positions: {} };
+    }
+    function tmPos(id, i) {
+      const p = (TEAM.cfg && TEAM.cfg.positions || {})[id];
+      return p && typeof p.x === 'number' ? p : { x: 24 + i * 244, y: 90 };
+    }
+    async function tmSaveConfig() {
+      const body = Object.assign({ project: TEAM.project }, TEAM.cfg);
+      const r = await api('/api/team/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        $('tm-status').textContent = '✗ ' + (d.error || 'team save failed'); $('tm-status').style.color = '#e5484d';
+        await tmLoadConfig(); TEAM._sig = null; loadTeam();
+        return false;
+      }
+      TEAM._sig = null;
+      return true;
+    }
+    function tmMakeDraggable(el, id) {
+      const th = el.querySelector('.th'); if (!th) return;
+      th.style.cursor = 'grab';
+      th.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button,select,input')) return;
+        e.preventDefault();
+        const sx = e.clientX, sy = e.clientY, ox = el.offsetLeft, oy = el.offsetTop;
+        let moved = false;
+        const move = (ev) => {
+          moved = true;
+          el.style.left = Math.max(0, ox + ev.clientX - sx) + 'px';
+          el.style.top = Math.max(0, oy + ev.clientY - sy) + 'px';
+          tmEdges();
+        };
+        const up = () => {
+          document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+          if (!moved) return;
+          TEAM.cfg.positions = TEAM.cfg.positions || {};
+          TEAM.cfg.positions[id] = { x: el.offsetLeft, y: el.offsetTop };
+          tmSaveConfig();
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      });
+    }
     function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); }
     $('team-open').onclick = openTeam;
     $('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
@@ -2716,7 +2768,7 @@
       TEAM.agentList = Array.isArray(al) ? al : [];
       TEAM.agentMap = (am && am.agents) || {};
     }
-    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadAgents().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
       const d = await (await api('/api/team?project=' + encodeURIComponent(TEAM.project))).json().catch(() => null);
@@ -2729,42 +2781,131 @@
       $('tm-empty').textContent = reqs.length ? '' : 'no work on the board yet — enter a goal + Run, or start it from the terminal.';
       // Only rebuild the canvas when the board data actually changed, so an open
       // agent dropdown isn't reset by the 3s poll.
-      const sig = JSON.stringify([reqs, msgs]);
+      const sig = JSON.stringify([reqs, msgs, TEAM.cfg]);
       if (sig === TEAM._sig) return;
       TEAM._sig = sig;
       const alerts = msgs.filter((m) => m.to === 'human' && m.category === 'ticket');
       const ab = $('tm-alerts'); ab.innerHTML = '';
       for (const a of alerts.slice(0, 4)) { const el = document.createElement('div'); el.className = 'tm-alert'; el.innerHTML = '<b>⚠ alert</b> — ' + escapeHtml((a.body || '').slice(0, 200)); ab.appendChild(el); }
       const canvas = $('tm-canvas'); [...canvas.querySelectorAll('.tm-card')].forEach((c) => c.remove());
-      for (const role of TM_ROLES) canvas.appendChild(tmCard(role, reqs, msgs));
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      members.forEach((m, i) => canvas.appendChild(tmCard(m, i, reqs, msgs)));
+      canvas.appendChild(tmDoneCard(members.length, reqs));
       tmEdges();
     }
-    function tmCard(role, reqs, msgs) {
-      const pos = TM_POS[role.key];
-      const mine = reqs.filter((r) => role.statuses.includes(r.status));
-      const cnt = role.key === 'coordinator' ? reqs.length : mine.length;
-      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(role.key) === 0);
-      const inbox = msgs.filter((m) => m.to === role.key + '-1' && !m.read && m.category === 'ticket').length;
-      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + role.key;
+    function tmCard(m, i, reqs, msgs) {
+      const meta = TM_STAGES[m.stage] || TM_STAGES.implement;
+      const pos = tmPos(m.id, i);
+      const mine = reqs.filter((r) => meta.statuses.includes(r.status));
+      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
+      const inbox = msgs.filter((x) => x.to === m.id + '-1' && !x.read && x.category === 'ticket').length;
+      const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + m.id;
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
       const th = document.createElement('div'); th.className = 'th';
-      th.innerHTML = '<span class="ico">' + role.ico + '</span><span class="nm">' + role.name + '</span><span class="cnt' + (cnt ? '' : ' zero') + '">' + cnt + '</span>';
+      th.innerHTML = '<span class="ico">' + escapeHtml(m.icon || '🤖') + '</span><span class="nm">' + escapeHtml(m.name || m.id) + '</span>';
+      const edit = document.createElement('button'); edit.className = 'icon-btn'; edit.textContent = '✎'; edit.title = 'edit agent';
+      edit.style.cssText = 'margin-left:auto;font-size:11px;padding:0 4px';
+      edit.onclick = (e) => { e.stopPropagation(); tmOpenMember(m.id); };
+      th.appendChild(edit);
+      const cnt = document.createElement('span'); cnt.className = 'cnt' + (mine.length ? '' : ' zero'); cnt.textContent = mine.length; th.appendChild(cnt);
       const tb = document.createElement('div'); tb.className = 'tb';
-      if (role.desc) { const s = document.createElement('div'); s.className = 'rq'; s.textContent = role.desc; tb.appendChild(s); }
-      else if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n); }
-      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request'; q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(role.key) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
+      if (m.stage === 'plan') {
+        const d = document.createElement('div'); d.className = 'rq';
+        d.textContent = (m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc;
+        tb.appendChild(d);
+      } else if (!mine.length) {
+        const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n);
+      } else {
+        for (const r of mine.slice(0, 3)) {
+          const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.title = 'view request';
+          q.innerHTML = (r.claimed_by && r.claimed_by.indexOf(m.id) === 0 ? '<span class="dot">● </span>' : '') + escapeHtml(r.title || r.id);
+          q.onclick = () => tmShowRequest(r.id); tb.appendChild(q);
+        }
+      }
       el.appendChild(th); el.appendChild(tb);
       if (inbox > 0) { const tf = document.createElement('div'); tf.className = 'tf'; tf.innerHTML = '📨 <span class="box">' + inbox + ' ticket' + (inbox > 1 ? 's' : '') + '</span>'; el.appendChild(tf); }
-      if (role.key !== 'done') {
-        const af = document.createElement('div'); af.className = 'tf';
-        const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
-        const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
-        const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
-        for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if ((TEAM.agentMap || {})[role.key] === a.id) o.selected = true; sel.appendChild(o); }
-        sel.onchange = async () => { TEAM.agentMap = TEAM.agentMap || {}; TEAM.agentMap[role.key] = sel.value; await api('/api/team/agents', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, agents: TEAM.agentMap }) }); };
-        af.appendChild(sel); el.appendChild(af);
-      }
+      const af = document.createElement('div'); af.className = 'tf';
+      const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
+      const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
+      const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
+      sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
+      af.appendChild(sel); el.appendChild(af);
+      tmMakeDraggable(el, m.id);
       return el;
+    }
+    function tmDoneCard(i, reqs) {
+      const pos = tmPos('done', i);
+      const mine = reqs.filter((r) => TM_DONE.statuses.includes(r.status));
+      const el = document.createElement('div'); el.className = 'tm-card'; el.id = 'tm-done';
+      el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
+      const th = document.createElement('div'); th.className = 'th';
+      th.innerHTML = '<span class="ico">🏁</span><span class="nm">Done</span><span class="cnt' + (mine.length ? '' : ' zero') + '">' + mine.length + '</span>';
+      const tb = document.createElement('div'); tb.className = 'tb';
+      if (!mine.length) { const n = document.createElement('div'); n.className = 'none'; n.textContent = '(none yet)'; tb.appendChild(n); }
+      else for (const r of mine.slice(0, 3)) { const q = document.createElement('div'); q.className = 'rq'; q.style.cursor = 'pointer'; q.innerHTML = escapeHtml(r.title || r.id); q.onclick = () => tmShowRequest(r.id); tb.appendChild(q); }
+      el.appendChild(th); el.appendChild(tb);
+      tmMakeDraggable(el, 'done');
+      return el;
+    }
+    /* member add/edit modal */
+    $('tm-mem-close').onclick = () => $('tm-memmodal').classList.remove('open');
+    $('tm-addagent').onclick = () => tmOpenMember(null);
+    function tmOpenMember(id) {
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      const m = id ? members.find((x) => x.id === id) : null;
+      $('tm-mem-title').textContent = m ? 'Edit — ' + (m.name || m.id) : 'Add Agent';
+      $('tm-mem-del').style.display = m ? '' : 'none';
+      $('tm-mem-msg').textContent = '';
+      const b = $('tm-mem-body'); b.innerHTML = '';
+      const row = (label, node) => { const r = document.createElement('div'); r.className = 'pl-insp-row'; const l = document.createElement('label'); l.textContent = label; r.appendChild(l); r.appendChild(node); b.appendChild(r); };
+      const idIn = document.createElement('input'); idIn.value = m ? m.id : ''; idIn.placeholder = 'e.g. ui-designer (letters/digits/-/_)'; idIn.disabled = !!m;
+      row('id', idIn);
+      const nameIn = document.createElement('input'); nameIn.value = m ? m.name : ''; nameIn.placeholder = 'display name';
+      row('name', nameIn);
+      const icoIn = document.createElement('input'); icoIn.value = m ? (m.icon || '') : '🤖'; icoIn.style.maxWidth = '70px';
+      row('icon', icoIn);
+      const stSel = document.createElement('select');
+      for (const st of ['plan', 'implement', 'review', 'qa']) { const o = document.createElement('option'); o.value = st; o.textContent = st; if (m && m.stage === st) o.selected = true; stSel.appendChild(o); }
+      row('stage', stSel);
+      const agSel = document.createElement('select');
+      const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
+      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
+      row('agent / model', agSel);
+      const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
+      for (const other of members) {
+        if (m && other.id === m.id) continue;
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:11px';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = other.id;
+        if (m && (m.depends_on || []).includes(other.id)) cb.checked = true;
+        l.appendChild(cb); l.appendChild(document.createTextNode(other.id)); depWrap.appendChild(l);
+      }
+      row('depends on', depWrap);
+      const sopTa = document.createElement('textarea'); sopTa.value = m ? (m.role_prompt || '') : '';
+      sopTa.placeholder = 'custom SOP (markdown) — leave empty to use the built-in SOP for this id/stage';
+      sopTa.style.minHeight = '130px';
+      row('role prompt (SOP)', sopTa);
+      $('tm-mem-save').onclick = async () => {
+        const nid = (m ? m.id : idIn.value).trim();
+        if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
+        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
+        const list = (TEAM.cfg.members || []).slice();
+        const at = list.findIndex((x) => x.id === nid);
+        if (m) { list[at] = nm; } else { if (at !== -1) { $('tm-mem-msg').textContent = 'id already exists'; return; } list.push(nm); }
+        const prev = TEAM.cfg.members; TEAM.cfg.members = list;
+        if (await tmSaveConfig()) { $('tm-memmodal').classList.remove('open'); loadTeam(); }
+        else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
+      };
+      $('tm-mem-del').onclick = async () => {
+        if (!m || !confirm('Remove agent "' + m.id + '" from the team?')) return;
+        const prev = TEAM.cfg.members;
+        TEAM.cfg.members = (TEAM.cfg.members || []).filter((x) => x.id !== m.id)
+          .map((x) => Object.assign({}, x, { depends_on: (x.depends_on || []).filter((d) => d !== m.id) }));
+        if (TEAM.cfg.positions) delete TEAM.cfg.positions[m.id];
+        if (await tmSaveConfig()) { $('tm-memmodal').classList.remove('open'); loadTeam(); }
+        else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
+      };
+      $('tm-memmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
     async function tmShowRequest(id) {
@@ -2786,19 +2927,27 @@
     }
     function tmEdges() {
       const svg = $('tm-edges'); svg.innerHTML = '';
-      const dims = (k) => { const el = document.getElementById('tm-' + k), p = TM_POS[k]; return { x: p.x, y: p.y, w: el ? el.offsetWidth : 200, h: el ? el.offsetHeight : 80 }; };
+      const dims = (k) => { const el = document.getElementById('tm-' + k); if (!el) return null; return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }; };
       const path = (d, cls) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); if (cls) p.setAttribute('class', cls); svg.appendChild(p); };
-      for (let i = 0; i < TM_ORDER.length - 1; i++) {
-        const a = dims(TM_ORDER[i]), b = dims(TM_ORDER[i + 1]);
+      const flow = (fromId, toId, cls) => {
+        const a = dims(fromId), b = dims(toId); if (!a || !b) return;
         const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2, mx = (ax + bx) / 2;
-        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by);
-      }
-      // rework back-edges (dashed) from reviewer/qa down to engineer
-      const eng = dims('engineer');
-      for (const from of ['reviewer', 'qa']) {
-        const f = dims(from);
-        const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
-        path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+        path('M' + ax + ',' + ay + ' C' + mx + ',' + ay + ' ' + mx + ',' + by + ' ' + bx + ',' + by, cls);
+      };
+      const members = (TEAM.cfg && TEAM.cfg.members) || [];
+      // solid edges = depends_on (dep → member), plus every qa member → done
+      for (const m of members) for (const dep of (m.depends_on || [])) flow(dep, m.id);
+      for (const m of members) if (m.stage === 'qa') flow(m.id, 'done');
+      // rework back-edges (dashed): review/qa members hand work back to implementers
+      const impl = members.filter((m) => m.stage === 'implement');
+      if (impl.length) {
+        const eng = dims(impl[0].id);
+        for (const m of members) {
+          if (m.stage !== 'review' && m.stage !== 'qa') continue;
+          const f = dims(m.id); if (!f || !eng) continue;
+          const ax = f.x + f.w / 2, ay = f.y + f.h, bx = eng.x + eng.w / 2, by = eng.y + eng.h, dy = Math.max(ay, by) + 42;
+          path('M' + ax + ',' + ay + ' C' + ax + ',' + dy + ' ' + bx + ',' + dy + ' ' + bx + ',' + by, 'rework');
+        }
       }
     }
 
