@@ -532,18 +532,38 @@ pub(crate) async fn team_files<A: API>(
         return Err(AppError::bad_request("invalid path"));
     }
     let dir = if q.path.is_empty() { project.clone() } else { project.join(&q.path) };
-    let mut dirs: Vec<String> = Vec::new();
-    let mut files: Vec<String> = Vec::new();
+    // Changed paths (repo-relative) from git — marks dirty files/dirs in the tree.
+    let changed: Vec<String> = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&project)
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.get(3..).map(|p| p.split(" -> ").last().unwrap_or(p).trim_matches('"').to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let rel = |name: &str| if q.path.is_empty() { name.to_string() } else { format!("{}/{}", q.path, name) };
+    let mut dirs: Vec<Value> = Vec::new();
+    let mut files: Vec<Value> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if name.starts_with('.') || name == "node_modules" || name == "target" {
                 continue;
             }
-            if e.path().is_dir() { dirs.push(name) } else { files.push(name) }
+            let r = rel(&name);
+            if e.path().is_dir() {
+                let dirty = changed.iter().any(|c| c.starts_with(&format!("{r}/")));
+                dirs.push(json!({ "name": name, "changed": dirty }));
+            } else {
+                files.push(json!({ "name": name, "changed": changed.iter().any(|c| c == &r) }));
+            }
         }
     }
-    dirs.sort(); files.sort();
+    let by_name = |a: &Value, b: &Value| a["name"].as_str().cmp(&b["name"].as_str());
+    dirs.sort_by(by_name); files.sort_by(by_name);
     Ok(Json(json!({ "path": q.path, "dirs": dirs, "files": files })))
 }
 

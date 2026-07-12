@@ -3110,14 +3110,39 @@
       TEAM.codePath = path;
       const d = await api('/api/team/files?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path)).then((r) => r.json()).catch(() => ({ dirs: [], files: [] }));
       const box = $('tm-code-list'); box.innerHTML = '';
-      const item = (label, fn, bold) => { const el = document.createElement('div'); el.textContent = label; el.style.cssText = 'cursor:pointer;padding:2px 4px;border-radius:4px' + (bold ? ';font-weight:600' : ''); el.onmouseenter = () => el.style.background = 'var(--bg-2,rgba(0,0,0,.05))'; el.onmouseleave = () => el.style.background = ''; el.onclick = fn; box.appendChild(el); };
+      const item = (label, fn, bold, dirty) => { const el = document.createElement('div'); el.textContent = label; el.style.cssText = 'cursor:pointer;padding:2px 4px;border-radius:4px' + (bold ? ';font-weight:600' : '') + (dirty || label.endsWith(' ●') ? ';color:#d97706' : ''); el.onmouseenter = () => el.style.background = 'var(--bg-2,rgba(0,0,0,.05))'; el.onmouseleave = () => el.style.background = ''; el.onclick = fn; box.appendChild(el); };
       const crumb = document.createElement('div'); crumb.className = 'sl'; crumb.textContent = '/' + (path || ''); crumb.style.marginBottom = '4px'; box.appendChild(crumb);
       if (path) item('⬆ ..', () => tmCodeBrowse(path.split('/').slice(0, -1).join('/')), true);
-      for (const dir of d.dirs || []) item('📁 ' + dir, () => tmCodeBrowse(path ? path + '/' + dir : dir), true);
-      for (const f of d.files || []) item('📄 ' + f, async () => {
-        const ff = await api('/api/team/file?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path ? path + '/' + f : f)).then((r) => r.json()).catch(() => null);
-        $('tm-code-view').textContent = ff && ff.content != null ? ff.content : '(cannot read file)';
-      });
+      for (const dir of d.dirs || []) item('📁 ' + dir.name + (dir.changed ? ' ●' : ''), () => tmCodeBrowse(path ? path + '/' + dir.name : dir.name), true);
+      for (const f of d.files || []) item('📄 ' + f.name + (f.changed ? ' ●' : ''), () => tmShowCode(path ? path + '/' + f.name : f.name, f.changed), false, f.changed);
+    }
+    function tmHlDiff(text) {
+      return text.split('\n').map((l) => {
+        const e = escapeHtml(l);
+        if (l.startsWith('+') && !l.startsWith('+++')) return '<span style="color:#2e9e44">' + e + '</span>';
+        if (l.startsWith('-') && !l.startsWith('---')) return '<span style="color:#e5484d">' + e + '</span>';
+        if (l.startsWith('@@')) return '<span style="color:#8b8fd6">' + e + '</span>';
+        if (l.startsWith('diff ') || l.startsWith('commit ')) return '<b>' + e + '</b>';
+        return e;
+      }).join('\n');
+    }
+    async function tmShowCode(rel, changed, mode) {
+      mode = mode || 'file';
+      const view = $('tm-code-view'); view.innerHTML = '<span class="sl">…</span>';
+      let bar = '';
+      if (changed) {
+        bar = '<div style="margin-bottom:6px"><button class="btn btn-sm' + (mode === 'file' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'file\')">File</button> ' +
+              '<button class="btn btn-sm' + (mode === 'diff' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'diff\')">Diff</button></div>';
+      }
+      if (mode === 'diff') {
+        const dd = await api('/api/team/diff?project=' + encodeURIComponent(TEAM.project) + '&files=' + encodeURIComponent(rel)).then((r) => r.json()).catch(() => ({ diff: '' }));
+        view.innerHTML = bar + tmHlDiff(dd.diff || '(no diff)');
+        return;
+      }
+      const ff = await api('/api/team/file?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(rel)).then((r) => r.json()).catch(() => null);
+      if (!ff || ff.content == null) { view.innerHTML = bar + '(cannot read file)'; return; }
+      const lang = (rel.split('.').pop() || '').toLowerCase();
+      view.innerHTML = bar + highlightCode(ff.content, lang);
     }
     function tmExampleSop(name, stage) {
       const work = {
