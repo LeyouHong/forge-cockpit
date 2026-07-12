@@ -12,6 +12,7 @@
 mod board;
 mod dto;
 mod live;
+mod craft;
 mod pipeline;
 mod schedule;
 mod usage;
@@ -185,6 +186,10 @@ where
         .route("/api/schedules/fire", post(schedule::fire_now::<A>))
         .route("/api/schedule-runs", get(schedule::runs::<A>))
         .route("/api/usage", get(usage::usage::<A>))
+        .route("/api/crafts", get(craft::list::<A>))
+        .route("/api/craft", get(craft::read::<A>))
+        .route("/api/craft/generate", post(craft::generate::<A>))
+        .route("/api/craft/delete", post(craft::delete::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
