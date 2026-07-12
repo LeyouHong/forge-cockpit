@@ -13,6 +13,7 @@ mod board;
 mod dto;
 mod live;
 mod pipeline;
+mod schedule;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -166,6 +167,11 @@ where
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )
+        .route("/api/schedules", get(schedule::list::<A>).post(schedule::create::<A>))
+        .route("/api/schedules/update", post(schedule::update::<A>))
+        .route("/api/schedules/delete", post(schedule::delete::<A>))
+        .route("/api/schedules/fire", post(schedule::fire_now::<A>))
+        .route("/api/schedule-runs", get(schedule::runs::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
@@ -182,6 +188,10 @@ where
         "  ⚠ Anyone with this URL/token can run commands and edit files as you. \
          Keep it private; it is valid only for this session."
     );
+
+    // Scheduler tick: fires due schedules (see schedule.rs) for as long as the
+    // server runs.
+    tokio::spawn(schedule::tick_loop());
 
     // Open the default browser once the server is accepting connections. A short
     // delay avoids the browser racing ahead of `axum::serve`.
