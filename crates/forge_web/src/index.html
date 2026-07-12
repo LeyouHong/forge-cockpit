@@ -3041,6 +3041,32 @@
     /* member add/edit modal */
     $('tm-mem-close').onclick = () => $('tm-memmodal').classList.remove('open');
     $('tm-addagent').onclick = () => tmOpenMember(null);
+    function tmExampleSop(name, stage) {
+      const work = {
+        plan: ['1. Explore the project (`read`, `fs_search`) so your plan references real files and conventions.',
+               '2. `list_requests()` — never duplicate work already on the board.',
+               '3. Produce your planning artifact (PRD / design notes) in the workspace, then break the work into',
+               '   small, independently-shippable requests via `create_request` — each with 2-5 TESTABLE acceptance criteria.'].join('\n'),
+        implement: ['1. `list_requests(status: "open")` — find work for your stage; `claim_request(id)` before starting.',
+               '2. `get_request(id)` — read the description and acceptance criteria; check `get_inbox` for rework notes.',
+               '3. Implement the change WITH tests, following the project conventions.',
+               '4. `submit_engineer_work(id, files_changed, notes)` — honest notes on what you did and verified.'].join('\n'),
+        review: ['1. `list_requests(status: "review")` — find work waiting for review. If none, stop.',
+               '2. Read the diff of every changed file; verify each acceptance criterion is actually met.',
+               '3. Check correctness, security, performance, and maintainability — verify findings before reporting.',
+               '4. `submit_review(id, result: "approved" | "changes_requested", findings)` — each finding: file, severity, description.'].join('\n'),
+        qa: ['1. `list_requests(status: "qa")` — find work waiting for QA. If none, stop.',
+               '2. `get_request(id)` — read the acceptance criteria and the engineer notes.',
+               '3. Verify EACH criterion concretely: write and run a real test (`shell`); never guess.',
+               '4. `submit_qa(id, result: "passed" | "failed", notes)` — what you tested and the results.'].join('\n'),
+      }[stage] || '';
+      return '# Role: ' + name + '\n\n' +
+        'You are the **' + name + '** on a Forge workspace team. You coordinate ONLY through\n' +
+        'the workspace MCP tools.\n\n## SOP\n\n' + work + '\n\n## Rules\n\n' +
+        '- Coordinate only through the MCP tools — never hand-edit `request.yml` / `response.yml`.\n' +
+        '- Verify against the acceptance criteria, not vibes.\n' +
+        '- If blocked or unsure, `send_message` the lead instead of guessing.\n';
+    }
     async function tmOpenMember(id) {
       const members = (TEAM.cfg && TEAM.cfg.members) || [];
       const m = id ? members.find((x) => x.id === id) : null;
@@ -3097,8 +3123,12 @@
       for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title || a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
       row('agent / model', agSel);
       const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
-      const apprWrap = document.createElement('label'); apprWrap.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
-      apprWrap.appendChild(apprCb); apprWrap.appendChild(document.createTextNode('require human approval before each piece of work'));
+      apprCb.style.cssText = 'width:auto;margin:0';
+      const apprWrap = document.createElement('div');
+      apprWrap.style.cssText = 'display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text);cursor:pointer';
+      const apprTxt = document.createElement('span'); apprTxt.textContent = 'require human approval before each piece of work';
+      apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
+      apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
       row('approval', apprWrap);
       const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
       for (const other of members) {
@@ -3112,7 +3142,16 @@
       const sopTa = document.createElement('textarea'); sopTa.value = m ? (m.role_prompt || '') : '';
       sopTa.placeholder = 'custom SOP (markdown) — leave empty to use the built-in SOP for this id/stage';
       sopTa.style.minHeight = '130px';
-      row('role prompt (SOP)', sopTa);
+      const sopWrap = document.createElement('div');
+      const exBtn = document.createElement('button'); exBtn.className = 'btn btn-sm'; exBtn.textContent = '✨ Insert example SOP';
+      exBtn.style.marginTop = '5px';
+      exBtn.title = 'generate a starter SOP for the selected stage';
+      exBtn.onclick = () => {
+        if (sopTa.value.trim() && !confirm('Replace the current SOP with an example?')) return;
+        sopTa.value = tmExampleSop(nameIn.value.trim() || idIn.value.trim() || 'Agent', stSel.value);
+      };
+      sopWrap.appendChild(sopTa); sopWrap.appendChild(exBtn);
+      row('role prompt (SOP)', sopWrap);
       applyMember = (t) => {
         if (!idIn.disabled && t.id) idIn.value = t.id;
         if (t.name) nameIn.value = t.name;
