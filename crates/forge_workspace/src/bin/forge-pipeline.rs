@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use forge_workspace::pipeline::{self, RunConfig, Workflow};
+use forge_workspace::pipeline::{self, setup_isolated_home, RunConfig, Workflow};
 use serde_json::Value;
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
@@ -246,5 +246,3 @@ fn save_seen(path: &Path, seen: &BTreeMap<String, String>) {
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
-
-use pipeline::setup_isolated_home;

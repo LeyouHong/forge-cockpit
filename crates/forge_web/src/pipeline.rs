@@ -82,7 +82,7 @@ pub(crate) async fn browse<A: API>(
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    forge_workspace::pipeline::home_dir()
 }
 
 #[derive(Deserialize)]
@@ -154,7 +154,7 @@ fn runs_ws() -> PathBuf {
 
 /// Resolve `~/.forge-web/pipelines/<name>`, rejecting path traversal.
 fn pipeline_file(file: &str) -> Result<PathBuf, AppError> {
-    if file.contains('/') || file.contains("..") || file.trim().is_empty() {
+    if !forge_workspace::pipeline::validate_pipeline_name(file) {
         return Err(AppError::bad_request("invalid pipeline name"));
     }
     if !(file.ends_with(".yaml") || file.ends_with(".yml")) {
@@ -555,7 +555,9 @@ pub(crate) async fn node_log<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<NodeLogQuery>,
 ) -> Result<Json<Value>, AppError> {
-    if [&q.run, &q.node].iter().any(|s| s.contains('/') || s.contains("..")) {
+    if !forge_workspace::pipeline::validate_pipeline_name(&q.run)
+        || !forge_workspace::pipeline::validate_pipeline_name(&q.node)
+    {
         return Err(AppError::bad_request("invalid id"));
     }
     let path = runs_ws()

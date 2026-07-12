@@ -41,6 +41,23 @@ pub struct PipelineEntry {
     pub inputs: Vec<String>,
 }
 
+impl PipelineEntry {
+    /// Creates a new [`PipelineEntry`].
+    pub fn new(
+        file: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        inputs: Vec<String>,
+    ) -> Self {
+        Self {
+            file: file.into(),
+            name: name.into(),
+            description: description.into(),
+            inputs,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Extension {
     pub extension_stats: Vec<ExtensionStat>,

@@ -107,7 +107,7 @@ impl PipelineService for ForgePipelineService {
         let pipelines_dir = self.pipelines_dir();
         let ws = self.runs_workspace();
         tokio::task::spawn_blocking(move || {
-            if name.contains('/') || name.contains("..") {
+            if !engine::validate_pipeline_name(&name) {
                 bail!("invalid pipeline name `{name}` — use a file name from pipeline_list");
             }
             let file = pipelines_dir.join(&name);
@@ -155,6 +155,9 @@ impl PipelineService for ForgePipelineService {
                 .map(|(id, n)| PipelineNodeResult {
                     id: id.clone(),
                     status: match n.status {
+                        // engine::run() is synchronous (blocks until completion),
+                        // so Pending/Running are unreachable here — mapped only
+                        // for exhaustive match.
                         engine::NodeStatus::Pending => "pending",
                         engine::NodeStatus::Running => "running",
                         engine::NodeStatus::Done => "done",

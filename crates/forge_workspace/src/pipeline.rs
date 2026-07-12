@@ -1031,6 +1031,13 @@ pub fn global_runs_workspace() -> PathBuf {
     home_dir().join(".forge-web").join("runs")
 }
 
+/// Reject pipeline file names that attempt path traversal. Used by the web
+/// API, CLI, and agent tools to ensure a name like `"../evil"` or
+/// `"sub/dir/foo.yaml"` can't escape the global pipelines directory.
+pub fn validate_pipeline_name(name: &str) -> bool {
+    !(name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains(".."))
+}
+
 /// Isolated base_path (FORGE_CONFIG) exposing ONLY the workspace MCP — so
 /// `claude`-mode nodes start fast/reliably regardless of the user's MCP setup.
 /// Credentials are symlinked, never copied.
