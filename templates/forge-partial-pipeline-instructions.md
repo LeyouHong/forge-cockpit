@@ -9,9 +9,11 @@ How to run a pipeline:
 3. Set `dir` if the pipeline should run against a different directory than the current one
 4. The call blocks until the pipeline finishes and returns every node's status and outputs — summarize those results for the user; do NOT redo the work manually afterwards
 
-Example: the user asks "review PR 12 in owner/repo" and a pr-review pipeline exists → call pipeline_run with `{"name": "<file>", "inputs": {"pr": "12", "repo": "owner/repo"}}`.
+Examples:
+- The user asks "review PR 12 in owner/repo" and a review pipeline exists → call pipeline_run with `{"name": "<file>", "inputs": {"pr": "12", "repo": "owner/repo"}}`.
+- The user asks "fix the review findings/comments on PR 12" and a fix pipeline exists → run it, choosing its inputs to cover what the user asked for (read the pipeline's description for scope options) — do NOT clone the repo and fix by hand.
 
-Only fall back to doing the task manually when no listed pipeline matches, or the user explicitly asks you not to use a pipeline, or pipeline_run fails.
+A pipeline "matches" when the user's goal is what the pipeline automates, even if the wording differs. Only fall back to doing the task manually when no listed pipeline matches, or the user explicitly asks you not to use a pipeline, or pipeline_run fails.
 
 <available_pipelines>
 {{#each pipelines}}
