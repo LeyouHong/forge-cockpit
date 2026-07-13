@@ -1,0 +1,187 @@
+# Topic news digest with STABLE images — pulls cover images straight from
+# image-rich RSS feeds (media:content / media:thumbnail / enclosure), so every
+# story ships with a real, working image and nothing is fetched per-article.
+#
+# Trade-off vs. news-digest.yaml (the Google-News version): higher image
+# reliability + curated sources, but topic recall is limited to what these
+# feeds currently carry — a niche topic can return NO_MATCH. Use this when you
+# want a good-looking, dependable digest; use news-digest.yaml for broad search.
+#
+# Install: cp crates/forge_workspace/examples/news-digest-rss.yaml ~/.forge-web/pipelines/
+# Web UI: open, Run, TICK "use my connected MCP tools" (for Gmail), set topic+to.
+# CLI (NO --isolate-mcp — the agent needs your real Gmail MCP):
+#   forge-pipeline run ~/.forge-web/pipelines/news-digest-rss.yaml \
+#       --input topic="AI" --input to=you@example.com --project .
+#
+# Requires: python3 + curl (feed harvest), and a connected Gmail MCP (send_email).
+description: |
+  Builds and emails a news digest for any TOPIC, with dependable images. A shell
+  node harvests a pool of image-rich RSS feeds (BBC, NYT, The Guardian, Ars
+  Technica, Sky News), keeps only items whose HEADLINE matches the topic (whole
+  word, so "AI" won't hit "again"), and hands the agent each story already
+  paired with its real cover-image URL, source and a short summary — pulled from
+  the feed's own media tags, so no per-article scraping and no broken images. An
+  agent node lays them out as a clean responsive HTML email (image + headline +
+  source + summary per story) and sends it via the Gmail MCP send_email. If the
+  topic matches nothing in the current feeds it says so honestly instead of
+  inventing stories. Change the topic per run. MUST run with MCP enabled (web
+  UI: tick "use my connected MCP tools"; CLI: no --isolate-mcp) to send the mail.
+
+input:
+  topic:
+    default: "AI"
+    description: News topic — matched as a whole word against headlines (e.g. "AI", "Gaza")
+  to:
+    default: "leyouhong1991@gmail.com"
+    description: Recipient email address
+
+name: news-digest-rss
+
+nodes:
+  harvest:
+    mode: shell
+    outputs:
+      - extract: result
+        name: items
+    prompt: |
+      set -euo pipefail
+      TOPIC='{{input.topic}}'
+      SCRIPT="$(mktemp /tmp/forge-news-XXXXXX.py)"
+      cat > "$SCRIPT" <<'PYEOF'
+      import sys, re, html, urllib.request, xml.etree.ElementTree as ET
+      from email.utils import parsedate_to_datetime
+
+      TOPIC = (sys.argv[1] if len(sys.argv) > 1 else "AI").strip()
+      LIMIT = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+
+      FEEDS = [
+          ("BBC World",      "https://feeds.bbci.co.uk/news/world/rss.xml"),
+          ("BBC Technology", "https://feeds.bbci.co.uk/news/technology/rss.xml"),
+          ("NYT Home",       "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
+          ("NYT Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
+          ("The Guardian",   "https://www.theguardian.com/world/rss"),
+          ("The Guardian",   "https://www.theguardian.com/us-news/rss"),
+          ("Ars Technica",   "https://feeds.arstechnica.com/arstechnica/index"),
+          ("Sky News",       "https://feeds.skynews.com/feeds/rss/home.xml"),
+      ]
+      MEDIA = "{http://search.yahoo.com/mrss/}"
+
+      def txt(el):
+          return html.unescape((el.text or "").strip()) if el is not None else ""
+
+      def pick_image(item):
+          best_url, best_w = "", -1
+          for tag in ("content", "thumbnail"):
+              for m in item.findall(MEDIA + tag):
+                  u = m.get("url", "")
+                  if not u:
+                      continue
+                  typ = (m.get("type", "") + m.get("medium", "")).lower()
+                  if typ and "image" not in typ and not re.search(r"\.(jpg|jpeg|png|webp)", u, re.I):
+                      continue
+                  try:
+                      w = int(m.get("width") or 0)
+                  except ValueError:
+                      w = 0
+                  if w > best_w:
+                      best_url, best_w = u, w
+          if best_url:
+              return best_url
+          enc = item.find("enclosure")
+          if enc is not None and "image" in (enc.get("type", "").lower()):
+              return enc.get("url", "")
+          return ""
+
+      def matches(title):
+          hay = title.lower()
+          words = [re.escape(w) for w in re.split(r"\s+", TOPIC.lower()) if w]
+          if not words:
+              return False
+          return all(re.search(r"(?<![a-z0-9])" + w + r"(?![a-z0-9])", hay) for w in words)
+
+      rows, seen = [], set()
+      for src, url in FEEDS:
+          try:
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 forge-cockpit"})
+              raw = urllib.request.urlopen(req, timeout=15).read()
+              root = ET.fromstring(raw)
+          except Exception as e:
+              sys.stderr.write("skip %s: %s\n" % (src, e))
+              continue
+          for item in root.iter("item"):
+              title = txt(item.find("title"))
+              link = txt(item.find("link"))
+              if not title or not link or not matches(title):
+                  continue
+              key = title.lower()
+              if key in seen:
+                  continue
+              seen.add(key)
+              img = pick_image(item)
+              pub = txt(item.find("pubDate"))
+              desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", txt(item.find("description")))).strip()[:300]
+              try:
+                  ts = parsedate_to_datetime(pub).timestamp()
+              except Exception:
+                  ts = 0
+              rows.append((ts, title, link, img, src, pub, desc))
+
+      rows.sort(key=lambda r: r[0], reverse=True)
+      if not rows:
+          print("NO_MATCH")
+      for _, title, link, img, src, pub, desc in rows[:LIMIT]:
+          print("%s|||%s|||%s|||%s|||%s|||%s" % (title, link, img, src, pub, desc))
+      PYEOF
+      python3 "$SCRIPT" "$TOPIC" 6
+      rm -f "$SCRIPT"
+
+  digest:
+    depends_on:
+      - harvest
+    outputs:
+      - extract: result
+        name: report
+    prompt: |
+      You are a news editor. Build a good-looking HTML email digest for the topic
+      "{{input.topic}}" from the pre-harvested stories below and SEND it.
+
+      Each line is one story:  TITLE ||| LINK ||| IMAGE_URL ||| SOURCE ||| DATE ||| SUMMARY
+      The IMAGE_URL is a real cover image already pulled from the feed — use it
+      as-is, do NOT fetch anything. (An empty IMAGE_URL means render that story
+      text-only.) If the only line is exactly "NO_MATCH", there were no stories
+      for this topic — see step 5.
+      ---
+      {{nodes.harvest.outputs.items}}
+      ---
+
+      ## Steps
+      1. Use every story line given (they are already topic-filtered and sorted
+         newest-first). Do not add, invent, or reword facts — use the provided
+         TITLE/SUMMARY as-is (you may trim SUMMARY to one clean sentence).
+      2. Compose ONE self-contained HTML email body:
+         - Header: "📰 {{input.topic}} — <today's date>".
+         - One card per story: the image as
+           `<img src="IMAGE_URL" style="max-width:100%;border-radius:8px">`
+           (omit the tag if IMAGE_URL is empty), then the headline as a link
+           `<a href="LINK">TITLE</a>`, the SOURCE + DATE in small grey text, and
+           the one-sentence summary.
+         - Inline CSS only (email clients strip <style>/external CSS). Centered
+           container max-width ~600px, system font stack, generous spacing,
+           mobile-friendly (max-width:100% images).
+         - Footer: "Sent by forge-cockpit · news-digest-rss pipeline".
+      3. Send it with the Gmail MCP `send_email` tool:
+         - to: {{input.to}}
+         - subject: "📰 {{input.topic}} news — <today's date>"
+         - Send the HTML as an HTML body (use the tool's `htmlBody` field if it
+           has one; otherwise set the body's mime type to text/html). Do NOT send
+           the raw HTML as plain text.
+      4. Output a SHORT plain-text confirmation: recipient, subject, and a
+         numbered list of the stories included (headline + source), noting how
+         many had images. If the send failed, say so and paste the tool error —
+         never pretend it succeeded.
+      5. If the input was "NO_MATCH": do NOT invent stories. Send a brief plain
+         email to {{input.to}} (subject "📰 {{input.topic}} news — none today")
+         saying no headlines matched "{{input.topic}}" in the current feeds and
+         suggesting a broader topic, then report that you did so.
+
+vars: {}
