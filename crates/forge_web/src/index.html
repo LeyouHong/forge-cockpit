@@ -526,8 +526,8 @@
     .pl-node.run-skipped .nstat { background: #9ca3af; }
     @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
     /* Team canvas */
-    .tm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+    .tm-bar { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; line-height: 1.5; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; resize: vertical; min-height: 36px; max-height: 260px; }
     .tm-alerts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
     .tm-alert { border-left: 3px solid #e5484d; background: #fff5f5; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
     .tm-alert b { color: #e5484d; }
@@ -851,7 +851,7 @@
     <div class="kanban-scroll">
       <section class="kanban-section">
         <div class="tm-bar">
-          <input id="tm-goal" placeholder='goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests' />
+          <textarea id="tm-goal" rows="1" placeholder="goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests. Shift+Enter for a newline; Enter runs."></textarea>
           <button class="btn btn-primary btn-sm" id="tm-run" title="One-shot: plan the goal (pm > architect > coordinator), work every request to done, then exit">▶ Run</button>
           <button class="btn btn-sm" id="tm-daemon" title="Resident mode: keeps polling the board and picks up NEW requests until you press Stop">⚡ Start Daemon</button>
           <span class="sl" id="tm-status"></span>
@@ -869,6 +869,12 @@
           </div>
         </div>
         <div id="tm-empty" class="sl" style="margin-top:10px"></div>
+        <div id="tm-activity" style="display:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-top:10px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">
+          <span id="tm-act-cur"></span>
+          <a href="#" id="tm-act-toggle" class="sl" style="margin-left:8px">trace ▾</a>
+          <div id="tm-act-trace" style="display:none;margin-top:6px;max-height:160px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;white-space:pre-wrap;color:var(--muted)"></div>
+        </div>
+
       </section>
     </div>
   </div>
@@ -3133,8 +3139,18 @@
       if (name) { TEAM.project = name; tmLoadProjects(); }
     });
     $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
-    $('tm-run').onclick = () => tmRun(false);
-    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else tmRun(true); };
+    $('tm-run').onclick = () => { tmRun(false); };
+    function autoGrowTextarea(id, onEnter) {
+      const g = $(id);
+      const grow = () => { g.style.height = 'auto'; g.style.height = Math.min(g.scrollHeight, 260) + 'px'; };
+      g.addEventListener('input', grow);
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onEnter(); }
+      });
+      setTimeout(grow, 0);
+    }
+    autoGrowTextarea('tm-goal', () => tmRun(false));
+    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else { tmRun(true); } };
     async function tmRun(daemon) {
       if (!TEAM.project) { $('tm-status').textContent = 'add a project first'; return; }
       const goal = $('tm-goal').value.trim();
@@ -3160,18 +3176,48 @@
     function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
-      const [d, st] = await Promise.all([
+      const [d, st, act] = await Promise.all([
         api('/api/team?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null),
         api('/api/team/status?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ members: {} })),
+        api('/api/team/activity?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null),
       ]);
       TEAM.status = (st && st.members) || {};
+      renderActivity(act);
       if (d) renderTeam(d);
     }
+    function renderActivity(act) {
+      const box = $('tm-activity');
+      const cur = act && act.current;
+      if (!cur) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      // Humanize the current orchestrator line into a phase label.
+      let label = cur;
+      const m1 = cur.match(/⚑\s*(\w[\w-]*)\s*planning/);
+      const m2 = cur.match(/→\s*(\S+)\s*\[(\w+)\].*→\s*(\S+)/);
+      if (/planning done/.test(cur)) label = '✅ planning done — work is being scheduled';
+      else if (m1) label = '📋 planning: ' + m1[1] + ' is working…';
+      else if (m2) label = '🔨 ' + m2[3] + ' is working ' + m2[1] + ' [' + m2[2] + ']';
+      else if (/idle, waiting/.test(cur)) label = '⏸ idle — waiting for new requests (daemon)';
+      else if (/STUCK/.test(cur)) label = '⚠ ' + cur;
+      $('tm-act-cur').innerHTML = '<b>Activity:</b> ' + escapeHtml(label);
+      $('tm-act-trace').textContent = ((act.trace || []).join('\n'));
+    }
+    $('tm-act-toggle').onclick = (e) => {
+      e.preventDefault();
+      const t = $('tm-act-trace');
+      const open = t.style.display !== 'none';
+      t.style.display = open ? 'none' : '';
+      $('tm-act-toggle').textContent = open ? 'trace ▾' : 'trace ▴';
+    };
     function renderTeam(d) {
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
-      if (!d.running && ($('tm-status').textContent || '').indexOf('started') !== -1) { $('tm-status').textContent = '✓ team finished — all work processed'; $('tm-status').style.color = 'var(--muted)'; }
+      if (!d.running && ($('tm-status').textContent || '').indexOf('started') !== -1) {
+        // One-shot Run auto-stops when the orchestrator exits; reflect it.
+        $('tm-status').textContent = '✓ team finished — all work processed'; $('tm-status').style.color = 'var(--muted)';
+        $('tm-activity').style.display = 'none';
+      }
       $('tm-empty').textContent = reqs.length ? '' : (d.running
         ? '⏳ team is running — the planning chain (pm → architect → …) takes a few minutes before requests appear here.'
         : 'no work on the board yet — enter a goal + Run, or start it from the terminal.');

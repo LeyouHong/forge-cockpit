@@ -11,6 +11,8 @@
 //! gated behind the per-run bearer token.
 
 use std::path::PathBuf;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
 use axum::Json;
@@ -460,6 +462,27 @@ pub(crate) async fn team_run<A: API>(
             return Err(AppError::bad_request("the team is already running for this project"));
         }
     }
+    // Fresh session: clear the previous run's leftovers so the board's message
+    // badges (read/unread) and status reflect THIS run, not stale history.
+    // Requests are cleared on a fresh run — their record lived on the previous session.
+    if let Ok(entries) = std::fs::read_dir(ws.join("messages")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    let _ = std::fs::remove_file(ws.join(".team-status.json"));
+    // Reset the board too: drop old requests so the Done column starts empty
+    // for this run (their record lived on the previous session).
+    if let Ok(entries) = std::fs::read_dir(ws.join("requests")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(ws.join(".team-logs")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
     let bin = forge_workspace_run_bin();
     let log = std::fs::File::create(ws.join(".team-run.log"))?;
     let err = log.try_clone()?;
@@ -650,6 +673,56 @@ pub(crate) async fn team_yaml_set<A: API>(
     forge_workspace::team::save_team(&project.join(".forge-workspace"), &cfg)
         .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
     Ok(Json(json!({ "ok": true, "members": cfg.members.len() })))
+}
+
+/// GET /api/team/activity?project= — the orchestrator's own progress trace
+/// (planning phases, request pickups, completions, stuck alerts), with agent
+/// spinner/ANSI noise stripped. This is the "where is it now" feed.
+pub(crate) async fn team_activity<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let log_path = project.join(".forge-workspace").join(".team-run.log");
+    let file = match std::fs::File::open(&log_path) {
+        Ok(f) => f,
+        Err(_) => return Ok(Json(json!({ "current": "", "trace": [] }))),
+    };
+    // ANSI spinner/status tokens to filter out of the activity trace.
+    const ACTIVITY_NOISE_TOKENS: &[&str] = &["Forging", "Analyzing", "Ctrl+C", "[2K"];
+    // Keep only the orchestrator's meaningful progress lines; drop the forge -p
+    // spinner/analysis chatter that gets interleaved. A ring buffer caps memory
+    // for long-running daemon sessions.
+    const MAX_ACTIVITY_LINES: usize = 40;
+    let mut lines: VecDeque<String> = VecDeque::with_capacity(MAX_ACTIVITY_LINES);
+    for l in BufReader::new(file).lines().flatten() {
+        let t = l.trim_end_matches(|c: char| c.is_control()).trim();
+        if t.is_empty() {
+            continue;
+        }
+        let keep = t.contains('⚑')       // planning phase
+            || t.contains('→')            // request scheduled to a member
+            || t.contains('✓')            // done
+            || t.contains('✗')            // failed
+            || t.contains("STUCK")
+            || t.contains('⏸')            // approval wait
+            || t.contains('⏱')            // timeout/retry
+            || t.starts_with("▶ orchestrator")
+            || t.contains("planning done")
+            || t.contains("idle, waiting");
+        let noise = ACTIVITY_NOISE_TOKENS.iter().any(|n| t.contains(n));
+        if keep && !noise {
+            // collapse the ANSI-cleaned line
+            let clean: String = t.chars().filter(|c| !c.is_control()).collect();
+            if lines.len() >= MAX_ACTIVITY_LINES {
+                lines.pop_front();
+            }
+            lines.push_back(clean);
+        }
+    }
+    let current = lines.back().cloned().unwrap_or_default();
+    let recent: Vec<String> = lines.into_iter().collect();
+    Ok(Json(json!({ "current": current, "trace": recent })))
 }
 
 /// GET /api/team/status?project= — per-member session status (down/idle/
