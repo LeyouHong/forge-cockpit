@@ -39,6 +39,7 @@ const QA_SOP: &str = include_str!("../../roles/qa.md");
 const COORDINATOR_SOP: &str = include_str!("../../roles/coordinator.md");
 const PM_SOP: &str = include_str!("../../roles/pm.md");
 const ARCHITECT_SOP: &str = include_str!("../../roles/architect.md");
+const VISUAL_VERIFY: &str = include_str!("../../roles/visual-verify.md");
 
 fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     if let Some(i) = args.iter().position(|a| a == name) {
@@ -171,6 +172,17 @@ fn stage_sop(stage: Stage) -> &'static str {
         Stage::Implement => ENGINEER_SOP,
         Stage::Review => REVIEWER_SOP,
         Stage::Qa => QA_SOP,
+    }
+}
+
+/// Verify-stage members (review/qa) get the graceful visual-verification
+/// protocol appended, so UI work can be checked visually when a browser is
+/// present and degrades to code review when it isn't.
+fn with_visual_verify(sop: String, stage: Stage) -> String {
+    if matches!(stage, Stage::Review | Stage::Qa) {
+        format!("{sop}\n\n{VISUAL_VERIFY}")
+    } else {
+        sop
     }
 }
 
@@ -671,6 +683,7 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
             } else {
                 member_sop(&member)
             };
+            let sop = with_visual_verify(sop, if covering { stage_for(req.status) } else { member.stage });
             let prompt = format!(
                 "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
