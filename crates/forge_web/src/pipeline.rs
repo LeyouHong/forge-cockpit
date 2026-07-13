@@ -460,6 +460,20 @@ pub(crate) async fn team_run<A: API>(
             return Err(AppError::bad_request("the team is already running for this project"));
         }
     }
+    // Fresh session: clear the previous run's leftovers so the board's message
+    // badges (read/unread) and status reflect THIS run, not stale history.
+    // Requests are kept — they're the work record.
+    if let Ok(entries) = std::fs::read_dir(ws.join("messages")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    let _ = std::fs::remove_file(ws.join(".team-status.json"));
+    if let Ok(entries) = std::fs::read_dir(ws.join(".team-logs")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
     let bin = forge_workspace_run_bin();
     let log = std::fs::File::create(ws.join(".team-run.log"))?;
     let err = log.try_clone()?;
