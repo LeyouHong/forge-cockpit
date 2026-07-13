@@ -2428,6 +2428,10 @@
       } else {
         html += '<div class="sl">This pipeline declares no <code>input:</code> fields.</div>';
       }
+      html += '<div class="pl-insp-row"><label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:12px;letter-spacing:0;cursor:pointer">'
+        + '<input type="checkbox" id="pl-run-mcp" style="width:auto;margin:0"' + (RUN.useMcp ? ' checked' : '') + '>'
+        + 'use my connected MCP tools (Gmail / Slack / …)</label>'
+        + '<div class="sl">off = isolated workspace tools only (default). On lets agent nodes reach your integrations — e.g. send an email.</div></div>';
       $('pl-run-body').innerHTML = html;
       $('pl-run-msg').textContent = '';
       $('pl-run-browse').onclick = () => openPicker(RUN.dir && RUN.dir !== '~' ? RUN.dir : '', (p) => { RUN.dir = p; $('pl-run-dir').value = p; });
@@ -2439,7 +2443,8 @@
       if (!dir) { $('pl-run-msg').textContent = 'pick a target directory'; return; }
       RUN.dir = dir;
       const inputs = {}; for (const el of document.querySelectorAll('.pl-run-in')) inputs[el.dataset.k] = el.value;
-      const r = await api('/api/pipeline/run', plBody({ b: { name: PL.file, dir, inputs } }));
+      RUN.useMcp = !!($('pl-run-mcp') && $('pl-run-mcp').checked);
+      const r = await api('/api/pipeline/run', plBody({ b: { name: PL.file, dir, inputs, use_mcp: RUN.useMcp } }));
       const d = await r.json();
       if (!r.ok) { $('pl-run-msg').textContent = d.error || 'run failed to start'; return; }
       $('pl-rundlg').classList.remove('open');

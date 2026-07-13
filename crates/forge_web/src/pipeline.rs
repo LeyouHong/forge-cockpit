@@ -348,6 +348,11 @@ pub(crate) struct RunReq {
     /// Values for the workflow's declared `input:` fields.
     #[serde(default)]
     inputs: std::collections::BTreeMap<String, String>,
+    /// When true, run with the user's FULL MCP config (Gmail/Slack/…) instead
+    /// of the isolated workspace-only MCP — so agent nodes can use connected
+    /// tools (e.g. send an email). Default false = isolated (fast, shareable).
+    #[serde(default)]
+    use_mcp: bool,
 }
 
 /// POST /api/pipeline/run — run a (global) workflow against a target directory
@@ -378,8 +383,12 @@ pub(crate) async fn run_pipeline<A: API>(
     cmd.arg("run")
         .arg(&file)
         .arg("--project").arg(&project)
-        .arg("--workspace").arg(&ws)
-        .arg("--isolate-mcp");
+        .arg("--workspace").arg(&ws);
+    if !body.use_mcp {
+        // Default: isolate to the workspace MCP only. When use_mcp is set, run
+        // with the project's full .mcp.json so agent nodes reach Gmail/Slack/etc.
+        cmd.arg("--isolate-mcp");
+    }
     for (k, v) in &body.inputs {
         if !v.trim().is_empty() {
             cmd.arg("--input").arg(format!("{k}={v}"));
