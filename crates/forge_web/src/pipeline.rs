@@ -11,6 +11,8 @@
 //! gated behind the per-run bearer token.
 
 use std::path::PathBuf;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
 use axum::Json;
@@ -462,7 +464,7 @@ pub(crate) async fn team_run<A: API>(
     }
     // Fresh session: clear the previous run's leftovers so the board's message
     // badges (read/unread) and status reflect THIS run, not stale history.
-    // Requests are kept — they're the work record.
+    // Requests are cleared on a fresh run — their record lived on the previous session.
     if let Ok(entries) = std::fs::read_dir(ws.join("messages")) {
         for e in entries.flatten() {
             let _ = std::fs::remove_file(e.path());
@@ -681,11 +683,19 @@ pub(crate) async fn team_activity<A: API>(
     Query(q): Query<ProjectQuery>,
 ) -> Result<Json<Value>, AppError> {
     let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let raw = std::fs::read_to_string(project.join(".forge-workspace").join(".team-run.log")).unwrap_or_default();
+    let log_path = project.join(".forge-workspace").join(".team-run.log");
+    let file = match std::fs::File::open(&log_path) {
+        Ok(f) => f,
+        Err(_) => return Ok(Json(json!({ "current": "", "trace": [] }))),
+    };
+    // ANSI spinner/status tokens to filter out of the activity trace.
+    const ACTIVITY_NOISE_TOKENS: &[&str] = &["Forging", "Analyzing", "Ctrl+C", "[2K"];
     // Keep only the orchestrator's meaningful progress lines; drop the forge -p
-    // spinner/analysis chatter that gets interleaved.
-    let mut lines: Vec<String> = Vec::new();
-    for l in raw.lines() {
+    // spinner/analysis chatter that gets interleaved. A ring buffer caps memory
+    // for long-running daemon sessions.
+    const MAX_ACTIVITY_LINES: usize = 40;
+    let mut lines: VecDeque<String> = VecDeque::with_capacity(MAX_ACTIVITY_LINES);
+    for l in BufReader::new(file).lines().flatten() {
         let t = l.trim_end_matches(|c: char| c.is_control()).trim();
         if t.is_empty() {
             continue;
@@ -700,16 +710,18 @@ pub(crate) async fn team_activity<A: API>(
             || t.starts_with("▶ orchestrator")
             || t.contains("planning done")
             || t.contains("idle, waiting");
-        let noise = t.contains("Forging") || t.contains("Analyzing") || t.contains("Ctrl+C") || t.contains("[2K");
+        let noise = ACTIVITY_NOISE_TOKENS.iter().any(|n| t.contains(n));
         if keep && !noise {
             // collapse the ANSI-cleaned line
             let clean: String = t.chars().filter(|c| !c.is_control()).collect();
-            lines.push(clean);
+            if lines.len() >= MAX_ACTIVITY_LINES {
+                lines.pop_front();
+            }
+            lines.push_back(clean);
         }
     }
-    let start = lines.len().saturating_sub(40);
-    let recent: Vec<String> = lines[start..].to_vec();
-    let current = recent.last().cloned().unwrap_or_default();
+    let current = lines.back().cloned().unwrap_or_default();
+    let recent: Vec<String> = lines.into_iter().collect();
     Ok(Json(json!({ "current": current, "trace": recent })))
 }
 

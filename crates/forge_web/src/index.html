@@ -3139,17 +3139,18 @@
       if (name) { TEAM.project = name; tmLoadProjects(); }
     });
     $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
-    $('tm-run').onclick = () => { TEAM.oneShot = true; tmRun(false); };
-    (function () {
-      const g = $('tm-goal');
+    $('tm-run').onclick = () => { tmRun(false); };
+    function autoGrowTextarea(id, onEnter) {
+      const g = $(id);
       const grow = () => { g.style.height = 'auto'; g.style.height = Math.min(g.scrollHeight, 260) + 'px'; };
       g.addEventListener('input', grow);
       g.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); tmRun(false); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onEnter(); }
       });
       setTimeout(grow, 0);
-    })();
-    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else { TEAM.oneShot = false; tmRun(true); } };
+    }
+    autoGrowTextarea('tm-goal', () => tmRun(false));
+    $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else { tmRun(true); } };
     async function tmRun(daemon) {
       if (!TEAM.project) { $('tm-status').textContent = 'add a project first'; return; }
       const goal = $('tm-goal').value.trim();
@@ -3212,11 +3213,9 @@
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
       $('tm-daemon').textContent = d.running ? '■ Stop' : '⚡ Start Daemon';
-      if (!d.running && TEAM.running === undefined) {} // first load, no-op
       if (!d.running && ($('tm-status').textContent || '').indexOf('started') !== -1) {
         // One-shot Run auto-stops when the orchestrator exits; reflect it.
         $('tm-status').textContent = '✓ team finished — all work processed'; $('tm-status').style.color = 'var(--muted)';
-        TEAM.oneShot = false;
         $('tm-activity').style.display = 'none';
       }
       $('tm-empty').textContent = reqs.length ? '' : (d.running
