@@ -86,10 +86,6 @@ struct Row {
     cache_cost: f64,
 }
 
-fn u(v: &Value, k: &str) -> u64 {
-    v.get(k).and_then(Value::as_u64).unwrap_or(0)
-}
-
 /// Candidate forge conversation DBs (the running server's home may vary).
 fn forge_db_paths() -> Vec<PathBuf> {
     let h = forge_workspace::pipeline::home_dir();
