@@ -1,12 +1,12 @@
-//! Usage analytics — token/cost tracking, aligned with the reference forge.
+//! Usage analytics — token/cost tracking for your own forge agents.
 //!
-//! Scans Claude Code session logs (`~/.claude/projects/*/*.jsonl`) — the same
-//! source both products read — sums input/output/cache tokens per day, model,
-//! and project, and estimates cost from a built-in price table. Pure on-demand
-//! read; nothing is persisted.
+//! Scans every forge conversation DB — the main chat DB, the pipeline-runs DB,
+//! and each registered project's team DB (all isolated homes) — sums
+//! input/output/cache tokens per day, model, and source, and estimates cost
+//! from a built-in price table. Pure on-demand read; nothing is persisted.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use axum::extract::{Query, State};
 use axum::Json;
@@ -86,19 +86,69 @@ struct Row {
     cache_cost: f64,
 }
 
-/// Candidate forge conversation DBs (the running server's home may vary).
-fn forge_db_paths() -> Vec<PathBuf> {
+/// Every forge conversation DB to scan, each tagged with a source label so the
+/// by-project breakdown separates chat / pipeline / per-project team spend.
+///
+/// Team and pipeline runs execute under ISOLATED homes, so their conversations
+/// live in their own `.forge-home/.forge.db` — not the main chat DB. Counting
+/// only the main DB (the old behavior) hid all team + pipeline spend.
+fn forge_dbs() -> Vec<(String, PathBuf)> {
     let h = forge_workspace::pipeline::home_dir();
-    [h.join("forge").join(".forge.db"), h.join(".forge").join(".forge.db"), h.join(".forge.db")]
-        .into_iter()
-        .filter(|p| p.exists())
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+
+    // Main interactive/chat DB — first of a few candidate homes that exists.
+    if let Some(main) = [
+        h.join("forge").join(".forge.db"),
+        h.join(".forge").join(".forge.db"),
+        h.join(".forge.db"),
+    ]
+    .into_iter()
+    .find(|p| p.exists())
+    {
+        out.push(("chat".to_string(), main));
+    }
+
+    // Pipeline runs share one isolated home under ~/.forge-web/runs.
+    let pipe = h.join(".forge-web").join("runs").join(".forge-home").join(".forge.db");
+    if pipe.exists() {
+        out.push(("pipeline".to_string(), pipe));
+    }
+
+    // Each registered project's team runs keep their own isolated home DB.
+    let settings = crate::board::read_settings();
+    let projects = settings.get("pipeline_projects").and_then(Value::as_array).cloned().unwrap_or_default();
+    for p in projects {
+        let (Some(name), Some(path)) =
+            (p.get("name").and_then(Value::as_str), p.get("path").and_then(Value::as_str))
+        else {
+            continue;
+        };
+        let db =
+            PathBuf::from(path).join(".forge-workspace").join(".forge-home").join(".forge.db");
+        if db.exists() {
+            out.push((format!("team:{name}"), db));
+        }
+    }
+    out
+}
+
+/// Percent-encode the few characters that would break a sqlite `file:` URI.
+fn uri_encode(p: &str) -> String {
+    p.chars()
+        .map(|c| match c {
+            '%' => "%25".to_string(),
+            ' ' => "%20".to_string(),
+            '?' => "%3F".to_string(),
+            '#' => "%23".to_string(),
+            c => c.to_string(),
+        })
         .collect()
 }
 
 /// Sum one forge context JSON's assistant-message usage into rows. DeepSeek
 /// (and forge in general) reports `prompt_tokens` INCLUSIVE of `cached_tokens`,
 /// so input = prompt − cached and cache_read = cached.
-fn rows_from_forge_context(ctx: &str, day: &str, rows: &mut Vec<Row>) {
+fn rows_from_forge_context(ctx: &str, day: &str, project: &str, rows: &mut Vec<Row>) {
     let Ok(doc): Result<Value, _> = serde_json::from_str(ctx) else { return };
     let Some(msgs) = doc.get("messages").and_then(Value::as_array) else { return };
     for m in msgs {
@@ -120,7 +170,7 @@ fn rows_from_forge_context(ctx: &str, day: &str, rows: &mut Vec<Row>) {
         let cache_cost = cached as f64 / 1e6 * pr;
         rows.push(Row {
             day: day.to_string(),
-            project: "forge-agents".into(),
+            project: project.to_string(),
             model,
             session: String::new(),
             input,
@@ -133,16 +183,25 @@ fn rows_from_forge_context(ctx: &str, day: &str, rows: &mut Vec<Row>) {
     }
 }
 
-/// Scan the forge conversation DB for your own agent (DeepSeek) usage via the
-/// system `sqlite3` CLI (no sqlite crate — avoids a version clash with diesel).
-/// Rows come back as `context\x1fupdated_at` per line.
+/// Scan every forge conversation DB (chat + pipeline + each team project) for
+/// your own agent (DeepSeek) usage via the system `sqlite3` CLI (no sqlite
+/// crate — avoids a version clash with diesel).
 fn scan_forge(cutoff: &str, out: &mut Vec<Row>) {
-    let Some(db) = forge_db_paths().into_iter().next() else { return };
+    for (label, db) in forge_dbs() {
+        scan_one(&label, &db, cutoff, out);
+    }
+}
+
+/// Scan a single DB. Rows come back as `context\x1fupdated_at` per line.
+fn scan_one(project: &str, db: &Path, cutoff: &str, out: &mut Vec<Row>) {
+    // Open with `?immutable=1` rather than `-readonly`: the isolated team /
+    // pipeline DBs are in WAL mode and `-readonly` fails to open them
+    // (SQLITE_CANTOPEN) because it can't create the shared-memory index.
+    let uri = format!("file:{}?immutable=1", uri_encode(&db.to_string_lossy()));
     let output = std::process::Command::new("sqlite3")
-        .arg("-readonly")
         .arg("-separator")
         .arg("\x1f")
-        .arg(&db)
+        .arg(&uri)
         .arg("SELECT context, updated_at FROM conversations WHERE context IS NOT NULL")
         .output();
     let Ok(output) = output else { return };
@@ -165,7 +224,7 @@ fn scan_forge(cutoff: &str, out: &mut Vec<Row>) {
                 let day = tail.get(..10).unwrap_or("").to_string();
                 let ctx = buf[..sep].to_string();
                 if cutoff.is_empty() || day.as_str() >= cutoff {
-                    rows_from_forge_context(&ctx, &day, out);
+                    rows_from_forge_context(&ctx, &day, project, out);
                 }
                 buf.clear();
             }
@@ -249,7 +308,7 @@ mod tests {
     fn test_forge_context_usage_and_deepseek_cost() {
         let ctx = r#"{"messages":[{"message":{"text":{"model":"deepseek-v4-pro"}},"usage":{"prompt_tokens":{"actual":60000},"completion_tokens":{"actual":200},"total_tokens":{"actual":60200},"cached_tokens":{"actual":58000}}}]}"#;
         let mut rows = Vec::new();
-        rows_from_forge_context(ctx, "2026-07-12", &mut rows);
+        rows_from_forge_context(ctx, "2026-07-12", "chat", &mut rows);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(r.model, "deepseek-v4-pro");
@@ -264,7 +323,7 @@ mod tests {
     #[test]
     fn test_forge_context_skips_no_usage() {
         let mut rows = Vec::new();
-        rows_from_forge_context(r#"{"messages":[{"message":{"text":{"role":"user"}}}]}"#, "d", &mut rows);
+        rows_from_forge_context(r#"{"messages":[{"message":{"text":{"role":"user"}}}]}"#, "d", "chat", &mut rows);
         assert!(rows.is_empty());
     }
 }
