@@ -469,6 +469,13 @@ pub(crate) async fn team_run<A: API>(
         }
     }
     let _ = std::fs::remove_file(ws.join(".team-status.json"));
+    // Reset the board too: drop old requests so the Done column starts empty
+    // for this run (their record lived on the previous session).
+    if let Ok(entries) = std::fs::read_dir(ws.join("requests")) {
+        for e in entries.flatten() {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
     if let Ok(entries) = std::fs::read_dir(ws.join(".team-logs")) {
         for e in entries.flatten() {
             let _ = std::fs::remove_file(e.path());
