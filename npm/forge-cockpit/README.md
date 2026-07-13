@@ -52,7 +52,7 @@ And a full orchestration stack:
 - **⏰ Schedules** — cron/interval/one-shot triggers → a pipeline or prompt →
   optional webhook / email delivery.
 - **📊 Usage** — token & cost of your agents, priced at your provider's rate.
-- **🧩 Crafts** — describe a mini-app; a builder agent writes a self-contained
+- **🎨 Crafts** — describe a mini-app; a builder agent writes a self-contained
   HTML page into your project and renders it in a tab.
 
 <p align="center">
@@ -60,6 +60,15 @@ And a full orchestration stack:
 </p>
 <p align="center">
   <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/integrations.png" alt="Integrations" width="820">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/team.png" alt="Team — editable multi-agent canvas" width="820">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/pipeline.png" alt="Pipelines — visual DAG builder" width="820">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/usage.png" alt="Usage — token and cost analytics" width="820">
 </p>
 
 ## Docs & source
