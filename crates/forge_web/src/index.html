@@ -601,7 +601,7 @@
       <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="sched-open" title="Schedules — timed automation (pipeline or prompt on a trigger)">⏰</button>
       <button class="icon-btn" id="usage-open" title="Usage — token and cost of your forge agents">📊</button>
-      <button class="icon-btn" id="craft-open" title="Crafts — AI-generated project mini-apps">🧩</button>
+      <button class="icon-btn" id="craft-open" title="Crafts — AI-generated project mini-apps">🎨</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -770,7 +770,7 @@
   <!-- Team (resident agent team) page -->
   <div class="kanban-overlay" id="craft-overlay">
     <div class="kanban-head">
-      <span><b>🧩 Crafts</b> <span class="drawer-hint">AI-generated mini-apps that live in your project (.forge/crafts)</span></span>
+      <span><b>🎨 Crafts</b> <span class="drawer-hint">AI-generated mini-apps that live in your project (.forge/crafts)</span></span>
       <div style="flex:1"></div>
       <label class="sl" style="margin-right:4px">Project</label>
       <select id="craft-project" class="repo-select" style="border:1px solid var(--border);min-width:140px"></select>
@@ -2776,7 +2776,7 @@
       }
       for (const name of d.crafts || []) {
         const el = document.createElement('div'); el.style.cssText = 'cursor:pointer;padding:5px 7px;border-radius:6px;font-size:13px' + (name === CRAFT.cur ? ';background:var(--bg-2,rgba(94,106,210,.12))' : '');
-        el.textContent = (building.has(name) ? '⏳ ' : '🧩 ') + name;
+        el.textContent = (building.has(name) ? '⏳ ' : '🎨 ') + name;
         el.onclick = () => craftOpen(name);
         box.appendChild(el);
       }
@@ -2789,7 +2789,7 @@
       const d = await api('/api/craft?project=' + encodeURIComponent(CRAFT.project) + '&name=' + encodeURIComponent(name)).then((r) => r.json()).catch(() => null);
       $('craft-empty').style.display = 'none';
       $('craft-toolbar').style.display = 'flex';
-      $('craft-cur-name').textContent = '🧩 ' + name;
+      $('craft-cur-name').textContent = '🎨 ' + name;
       $('craft-frame').srcdoc = (d && d.html) || '<p style="font-family:sans-serif;padding:20px">craft not ready</p>';
     }
     $('craft-new').onclick = async () => {
