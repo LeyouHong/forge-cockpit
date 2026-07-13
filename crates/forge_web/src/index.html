@@ -526,8 +526,8 @@
     .pl-node.run-skipped .nstat { background: #9ca3af; }
     @keyframes plpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
     /* Team canvas */
-    .tm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+    .tm-bar { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tm-bar #tm-goal { flex: 1; min-width: 240px; font: inherit; font-size: 12px; line-height: 1.5; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; resize: vertical; min-height: 36px; max-height: 260px; }
     .tm-alerts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
     .tm-alert { border-left: 3px solid #e5484d; background: #fff5f5; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
     .tm-alert b { color: #e5484d; }
@@ -851,7 +851,7 @@
     <div class="kanban-scroll">
       <section class="kanban-section">
         <div class="tm-bar">
-          <input id="tm-goal" placeholder='goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests' />
+          <textarea id="tm-goal" rows="1" placeholder="goal for the team (optional) — pm writes the PRD, architect designs &amp; creates requests. Shift+Enter for a newline; Enter runs."></textarea>
           <button class="btn btn-primary btn-sm" id="tm-run" title="One-shot: plan the goal (pm > architect > coordinator), work every request to done, then exit">▶ Run</button>
           <button class="btn btn-sm" id="tm-daemon" title="Resident mode: keeps polling the board and picks up NEW requests until you press Stop">⚡ Start Daemon</button>
           <span class="sl" id="tm-status"></span>
@@ -3139,6 +3139,15 @@
     });
     $('tm-project').onchange = () => { TEAM.project = $('tm-project').value; startTeamPoll(); };
     $('tm-run').onclick = () => tmRun(false);
+    (function () {
+      const g = $('tm-goal');
+      const grow = () => { g.style.height = 'auto'; g.style.height = Math.min(g.scrollHeight, 260) + 'px'; };
+      g.addEventListener('input', grow);
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); tmRun(false); }
+      });
+      setTimeout(grow, 0);
+    })();
     $('tm-daemon').onclick = () => { if (TEAM.running) tmStop(); else tmRun(true); };
     async function tmRun(daemon) {
       if (!TEAM.project) { $('tm-status').textContent = 'add a project first'; return; }
