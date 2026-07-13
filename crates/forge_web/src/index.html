@@ -983,6 +983,13 @@
     };
 
     /* ---------- confirm modal (replaces native confirm/alert) ---------- */
+    // App-styled replacements for the browser's native confirm/prompt/alert.
+    const uiConfirm = (body, { title = 'Confirm', confirmText = 'OK', danger = false } = {}) =>
+      confirmModal({ title, body, confirmText, danger });
+    const uiPrompt = (body, { title = 'Input', value = '', placeholder = '', confirmText = 'OK' } = {}) =>
+      confirmModal({ title, body, confirmText, danger: false, input: { value, placeholder } });
+    const uiAlert = (body, { title = 'Notice' } = {}) =>
+      confirmModal({ title, body, confirmText: 'OK', hideCancel: true, danger: false });
     function confirmModal({ title, body, confirmText = 'Delete', hideCancel = false, danger = true, input = null }) {
       return new Promise((resolve) => {
         const overlay = $('modal-overlay'), ok = $('modal-ok'), cancel = $('modal-cancel'), field = $('modal-input');
@@ -2259,7 +2266,7 @@
         const row = document.createElement('div'); row.className = 'pl-file' + (f === PL.file ? ' active' : '');
         const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = f; nm.onclick = () => openFile(f);
         const rm = document.createElement('span'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'delete';
-        rm.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete ' + f + '?')) return; await api('/api/pipeline/file/delete', plBody({ b: { name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
+        rm.onclick = async (e) => { e.stopPropagation(); if (!(await uiConfirm('Delete ' + f + '?', { confirmText: 'Delete', danger: true }))) return; await api('/api/pipeline/file/delete', plBody({ b: { name: f } })); if (PL.file === f) { PL.file = null; plSetEditor('', 'no pipeline open'); } loadFiles(); };
         row.appendChild(nm); row.appendChild(rm); box.appendChild(row);
       }
     }
@@ -2340,7 +2347,7 @@
     }
 
     $('pl-new').onclick = async () => {
-      let name = prompt('New pipeline file name:', 'my-flow.yaml'); if (!name) return;
+      let name = await uiPrompt('New pipeline file name:', { value: 'my-flow.yaml' }); if (!name) return;
       if (!/\.(ya?ml)$/.test(name)) name += '.yaml';
       const base = name.replace(/\.(ya?ml)$/, '');
       const r = await api('/api/pipeline/file', plBody({ m: 'PUT', b: { name, content: 'name: ' + base + '\ninput: {}\nnodes: {}\n' } }));
@@ -2794,20 +2801,20 @@
     }
     $('craft-new').onclick = async () => {
       if (!CRAFT.project) return;
-      const name = prompt('Craft name (short, e.g. "endpoints"):'); if (!name) return;
-      const desc = prompt('Describe what this mini-app should do:'); if (!desc) return;
+      const name = await uiPrompt('Craft name (short, e.g. "endpoints"):'); if (!name) return;
+      const desc = await uiPrompt('Describe what this mini-app should do:'); if (!desc) return;
       const r = await api('/api/craft/generate', plBody({ b: { project: CRAFT.project, name: name.trim(), prompt: desc } }));
-      if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || 'failed'); return; }
+      if (!r.ok) { const e = await r.json().catch(() => ({})); await uiAlert(e.error || 'failed'); return; }
       CRAFT.cur = name.trim(); craftLoadList();
     };
     $('craft-refine').onclick = async () => {
       if (!CRAFT.cur) return;
-      const desc = prompt('What should change?'); if (!desc) return;
+      const desc = await uiPrompt('What should change?'); if (!desc) return;
       await api('/api/craft/generate', plBody({ b: { project: CRAFT.project, name: CRAFT.cur, prompt: desc, refine: true } }));
       craftLoadList();
     };
     $('craft-del').onclick = async () => {
-      if (!CRAFT.cur || !confirm('Delete craft "' + CRAFT.cur + '"?')) return;
+      if (!CRAFT.cur || !(await uiConfirm('Delete craft "' + CRAFT.cur + '"?', { confirmText: 'Delete', danger: true }))) return;
       await api('/api/craft/delete', plBody({ b: { project: CRAFT.project, name: CRAFT.cur } }));
       CRAFT.cur = null; $('craft-toolbar').style.display = 'none'; $('craft-frame').srcdoc = ''; $('craft-empty').style.display = ''; craftLoadList();
     };
@@ -2912,7 +2919,7 @@
       btn('▶ Run now', async () => { await api('/api/schedules/fire', plBody({ b: { id: s.id } })); schedLoad(true); });
       btn(s.enabled ? '⏸ Pause' : '▶ Resume', async () => { const u = Object.assign({}, s, { enabled: !s.enabled }); await api('/api/schedules/update', plBody({ b: u })); schedLoad(true); });
       btn('✎ Edit', () => schedOpenModal(s));
-      btn('✕ Delete', async () => { if (!confirm('Delete schedule "' + s.name + '"?')) return; await api('/api/schedules/delete', plBody({ b: { id: s.id } })); schedLoad(true); });
+      btn('✕ Delete', async () => { if (!(await uiConfirm('Delete schedule "' + s.name + '"?', { confirmText: 'Delete', danger: true }))) return; await api('/api/schedules/delete', plBody({ b: { id: s.id } })); schedLoad(true); });
       const hist = document.createElement('a'); hist.href = '#'; hist.className = 'sl'; hist.textContent = 'runs ▾'; hist.style.marginLeft = 'auto';
       const runsBox = document.createElement('div'); runsBox.style.cssText = 'display:none;margin-top:6px;border-top:1px solid var(--border);padding-top:6px';
       const loadRunHistory = async () => {
@@ -3111,7 +3118,7 @@
       const f = document.createElement('input'); f.type = 'file'; f.accept = '.yaml,.yml,text/yaml';
       f.onchange = async () => {
         const file = f.files && f.files[0]; if (!file) return;
-        if (!confirm('Replace the "' + TEAM.project + '" team with ' + file.name + '?')) return;
+        if (!(await uiConfirm('Replace the "' + TEAM.project + '" team with ' + file.name + '?', { confirmText: 'Replace' }))) return;
         const yaml = await file.text();
         const r = await api('/api/team/yaml', plBody({ b: { project: TEAM.project, yaml } }));
         const d = await r.json().catch(() => ({}));
@@ -3405,7 +3412,7 @@
         };
         const delT = document.createElement('button'); delT.className = 'btn btn-sm'; delT.textContent = '✕'; delT.title = 'delete selected template';
         delT.onclick = async () => {
-          if (!tplSel.value || !confirm('Delete template "' + tplSel.value + '"?')) return;
+          if (!tplSel.value || !(await uiConfirm('Delete template "' + tplSel.value + '"?', { confirmText: 'Delete', danger: true }))) return;
           await api('/api/team/templates/delete', plBody({ b: { name: tplSel.value } }));
           tmOpenMember(null);
         };
@@ -3466,8 +3473,8 @@
       const exBtn = document.createElement('button'); exBtn.className = 'btn btn-sm'; exBtn.textContent = '✨ Insert example SOP';
       exBtn.style.marginTop = '5px';
       exBtn.title = 'generate a starter SOP for the selected stage';
-      exBtn.onclick = () => {
-        if (sopTa.value.trim() && !confirm('Replace the current SOP with an example?')) return;
+      exBtn.onclick = async () => {
+        if (sopTa.value.trim() && !(await uiConfirm('Replace the current SOP with an example?', { confirmText: 'Replace' }))) return;
         sopTa.value = tmExampleSop(nameIn.value.trim() || idIn.value.trim() || 'Agent', stSel.value);
       };
       sopWrap.appendChild(sopTa); sopWrap.appendChild(exBtn);
@@ -3484,7 +3491,7 @@
         const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px';
         const saveT = document.createElement('button'); saveT.className = 'btn btn-sm'; saveT.textContent = '💾 Save as template';
         saveT.onclick = async () => {
-          const name = prompt('Template name:', m.name || m.id); if (!name) return;
+          const name = await uiPrompt('Template name:', { value: m.name || m.id }); if (!name) return;
           const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
           const r = await api('/api/team/templates', plBody({ b: { name, member } }));
           $('tm-mem-msg').textContent = r.ok ? '✓ template saved' : 'save failed';
@@ -3511,7 +3518,7 @@
         else { TEAM.cfg.members = prev; $('tm-mem-msg').textContent = 'rejected — see status bar'; }
       };
       $('tm-mem-del').onclick = async () => {
-        if (!m || !confirm('Remove agent "' + m.id + '" from the team?')) return;
+        if (!m || !(await uiConfirm('Remove agent "' + m.id + '" from the team?', { confirmText: 'Remove', danger: true }))) return;
         const prev = TEAM.cfg.members;
         TEAM.cfg.members = (TEAM.cfg.members || []).filter((x) => x.id !== m.id)
           .map((x) => Object.assign({}, x, { depends_on: (x.depends_on || []).filter((d) => d !== m.id) }));
@@ -3548,7 +3555,7 @@
       const reset = document.createElement('button'); reset.className = 'btn btn-sm'; reset.textContent = '↻ Reset session';
       reset.title = 'Forget this member\'s conversation — next run starts with fresh context';
       reset.onclick = async () => {
-        if (!confirm('Reset ' + m.id + '\'s session? It loses its accumulated memory.')) return;
+        if (!(await uiConfirm('Reset ' + m.id + '\'s session? It loses its accumulated memory.', { confirmText: 'Reset' }))) return;
         await api('/api/team/reset-session', plBody({ b: { project: TEAM.project, member: m.id } }));
         pre.textContent = '(session reset — cleared)';
       };
@@ -3612,7 +3619,7 @@
         const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
         t.textContent = fromId + ' → ' + toId + ' (click to remove)'; h.appendChild(t);
         h.onclick = async () => {
-          if (!confirm('Remove connection ' + fromId + ' → ' + toId + '?')) return;
+          if (!(await uiConfirm('Remove connection ' + fromId + ' → ' + toId + '?', { confirmText: 'Remove' }))) return;
           const m = (TEAM.cfg.members || []).find((x) => x.id === toId); if (!m) return;
           m.depends_on = (m.depends_on || []).filter((d) => d !== fromId);
           if (await tmSaveConfig()) loadTeam();
