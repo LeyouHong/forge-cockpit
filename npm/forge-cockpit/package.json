@@ -1,6 +1,6 @@
 {
   "name": "forge-cockpit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "An AI coding agent with a browser cockpit: chat, platform dashboards, visual pipelines, a multi-agent team, schedules, usage analytics, and AI-generated mini-apps. Bring your own model API key. A fork of Forge (Apache-2.0).",
   "keywords": [
     "ai",
