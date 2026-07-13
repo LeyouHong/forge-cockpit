@@ -842,7 +842,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     .with_context(|| format!("Invalid host/port: {host}:{port}"))?;
 
                 self.writeln_title(TitleFormat::info(format!(
-                    "Starting Forge web UI on http://{addr}"
+                    "Starting forge-cockpit web UI on http://{addr}"
                 )))?;
 
                 forge_web::serve(self.api.clone(), addr, !no_open).await?;

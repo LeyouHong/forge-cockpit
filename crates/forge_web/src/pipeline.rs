@@ -652,6 +652,90 @@ pub(crate) async fn team_yaml_set<A: API>(
     Ok(Json(json!({ "ok": true, "members": cfg.members.len() })))
 }
 
+/// GET /api/team/status?project= — per-member session status (down/idle/
+/// working) + whether the orchestrator is alive.
+pub(crate) async fn team_status<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    // orchestrator alive?
+    let alive = std::fs::read_to_string(ws.join(".team-run.pid"))
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .map(|pid| {
+            std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|st| st.success())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let members: Value = std::fs::read_to_string(ws.join(".team-status.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    Ok(Json(json!({ "running": alive, "members": members })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SessionLogQuery {
+    project: String,
+    member: String,
+}
+
+/// GET /api/team/session-log?project=&member= — tail of a member's resident
+/// session log (its streamed agent output across tasks).
+pub(crate) async fn team_session_log<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<SessionLogQuery>,
+) -> Result<Json<Value>, AppError> {
+    if q.member.contains('/') || q.member.contains("..") {
+        return Err(AppError::bad_request("invalid member"));
+    }
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let path = project.join(".forge-workspace").join(".team-logs").join(format!("{}.log", q.member));
+    let log = std::fs::read_to_string(&path).unwrap_or_default();
+    // Tail (last ~16KB) so the response stays small.
+    let tail = match log.char_indices().rev().nth(16000) {
+        Some((i, _)) => format!("…\n{}", &log[i..]),
+        None => log,
+    };
+    Ok(Json(json!({ "log": tail })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ResetSessionReq {
+    project: String,
+    member: String,
+}
+
+/// POST /api/team/reset-session — drop a member's conversation id so its next
+/// run starts with fresh context (and clear its log).
+pub(crate) async fn team_reset_session<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<ResetSessionReq>,
+) -> Result<Json<Value>, AppError> {
+    if body.member.contains('/') || body.member.contains("..") {
+        return Err(AppError::bad_request("invalid member"));
+    }
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let sp = ws.join(".team-sessions.json");
+    let mut map: serde_json::Map<String, Value> = std::fs::read_to_string(&sp)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    map.remove(&body.member);
+    let _ = std::fs::write(&sp, serde_json::to_string_pretty(&map).unwrap_or_default());
+    let _ = std::fs::remove_file(ws.join(".team-logs").join(format!("{}.log", body.member)));
+    Ok(Json(json!({ "ok": true })))
+}
+
 /// GET /api/team/approvals?project= — pending approval gates.
 pub(crate) async fn team_approvals_get<A: API>(
     State(_): State<AppState<A>>,

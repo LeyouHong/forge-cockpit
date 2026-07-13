@@ -173,6 +173,9 @@ where
         .route("/api/team/file", get(pipeline::team_file::<A>))
         .route("/api/team/diff", get(pipeline::team_diff::<A>))
         .route("/api/team/yaml", get(pipeline::team_yaml_get::<A>).post(pipeline::team_yaml_set::<A>))
+        .route("/api/team/status", get(pipeline::team_status::<A>))
+        .route("/api/team/session-log", get(pipeline::team_session_log::<A>))
+        .route("/api/team/reset-session", post(pipeline::team_reset_session::<A>))
         .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
         .route("/api/team/approve", post(pipeline::team_approve::<A>))
         .route(
@@ -200,8 +203,8 @@ where
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local = listener.local_addr()?;
     let url = format!("http://{local}/?token={}", state.token);
-    tracing::info!("Forge web UI listening on {url}");
-    println!("Forge web UI ready. Open:\n  {url}");
+    tracing::info!("forge-cockpit web UI listening on {url}");
+    println!("forge-cockpit web UI ready. Open:\n  {url}");
     println!(
         "  ⚠ Anyone with this URL/token can run commands and edit files as you. \
          Keep it private; it is valid only for this session."

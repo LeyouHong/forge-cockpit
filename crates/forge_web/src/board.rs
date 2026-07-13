@@ -162,7 +162,7 @@ pub(crate) fn todos_context() -> String {
     }
     let path = settings_path().map(|p| p.display().to_string()).unwrap_or_default();
     let mut s = format!(
-        "{TODOS_CONTEXT_MARKER}\nThe user's TODO list from the Forge web panel. It is stored as \
+        "{TODOS_CONTEXT_MARKER}\nThe user's TODO list from the forge-cockpit web panel. It is stored as \
          JSON under the \"todos\" key in {path}; each item is an object with \"id\", \"text\" and a \
          boolean \"done\". Current items:\n"
     );
