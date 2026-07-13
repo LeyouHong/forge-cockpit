@@ -250,6 +250,7 @@ impl crate::PipelineService for Runner {
         _dir: std::path::PathBuf,
         _inputs: std::collections::BTreeMap<String, String>,
         _node_timeout: std::time::Duration,
+        _use_mcp: bool,
     ) -> anyhow::Result<crate::PipelineRunOutput> {
         unimplemented!("PipelineService not implemented for test Runner")
     }

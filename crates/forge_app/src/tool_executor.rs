@@ -337,7 +337,13 @@ impl<
                 );
                 let output = self
                     .services
-                    .run_pipeline(input.name.clone(), dir, input.inputs.clone(), timeout)
+                    .run_pipeline(
+                        input.name.clone(),
+                        dir,
+                        input.inputs.clone(),
+                        timeout,
+                        input.use_mcp.unwrap_or(false),
+                    )
                     .await?;
                 ToolOperation::PipelineRun { output }
             }

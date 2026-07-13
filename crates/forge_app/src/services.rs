@@ -570,6 +570,7 @@ pub trait PipelineService: Send + Sync {
         dir: PathBuf,
         inputs: std::collections::BTreeMap<String, String>,
         node_timeout: Duration,
+        use_mcp: bool,
     ) -> anyhow::Result<PipelineRunOutput>;
 }
 
@@ -1068,9 +1069,10 @@ impl<I: Services> PipelineService for I {
         dir: PathBuf,
         inputs: std::collections::BTreeMap<String, String>,
         node_timeout: Duration,
+        use_mcp: bool,
     ) -> anyhow::Result<PipelineRunOutput> {
         self.pipeline_service()
-            .run_pipeline(name, dir, inputs, node_timeout)
+            .run_pipeline(name, dir, inputs, node_timeout, use_mcp)
             .await
     }
 }
