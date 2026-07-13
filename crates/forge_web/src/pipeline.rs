@@ -652,6 +652,46 @@ pub(crate) async fn team_yaml_set<A: API>(
     Ok(Json(json!({ "ok": true, "members": cfg.members.len() })))
 }
 
+/// GET /api/team/activity?project= — the orchestrator's own progress trace
+/// (planning phases, request pickups, completions, stuck alerts), with agent
+/// spinner/ANSI noise stripped. This is the "where is it now" feed.
+pub(crate) async fn team_activity<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let raw = std::fs::read_to_string(project.join(".forge-workspace").join(".team-run.log")).unwrap_or_default();
+    // Keep only the orchestrator's meaningful progress lines; drop the forge -p
+    // spinner/analysis chatter that gets interleaved.
+    let mut lines: Vec<String> = Vec::new();
+    for l in raw.lines() {
+        let t = l.trim_end_matches(|c: char| c.is_control()).trim();
+        if t.is_empty() {
+            continue;
+        }
+        let keep = t.contains('⚑')       // planning phase
+            || t.contains('→')            // request scheduled to a member
+            || t.contains('✓')            // done
+            || t.contains('✗')            // failed
+            || t.contains("STUCK")
+            || t.contains('⏸')            // approval wait
+            || t.contains('⏱')            // timeout/retry
+            || t.starts_with("▶ orchestrator")
+            || t.contains("planning done")
+            || t.contains("idle, waiting");
+        let noise = t.contains("Forging") || t.contains("Analyzing") || t.contains("Ctrl+C") || t.contains("[2K");
+        if keep && !noise {
+            // collapse the ANSI-cleaned line
+            let clean: String = t.chars().filter(|c| !c.is_control()).collect();
+            lines.push(clean);
+        }
+    }
+    let start = lines.len().saturating_sub(40);
+    let recent: Vec<String> = lines[start..].to_vec();
+    let current = recent.last().cloned().unwrap_or_default();
+    Ok(Json(json!({ "current": current, "trace": recent })))
+}
+
 /// GET /api/team/status?project= — per-member session status (down/idle/
 /// working) + whether the orchestrator is alive.
 pub(crate) async fn team_status<A: API>(

@@ -857,6 +857,11 @@
           <span class="sl" id="tm-status"></span>
         </div>
         <div id="tm-alerts" class="tm-alerts"></div>
+        <div id="tm-activity" style="display:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:12px;background:var(--bg-2,rgba(94,106,210,.06))">
+          <span id="tm-act-cur"></span>
+          <a href="#" id="tm-act-toggle" class="sl" style="margin-left:8px">trace ▾</a>
+          <div id="tm-act-trace" style="display:none;margin-top:6px;max-height:160px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;white-space:pre-wrap;color:var(--muted)"></div>
+        </div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
           <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
@@ -3160,13 +3165,39 @@
     function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
-      const [d, st] = await Promise.all([
+      const [d, st, act] = await Promise.all([
         api('/api/team?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null),
         api('/api/team/status?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ members: {} })),
+        api('/api/team/activity?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => null),
       ]);
       TEAM.status = (st && st.members) || {};
+      renderActivity(act);
       if (d) renderTeam(d);
     }
+    function renderActivity(act) {
+      const box = $('tm-activity');
+      const cur = act && act.current;
+      if (!cur) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      // Humanize the current orchestrator line into a phase label.
+      let label = cur;
+      const m1 = cur.match(/⚑\s*(\w[\w-]*)\s*planning/);
+      const m2 = cur.match(/→\s*(\S+)\s*\[(\w+)\].*→\s*(\S+)/);
+      if (/planning done/.test(cur)) label = '✅ planning done — work is being scheduled';
+      else if (m1) label = '📋 planning: ' + m1[1] + ' is working…';
+      else if (m2) label = '🔨 ' + m2[3] + ' is working ' + m2[1] + ' [' + m2[2] + ']';
+      else if (/idle, waiting/.test(cur)) label = '⏸ idle — waiting for new requests (daemon)';
+      else if (/STUCK/.test(cur)) label = '⚠ ' + cur;
+      $('tm-act-cur').innerHTML = '<b>Activity:</b> ' + escapeHtml(label);
+      $('tm-act-trace').textContent = ((act.trace || []).join('\n'));
+    }
+    $('tm-act-toggle').onclick = (e) => {
+      e.preventDefault();
+      const t = $('tm-act-trace');
+      const open = t.style.display !== 'none';
+      t.style.display = open ? 'none' : '';
+      $('tm-act-toggle').textContent = open ? 'trace ▾' : 'trace ▴';
+    };
     function renderTeam(d) {
       const reqs = d.requests || [], msgs = d.messages || [];
       TEAM.running = !!d.running;
