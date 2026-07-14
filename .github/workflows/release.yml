@@ -94,6 +94,39 @@ jobs:
             cp "target/${{ matrix.target }}/release/forge" "dist/forge-cockpit-${{ matrix.pkg }}"
           fi
 
+      # Every target is built on its native runner, so the binary can simply be
+      # run here. Nothing ships that has not executed at least once — the class
+      # of bug this catches (a binary that installs fine and then cannot start)
+      # is exactly what shipped in #10.
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ matrix.npm_os }}" = "win32" ]; then
+            BIN="dist/forge-cockpit-${{ matrix.pkg }}.exe"
+          else
+            BIN="dist/forge-cockpit-${{ matrix.pkg }}"
+          fi
+          "$BIN" --version
+
+      # The Linux runners are pinned to ubuntu-22.04, so a native run above
+      # already proves glibc 2.35 works. Assert the ceiling explicitly anyway:
+      # if someone bumps the runner, this fails loudly instead of silently
+      # raising the glibc floor for every user (which is how #10 happened).
+      - name: Assert glibc ceiling (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          MAX=$(objdump -T "dist/forge-cockpit-${{ matrix.pkg }}" \
+            | grep -oE 'GLIBC_2\.[0-9]+' | sort -u -t. -k2 -n | tail -1)
+          echo "max glibc symbol required: $MAX"
+          N=${MAX#GLIBC_2.}
+          if [ "$N" -gt 35 ]; then
+            echo "::error::binary requires $MAX but Ubuntu 22.04 LTS only provides glibc 2.35."
+            echo "::error::Build Linux targets on ubuntu-22.04, not a newer runner."
+            exit 1
+          fi
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
