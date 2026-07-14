@@ -290,7 +290,12 @@ fn css(body: &'static str) -> Response {
 /// process-wide `schedule::LOCK` made that especially costly. Continuing with
 /// the data we have is strictly better than that cascade.
 pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    m.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!(
+            "recovered from a poisoned mutex — a previous request panicked while holding it"
+        );
+        poisoned.into_inner()
+    })
 }
 
 /// Compares two secrets without leaking their common prefix length via timing.
@@ -299,6 +304,9 @@ pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// browser can hammer these endpoints cross-origin. A short-circuiting `==` is
 /// almost certainly not exploitable across 122 bits of UUID, but this costs one
 /// XOR per byte and removes the question.
+///
+/// The length check short-circuits early — safe only because the cockpit token
+/// format is fixed-width (UUID v4). Do not use this with variable-length secrets.
 pub(crate) fn secret_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
@@ -344,7 +352,10 @@ async fn index<A>(
     Query(query): Query<IndexQuery>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let query_ok = query.token.as_deref() == Some(state.token.as_str());
+    let query_ok = secret_eq(
+        query.token.as_deref().unwrap_or(""),
+        &state.token,
+    );
     if !query_ok && !cookie_ok(&headers, &state.token) {
         return (
             StatusCode::UNAUTHORIZED,
