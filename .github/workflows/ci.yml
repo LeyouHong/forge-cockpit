@@ -41,6 +41,42 @@ jobs:
       run: cargo build --workspace --all-features
     - name: Test
       run: cargo test --workspace --all-features
+
+  # The npm wrapper is what users actually install, and nothing used to check it
+  # — every distribution bug so far (glibc floor, missing Intel Mac binary)
+  # shipped through a green CI. This job is cheap and runs on every PR.
+  npm-package:
+    name: npm package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v6
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Syntax-check the install scripts
+      run: |
+        for f in npm/forge-cockpit/platforms.js \
+                 npm/forge-cockpit/postinstall.js \
+                 npm/forge-cockpit/bin/forge-cockpit.js; do
+          node --check "$f"
+        done
+    - name: Platform table matches the release matrix, and nothing is left out of the tarball
+      run: node npm/forge-cockpit/check-consistency.mjs
+    - name: Every file required at runtime is in the packed tarball
+      working-directory: npm/forge-cockpit
+      run: |
+        set -e
+        npm pack --silent >/dev/null
+        tar tzf forge-cockpit-*.tgz | sed 's|^package/||' | sort > /tmp/packed
+        echo "packed:"; cat /tmp/packed
+        for f in platforms.js postinstall.js bin/forge-cockpit.js; do
+          grep -qx "$f" /tmp/packed || { echo "::error::$f is missing from the npm tarball"; exit 1; }
+        done
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
