@@ -53,17 +53,25 @@ pub struct TeamMember {
     /// is spawned for it (the orchestrator parks the request and alerts).
     #[serde(default)]
     pub requires_approval: bool,
-    /// When true, this member is a resident terminal: a persistent tmux
-    /// session running an interactive CLI agent (Claude Code by default, on
-    /// the CLI's own subscription auth) that the orchestrator drives by
+    /// When true (the DEFAULT), this member is a resident terminal: a
+    /// persistent tmux session running an interactive CLI agent (Claude Code,
+    /// on the CLI's own subscription auth) that the orchestrator drives by
     /// injecting prompts. `tmux attach -t forge-team-<id>` joins it live.
-    #[serde(default)]
+    /// Set false in the member editor for a forge subprocess (provider API).
+    #[serde(default = "default_terminal")]
     pub terminal: bool,
     /// Base command for the resident terminal. Empty → Claude Code with
     /// permission prompts off (unattended operation); session-resume flags are
     /// appended automatically for claude-family commands.
     #[serde(default)]
     pub terminal_cmd: String,
+}
+
+/// Terminal-resident is the default member mode: the team runs on the
+/// user's CLI subscription unless a member explicitly opts into the forge
+/// subprocess (API) path.
+fn default_terminal() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -90,7 +98,7 @@ fn member(id: &str, name: &str, icon: &str, stage: Stage, depends_on: &[&str]) -
         role_prompt: String::new(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
         requires_approval: false,
-        terminal: false,
+        terminal: true,
         terminal_cmd: String::new(),
     }
 }

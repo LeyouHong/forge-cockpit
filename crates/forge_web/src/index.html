@@ -862,6 +862,7 @@
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
           <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
+          <span id="tm-mode-note" class="sl" style="margin-left:8px"></span>
         </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
         <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
@@ -3520,7 +3521,7 @@
       apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
       apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
       row('approval', apprWrap);
-      const termCb = document.createElement('input'); termCb.type = 'checkbox'; termCb.checked = !!(m && m.terminal);
+      const termCb = document.createElement('input'); termCb.type = 'checkbox'; termCb.checked = m ? !!m.terminal : true;
       termCb.style.cssText = 'width:auto;margin:0';
       const termWrap = document.createElement('div');
       termWrap.style.cssText = 'display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text);cursor:pointer';
@@ -3703,8 +3704,14 @@
     // ── One-click: whole team ↔ resident terminals ──
     function tmSyncAllTermBtn() {
       const ms = (TEAM.cfg && TEAM.cfg.members) || [];
-      const allOn = ms.length > 0 && ms.every((m) => m.terminal);
+      const on = ms.filter((m) => m.terminal).length;
+      const allOn = ms.length > 0 && on === ms.length;
       $('tm-allterm').textContent = allOn ? '⌨ All Terminal ✓' : '⌨ All Terminal';
+      const note = $('tm-mode-note');
+      if (!ms.length) { note.textContent = ''; }
+      else if (allOn) { note.textContent = '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'; }
+      else if (on === 0) { note.textContent = 'all agents run as forge API agents — ⌨ All Terminal switches the team to your Claude subscription'; }
+      else { note.textContent = '⌨ ' + on + '/' + ms.length + ' agents on resident terminals; the rest use forge API agents'; }
     }
     $('tm-allterm').onclick = async () => {
       const ms = (TEAM.cfg && TEAM.cfg.members) || [];
