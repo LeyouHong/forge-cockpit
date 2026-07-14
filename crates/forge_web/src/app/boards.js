@@ -8,10 +8,10 @@ const KB_PLATFORMS = [
   { key: 'slack', name: 'Slack', logo: SLACK_LOGO },
   { key: 'gmail', name: 'Gmail', logo: GMAIL_LOGO },
 ];
-// openKanban lives in team.js, which loads after this file. Referencing it
-// directly here would read it before its declaration is hoisted — one script's
-// hoisting no longer covers the next. Called from inside the handler, the
-// lookup happens at click time, by which point every script has run.
+// `openKanban` is a function declaration in team.js, which loads after this
+// file. During boards.js execution it is still `undefined` in the global scope.
+// That's fine: the click handler defers the lookup to click time, by which
+// point every script has run and the function is available.
 $('kanban-open').onclick = () => openKanban();
 $('kanban-close').onclick = () => $('kanban-overlay').classList.remove('open');
 $('kanban-refresh').onclick = () => openKanban();
