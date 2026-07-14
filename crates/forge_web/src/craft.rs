@@ -6,17 +6,21 @@
 //! in a sandboxed iframe. Crafts travel with the project (commit them to git).
 //!
 //! Ours is a single static HTML file (vanilla JS, inline CSS) rather than the
-//! reference's React/tsx + SDK — it fits this codebase's zero-build, CSP-locked
-//! delivery model.
+//! reference's React/tsx + SDK — it fits this codebase's zero-build delivery
+//! model. The craft is served as its own document under a CSP that permits
+//! inline script/style and nothing else — no network, no external loads — see
+//! [`craft_csp`].
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use axum::extract::{Query, State};
 use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
 use forge_api::API;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{AppError, AppState};
 
@@ -77,7 +81,11 @@ pub(crate) struct CraftRef {
     name: String,
 }
 
-/// GET /api/craft?project=&name= — a craft's HTML (raw, for the iframe srcdoc).
+/// GET /api/craft?project=&name= — a craft's HTML and prompt history as JSON.
+///
+/// The iframe no longer reads from here (it navigates to [`view`], so the craft
+/// gets its own CSP); this remains the way to inspect a craft's source and the
+/// prompts that produced it.
 pub(crate) async fn read<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<CraftRef>,
@@ -87,6 +95,71 @@ pub(crate) async fn read<A: API>(
     let content = std::fs::read_to_string(&file).map_err(|_| AppError::not_found("no such craft"))?;
     let prompt = std::fs::read_to_string(file.with_extension("prompt")).unwrap_or_default();
     Ok(Json(json!({ "name": q.name, "html": content, "prompt": prompt })))
+}
+
+/// CSP for a craft document.
+///
+/// A craft is agent-written HTML, so it needs inline script and style — and it
+/// must not be able to reach anything. `default-src 'none'` with no `connect-src`
+/// makes the "sandboxed iframe with no network" the builder prompt promises
+/// actually true: fetch, XHR and WebSocket are all refused. Combined with the
+/// iframe's `sandbox="allow-scripts"` (no `allow-same-origin`), a craft runs in
+/// an opaque origin that can neither read the cockpit nor call out of it.
+fn craft_csp() -> &'static str {
+    "default-src 'none'; \
+     script-src 'unsafe-inline'; \
+     style-src 'unsafe-inline'; \
+     img-src data: blob:; \
+     font-src data:; \
+     base-uri 'none'; \
+     form-action 'none'; \
+     frame-ancestors 'none'"
+}
+
+/// GET /craft/view?project=&name= — a craft as its own document, for the iframe.
+///
+/// This exists instead of `srcdoc` because an `srcdoc` frame *inherits the
+/// embedder's CSP*: under the cockpit's nonce policy every craft's inline script
+/// would be refused, and crafts would silently render dead. Loading the craft
+/// from a real URL gives it its own response headers — and therefore the policy
+/// above.
+///
+/// Gated by the session cookie rather than a bearer token: a browser cannot set
+/// headers on an iframe navigation, and putting the API token in this URL would
+/// hand it to the craft's own JavaScript, which is precisely the code we are
+/// isolating.
+pub(crate) async fn view<A: API>(
+    State(state): State<AppState<A>>,
+    headers: HeaderMap,
+    Query(q): Query<CraftRef>,
+) -> Response {
+    if !crate::cookie_ok(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(project) = project_path(&q.project) else {
+        return (StatusCode::NOT_FOUND, "no such project").into_response();
+    };
+    let Ok(file) = craft_file(&project, &q.name) else {
+        return (StatusCode::BAD_REQUEST, "invalid craft name").into_response();
+    };
+    let Ok(html) = std::fs::read_to_string(&file) else {
+        let fallback = format!(
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>body{{font-family:system-ui,sans-serif;color-scheme:dark;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}p{{font-size:1.2rem;opacity:.7}}</style></head><body><p>Craft <strong>{}</strong> not ready &mdash; it may still be building.</p></body></html>",
+            q.name
+        );
+        return (StatusCode::NOT_FOUND, Html(fallback)).into_response();
+    };
+
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        header::HeaderValue::from_static(craft_csp()),
+    );
+    resp.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    resp
 }
 
 /// POST /api/craft/delete
@@ -196,5 +269,25 @@ pub(crate) async fn generate<A: API>(
             let _ = std::fs::remove_file(&marker);
             Err(AppError::bad_request(format!("failed to start builder: {e}")))
         }
+    }
+}
+
+#[cfg(test)]
+mod csp_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// A craft is agent-written code. It gets inline script (it needs it) and
+    /// nothing else — in particular no way to reach the network, which is what
+    /// the builder prompt already promises its author.
+    #[test]
+    fn test_craft_csp_grants_inline_script_but_no_network() {
+        let csp = craft_csp();
+        assert_eq!(csp.contains("script-src 'unsafe-inline'"), true);
+        assert_eq!(csp.starts_with("default-src 'none'"), true);
+        // No connect-src at all: it falls back to default-src 'none', so fetch,
+        // XHR and WebSocket are all refused.
+        assert_eq!(csp.contains("connect-src"), false);
     }
 }
