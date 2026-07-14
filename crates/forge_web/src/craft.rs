@@ -112,7 +112,8 @@ fn craft_csp() -> &'static str {
      img-src data: blob:; \
      font-src data:; \
      base-uri 'none'; \
-     form-action 'none'"
+     form-action 'none'; \
+     frame-ancestors 'none'"
 }
 
 /// GET /craft/view?project=&name= — a craft as its own document, for the iframe.
@@ -142,13 +143,21 @@ pub(crate) async fn view<A: API>(
         return (StatusCode::BAD_REQUEST, "invalid craft name").into_response();
     };
     let Ok(html) = std::fs::read_to_string(&file) else {
-        return (StatusCode::NOT_FOUND, "no such craft").into_response();
+        let fallback = format!(
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>body{{font-family:system-ui,sans-serif;color-scheme:dark;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}p{{font-size:1.2rem;opacity:.7}}</style></head><body><p>Craft <strong>{}</strong> not ready &mdash; it may still be building.</p></body></html>",
+            q.name
+        );
+        return (StatusCode::NOT_FOUND, Html(fallback)).into_response();
     };
 
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         header::HeaderValue::from_static(craft_csp()),
+    );
+    resp.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
     );
     resp
 }

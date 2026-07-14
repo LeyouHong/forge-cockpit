@@ -304,15 +304,24 @@ async fn index<A>(
     // <script> while still refusing every *other* inline script. The page
     // renders attacker-influenced text (GitHub issue titles, Sentry messages,
     // agent output), so an escaping slip must not become script execution.
-    let nonce = ConversationId::generate().into_string();
+    let nonce = crypto_nonce();
     let page = include_str!("index.html")
         .replace("__FORGE_TOKEN__", &state.token)
         .replace("__CSP_NONCE__", &nonce);
 
     let mut resp = Html(page).into_response();
-    if let Ok(csp) = page_csp(&nonce).parse() {
-        resp.headers_mut().insert(header::CONTENT_SECURITY_POLICY, csp);
+    match page_csp(&nonce).parse() {
+        Ok(csp) => {
+            resp.headers_mut().insert(header::CONTENT_SECURITY_POLICY, csp);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to parse CSP header: {e}");
+        }
     }
+    resp.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
     if query_ok {
         let want = format!("forge_token={}", state.token);
         if let Ok(cookie) = format!("{want}; Path=/; SameSite=Strict; HttpOnly").parse() {
@@ -334,6 +343,16 @@ pub(crate) fn cookie_ok(headers: &axum::http::HeaderMap, token: &str) -> bool {
         .and_then(|v| v.to_str().ok())
         .map(|c| c.split(';').any(|kv| kv.trim() == want))
         .unwrap_or(false)
+}
+
+/// Generate a random nonce for CSP headers.
+///
+/// Returns an unpredictable string suitable for use as a `script-src` nonce.
+/// Each page load gets a fresh nonce; the same nonce is written into the
+/// response's CSP header and the `<script nonce="…">` attribute so the page's
+/// own script runs but injected scripts do not.
+fn crypto_nonce() -> String {
+    ConversationId::generate().into_string()
 }
 
 /// CSP for the cockpit page.
@@ -995,14 +1014,11 @@ mod csp_tests {
     /// instead, and point at the delegation pattern that replaced them.
     #[test]
     fn test_page_has_no_inline_event_handlers() {
+        let re = regex::Regex::new(r"\bon\w+=").unwrap();
         let offenders: Vec<usize> = PAGE
             .lines()
             .enumerate()
-            .filter(|(_, l)| {
-                ["onclick=\"", "onchange=\"", "oninput=\"", "onsubmit=\"", "onload=\""]
-                    .iter()
-                    .any(|h| l.contains(h))
-            })
+            .filter(|(_, l)| re.is_match(l))
             .map(|(i, _)| i + 1)
             .collect();
         assert_eq!(
