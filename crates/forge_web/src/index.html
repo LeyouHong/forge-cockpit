@@ -962,7 +962,7 @@
     </aside>
   </div>
 
-  <script>
+  <script nonce="__CSP_NONCE__">
     const TOKEN = "__FORGE_TOKEN__";
     // Remove the token from the address bar so it doesn't linger in history /
     // shoulder-surfing. It stays in memory (JS) for API calls.
@@ -2811,11 +2811,15 @@
     }
     async function craftOpen(name) {
       CRAFT.cur = name; craftLoadList();
-      const d = await api('/api/craft?project=' + encodeURIComponent(CRAFT.project) + '&name=' + encodeURIComponent(name)).then((r) => r.json()).catch(() => null);
       $('craft-empty').style.display = 'none';
       $('craft-toolbar').style.display = 'flex';
       $('craft-cur-name').textContent = '🎨 ' + name;
-      $('craft-frame').srcdoc = (d && d.html) || '<p style="font-family:sans-serif;padding:20px">craft not ready</p>';
+      // Load the craft as its own document rather than srcdoc: an srcdoc frame
+      // inherits this page's CSP, under which the craft's inline script would
+      // be refused. /craft/view serves it with its own policy (inline script
+      // allowed, no network). The cache-buster makes a refined craft reload.
+      $('craft-frame').src = '/craft/view?project=' + encodeURIComponent(CRAFT.project)
+        + '&name=' + encodeURIComponent(name) + '&v=' + Date.now();
     }
     $('craft-new').onclick = async () => {
       if (!CRAFT.project) return;
@@ -2834,7 +2838,7 @@
     $('craft-del').onclick = async () => {
       if (!CRAFT.cur || !(await uiConfirm('Delete craft "' + CRAFT.cur + '"?', { confirmText: 'Delete', danger: true }))) return;
       await api('/api/craft/delete', plBody({ b: { project: CRAFT.project, name: CRAFT.cur } }));
-      CRAFT.cur = null; $('craft-toolbar').style.display = 'none'; $('craft-frame').srcdoc = ''; $('craft-empty').style.display = ''; craftLoadList();
+      CRAFT.cur = null; $('craft-toolbar').style.display = 'none'; $('craft-frame').src = 'about:blank'; $('craft-empty').style.display = ''; craftLoadList();
     };
 
     /* ---------- usage analytics ---------- */
@@ -3414,13 +3418,22 @@
         return e;
       }).join('\n');
     }
+    // The File/Diff buttons are rebuilt inside tm-code-view on every render, so
+    // they are handled by delegation rather than per-button listeners.
+    document.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-code-rel]');
+      if (b) tmShowCode(b.getAttribute('data-code-rel'), true, b.getAttribute('data-code-mode'));
+    });
     async function tmShowCode(rel, changed, mode) {
       mode = mode || 'file';
       const view = $('tm-code-view'); view.innerHTML = '<span class="sl">…</span>';
       let bar = '';
       if (changed) {
-        bar = '<div style="margin-bottom:6px"><button class="btn btn-sm' + (mode === 'file' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'file\')">File</button> ' +
-              '<button class="btn btn-sm' + (mode === 'diff' ? ' btn-primary' : '') + '" onclick="tmShowCode(\'' + rel.replace(/'/g, "\\'") + '\', true, \'diff\')">Diff</button></div>';
+        // Inline handlers cannot carry the CSP nonce, so these dispatch through
+        // the delegated listener below. It also drops the old habit of splicing
+        // a file path into an HTML attribute.
+        bar = '<div style="margin-bottom:6px"><button class="btn btn-sm' + (mode === 'file' ? ' btn-primary' : '') + '" data-code-rel="' + escapeHtml(rel) + '" data-code-mode="file">File</button> ' +
+              '<button class="btn btn-sm' + (mode === 'diff' ? ' btn-primary' : '') + '" data-code-rel="' + escapeHtml(rel) + '" data-code-mode="diff">Diff</button></div>';
       }
       if (mode === 'diff') {
         const dd = await api('/api/team/diff?project=' + encodeURIComponent(TEAM.project) + '&files=' + encodeURIComponent(rel)).then((r) => r.json()).catch(() => ({ diff: '' }));
@@ -3900,7 +3913,7 @@
       for (const st of (d.stats || [])) {
         const t = document.createElement(st.url ? 'a' : 'div'); t.className = 'stat-tile';
         if (st.url) { t.href = st.url; t.target = '_blank'; t.rel = 'noopener'; }
-        t.innerHTML = '<div class="sv">' + (st.value != null ? st.value : 0) + escapeHtml(st.suffix || '') + '</div><div class="sl">' + escapeHtml(st.label || '') + '</div>';
+        t.innerHTML = '<div class="sv">' + escapeHtml(String(st.value != null ? st.value : 0)) + escapeHtml(st.suffix || '') + '</div><div class="sl">' + escapeHtml(st.label || '') + '</div>';
         tiles.appendChild(t);
       }
     }
