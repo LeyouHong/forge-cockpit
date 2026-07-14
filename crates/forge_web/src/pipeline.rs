@@ -472,10 +472,15 @@ pub(crate) async fn team_run<A: API>(
     }
     let _ = std::fs::remove_file(ws.join(".team-status.json"));
     // Reset the board too: drop old requests so the Done column starts empty
-    // for this run (their record lived on the previous session).
-    if let Ok(entries) = std::fs::read_dir(ws.join("requests")) {
+    // for this run (their record lived on the previous session). Requests live
+    // as `<ws>/<req-id>/request.yml` directly under the workspace root — only
+    // dirs actually containing a request.yml are removed, so pipelines/,
+    // messages/, .team-terminal/ etc. are untouched.
+    if let Ok(entries) = std::fs::read_dir(&ws) {
         for e in entries.flatten() {
-            let _ = std::fs::remove_dir_all(e.path());
+            if e.path().join("request.yml").exists() {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
         }
     }
     if let Ok(entries) = std::fs::read_dir(ws.join(".team-logs")) {
