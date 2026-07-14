@@ -872,8 +872,17 @@ fn ensure_member_terminal(cfg: &Cfg, member: &TeamMember, name: &str) -> anyhow:
             member.id,
             if resume { "resumed session" } else { "new session" }
         );
-        // Give the TUI a startup beat before the first paste lands.
-        std::thread::sleep(Duration::from_secs(5));
+    }
+    // Wait for the CLI to actually accept input, answering one-time startup
+    // dialogs (bypass-permissions acceptance, folder trust) on the way. A
+    // blind sleep pastes the prompt into a dialog, where Enter picks "No,
+    // exit" and kills the pane — planners then "time out" doing nothing.
+    if !terminal::await_ready(name, Duration::from_secs(60)) {
+        anyhow::bail!(
+            "member `{}`'s terminal exited during startup — check `sh {}/.team-terminal/{name}.sh` by hand",
+            member.id,
+            cfg.workspace.display()
+        );
     }
     Ok(())
 }
