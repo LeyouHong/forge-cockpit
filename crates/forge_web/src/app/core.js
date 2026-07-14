@@ -4,6 +4,12 @@ let conversationId = null;
 let streaming = false;
 let pendingImages = [];
 
+// CSP violation reporter: logs violations so a developer inspecting the
+// console can see when the policy blocks something unexpected.
+document.addEventListener('securitypolicyviolation', (e) => {
+  console.warn('CSP violation:', e.violatedDirective, e.blockedURI, e.sample);
+});
+
 // Every API call carries the per-run bearer token. Using a custom header
 // (rather than a cookie) also blocks cross-origin CSRF, since the browser
 // won't let other pages set it without a CORS grant we never issue.
@@ -76,7 +82,7 @@ function confirmModal({ title, body, confirmText = 'Delete', hideCancel = false,
 
 /* ---------- tiny markdown renderer (XSS-safe: escapes before formatting) ---------- */
 function escapeHtml(s) {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // Compact, language-agnostic syntax highlighter. Tokenizes the raw code and
