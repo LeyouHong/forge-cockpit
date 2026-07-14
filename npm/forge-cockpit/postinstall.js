@@ -7,6 +7,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { version } = require('./package.json');
 
 const REPO = 'LeyouHong/forge-cockpit';
@@ -50,6 +51,7 @@ async function main() {
       fs.writeFileSync(dest, buf);
       if (!isWin) fs.chmodSync(dest, 0o755);
       console.log('done.');
+      smokeTest(dest);
       return;
     } catch (e) {
       lastErr = e;
@@ -63,6 +65,26 @@ async function main() {
       `Manual: download ${url} to ${dest}`
   );
   // Non-fatal: leave the launcher to report a clear error if run without a binary.
+}
+
+// Verify the downloaded binary actually runs on this system. Without this,
+// install "succeeds" and the failure only surfaces at first run — e.g. a
+// binary needing a newer glibc than the host provides (issue #10).
+function smokeTest(bin) {
+  try {
+    execFileSync(bin, ['--version'], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = String((e && e.stderr) || (e && e.message) || e);
+    console.error(`forge-cockpit: the downloaded binary does not run on this system.\n${msg.trim()}`);
+    if (msg.includes('GLIBC_')) {
+      console.error(
+        'forge-cockpit: your glibc is older than the binary requires (Linux builds need glibc >= 2.35, i.e. Ubuntu 22.04+ / Debian 12+).\n' +
+          `forge-cockpit: you can build from source instead: https://github.com/${REPO}#build-from-source`
+      );
+    }
+    fs.rmSync(bin, { force: true });
+    process.exit(1); // fail the install: a "successful" install with an unusable CLI is worse
+  }
 }
 
 main().catch((e) => {
