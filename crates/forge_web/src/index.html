@@ -845,8 +845,6 @@
       <button class="btn btn-sm" id="tm-export" title="Download this team (members, SOPs, connections, layout) as YAML">📤 Export</button>
       <button class="btn btn-sm" id="tm-import" title="Load a team YAML — replaces this project's team (validated first)">📂 Import</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
-      <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
-      <button class="btn btn-sm" id="tm-allterm" title="Toggle the WHOLE team between resident terminals (tmux + Claude Code on your subscription — no provider API key) and forge subprocess agents (provider API). Per-member overrides live in each member's editor.">⌨ All Terminal</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
     </div>
@@ -862,6 +860,7 @@
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
           <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
+          <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
           <span id="tm-mode-note" class="sl" style="margin-left:8px"></span>
         </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
@@ -3702,32 +3701,18 @@
     }
     $('tm-watches').onclick = tmOpenWatches;
     // ── One-click: whole team ↔ resident terminals ──
+    // Mode note under the tabs. Terminal is the default; the note states the
+    // fact instead of offering a header toggle — per-member opt-out (forge
+    // API subprocess) lives in each member's editor.
     function tmSyncAllTermBtn() {
       const ms = (TEAM.cfg && TEAM.cfg.members) || [];
       const on = ms.filter((m) => m.terminal).length;
-      const allOn = ms.length > 0 && on === ms.length;
-      $('tm-allterm').textContent = allOn ? '⌨ All Terminal ✓' : '⌨ All Terminal';
       const note = $('tm-mode-note');
       if (!ms.length) { note.textContent = ''; }
-      else if (allOn) { note.textContent = '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'; }
-      else if (on === 0) { note.textContent = 'all agents run as forge API agents — ⌨ All Terminal switches the team to your Claude subscription'; }
+      else if (on === ms.length) { note.textContent = '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'; }
+      else if (on === 0) { note.textContent = 'all agents run as forge API agents (provider key) — check "terminal" in a member\'s editor to use your Claude subscription'; }
       else { note.textContent = '⌨ ' + on + '/' + ms.length + ' agents on resident terminals; the rest use forge API agents'; }
     }
-    $('tm-allterm').onclick = async () => {
-      const ms = (TEAM.cfg && TEAM.cfg.members) || [];
-      if (!TEAM.project || !ms.length) { alert('pick a project with a team first'); return; }
-      const allOn = ms.every((m) => m.terminal);
-      const q = allOn
-        ? 'Switch ALL ' + ms.length + ' members back to forge subprocess agents (provider API key)?'
-        : 'Switch ALL ' + ms.length + ' members to resident terminals (tmux + Claude Code on your subscription)? Requires tmux and a logged-in claude CLI.';
-      if (!(await uiConfirm(q, { confirmText: allOn ? 'Use API agents' : 'Use terminals' }))) return;
-      ms.forEach((m) => { m.terminal = !allOn; });
-      if (await tmSaveConfig()) {
-        $('tm-status').textContent = allOn ? '✓ team on forge API agents' : '✓ team on resident terminals';
-        $('tm-status').style.color = '';
-        loadTeam(); tmSyncAllTermBtn();
-      }
-    };
     // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
     let xtermReady = null;
     function loadXterm() {
