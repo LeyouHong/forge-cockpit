@@ -29,6 +29,7 @@
   },
   "files": [
     "bin/forge-cockpit.js",
+    "platforms.js",
     "postinstall.js",
     "README.md"
   ],
