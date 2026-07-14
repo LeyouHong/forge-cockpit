@@ -1,6 +1,5 @@
 ---
 source: crates/forge_domain/src/tools/catalog.rs
-assertion_line: 1315
 expression: tools
 ---
 {
@@ -426,6 +425,11 @@ expression: tools
       "type": "integer",
       "format": "uint64",
       "minimum": 0,
+      "nullable": true
+    },
+    "use_mcp": {
+      "description": "When true, agent nodes run with the user's FULL MCP config (Gmail,\nSlack, …) instead of the isolated workspace-only MCP. Set this only for\npipelines that must reach the user's connected tools — e.g. sending an\nemail. Default false = isolated (faster, no external side effects).",
+      "type": "boolean",
       "nullable": true
     }
   },

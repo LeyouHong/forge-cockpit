@@ -722,6 +722,14 @@ pub struct PipelineRun {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_timeout_secs: Option<u64>,
+
+    /// When true, agent nodes run with the user's FULL MCP config (Gmail,
+    /// Slack, …) instead of the isolated workspace-only MCP. Set this only for
+    /// pipelines that must reach the user's connected tools — e.g. sending an
+    /// email. Default false = isolated (faster, no external side effects).
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_mcp: Option<bool>,
 }
 
 /// A single todo item sent by the model.

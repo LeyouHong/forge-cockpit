@@ -103,6 +103,7 @@ impl PipelineService for ForgePipelineService {
         dir: PathBuf,
         inputs: BTreeMap<String, String>,
         node_timeout: Duration,
+        use_mcp: bool,
     ) -> anyhow::Result<PipelineRunOutput> {
         let pipelines_dir = self.pipelines_dir();
         let ws = self.runs_workspace();
@@ -125,7 +126,14 @@ impl PipelineService for ForgePipelineService {
                 .parent()
                 .map(|d| d.join("forge-workspace-mcp"))
                 .unwrap_or_else(|| PathBuf::from("forge-workspace-mcp"));
-            let home = engine::setup_isolated_home(&ws, &mcp_bin).ok();
+            // Default: isolate to the workspace-only MCP (fast, no side effects).
+            // use_mcp keeps the user's real FORGE_CONFIG so agent nodes reach
+            // their connected tools (Gmail/Slack/…) — needed to e.g. send email.
+            let home = if use_mcp {
+                None
+            } else {
+                engine::setup_isolated_home(&ws, &mcp_bin).ok()
+            };
 
             let mut input = inputs;
             for (k, d) in &wf.input_defaults {
@@ -211,7 +219,7 @@ mod tests {
         let mut inputs = BTreeMap::new();
         inputs.insert("greeting".to_string(), "HELLO".to_string());
         let run = svc
-            .run_pipeline("smoke.yaml".to_string(), target, inputs, Duration::from_secs(30))
+            .run_pipeline("smoke.yaml".to_string(), target, inputs, Duration::from_secs(30), false)
             .await
             .unwrap();
         assert_eq!(run.status, "done");
@@ -227,13 +235,13 @@ mod tests {
         let dir = tmp.path().to_path_buf();
 
         let err = svc
-            .run_pipeline("../evil.yaml".into(), dir.clone(), BTreeMap::new(), Duration::from_secs(5))
+            .run_pipeline("../evil.yaml".into(), dir.clone(), BTreeMap::new(), Duration::from_secs(5), false)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("invalid pipeline name"));
 
         let err = svc
-            .run_pipeline("nope.yaml".into(), dir, BTreeMap::new(), Duration::from_secs(5))
+            .run_pipeline("nope.yaml".into(), dir, BTreeMap::new(), Duration::from_secs(5), false)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no such pipeline"));

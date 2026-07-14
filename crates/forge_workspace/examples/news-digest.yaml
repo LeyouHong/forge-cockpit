@@ -1,0 +1,104 @@
+# Topic-parametrized news digest → HTML email with images, sent via Gmail.
+# Install: cp crates/forge_workspace/examples/news-digest.yaml ~/.forge-web/pipelines/
+#
+# From the web UI: open this pipeline, click Run, TICK "use my connected MCP
+# tools" (so the agent node can reach Gmail), set topic + to, Go.
+#
+# From the CLI (do NOT pass --isolate-mcp — the agent needs your real Gmail MCP):
+#   forge-pipeline run ~/.forge-web/pipelines/news-digest.yaml \
+#       --input topic="AI chips" --input to=you@example.com --project .
+#
+# Requires: `curl` (headline seed) + a connected Gmail MCP (send_email).
+# The forge agent's built-in `net_fetch` handles per-article images — no MCP
+# needed for that part. IMPORTANT: run with node_timeout_secs 900 — fetching
+# several article pages for their images takes time.
+description: |
+  Builds and emails a news digest for any TOPIC. A shell node pulls the current
+  top headlines for the topic from Google News RSS (real, live links), then an
+  agent node reads a handful of the articles with its built-in net_fetch tool,
+  grabs each one's cover image (og:image), lays them out as a clean responsive
+  HTML email (image + headline + source + one-line summary per story), and sends
+  it to the given address via the Gmail MCP send_email tool. Honest by design:
+  only real, retrieved image URLs are embedded — never fabricated — so a story
+  with no findable image simply renders text-only. Change the topic per run to
+  get a different beat (e.g. "AI chips", "climate policy", "F1"). MUST run with
+  MCP enabled (web UI: tick "use my connected MCP tools"; CLI: no --isolate-mcp)
+  so the agent can actually send the mail.
+
+input:
+  topic:
+    default: "AI"
+    description: News topic to search for (e.g. "AI chips", "climate policy")
+  to:
+    default: "leyouhong1991@gmail.com"
+    description: Recipient email address
+
+name: news-digest
+
+nodes:
+  headlines:
+    mode: shell
+    outputs:
+      - extract: result
+        name: items
+    prompt: |
+      set -euo pipefail
+      # URL-encode the topic (spaces + a few common metacharacters).
+      Q="$(printf '%s' "{{input.topic}}" | sed -e 's/ /%20/g' -e 's/&/%26/g' -e 's/#/%23/g')"
+      URL="https://news.google.com/rss/search?q=${Q}&hl=en-US&gl=US&ceid=US:en"
+      # Emit up to ~12 recent items as: TITLE | LINK | PUBDATE, newest first.
+      curl -s --max-time 20 "$URL" \
+        | tr '\n' ' ' \
+        | sed 's/<item>/\n<item>/g' \
+        | grep '<item>' \
+        | head -12 \
+        | sed -E 's#.*<title>(.*)</title>.*<link>(.*)</link>.*<pubDate>(.*)</pubDate>.*#\1 | \2 | \3#' \
+        | sed -e 's/<[^>]*>//g' -e 's/&amp;/\&/g' -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g'
+
+  digest:
+    depends_on:
+      - headlines
+    outputs:
+      - extract: result
+        name: report
+    prompt: |
+      You are a news editor. Build a compact, good-looking HTML email digest for
+      the topic "{{input.topic}}" and SEND it, then report what you sent.
+
+      Here are the current top headlines (TITLE | LINK | PUBDATE), newest first:
+      ---
+      {{nodes.headlines.outputs.items}}
+      ---
+
+      ## Steps
+      1. Pick the 5–6 most newsworthy, distinct stories (drop duplicates and the
+         two Google-News boilerplate title rows if present).
+      2. For each chosen story, use your `net_fetch` tool to open its link and
+         pull: a one-sentence factual summary, the source/publisher name, and the
+         article's cover image — the `og:image` (or `twitter:image`) URL from the
+         page `<head>`. Follow redirects. If a page won't load or has no image,
+         keep the story but render it text-only. NEVER invent an image URL or a
+         summary — only use what you actually retrieved.
+      3. Compose ONE self-contained HTML email body:
+         - A header: "📰 {{input.topic}} — <today's date>".
+         - One card per story: the cover image as
+           `<img src="…" style="max-width:100%;border-radius:8px">` (omit the
+           tag entirely if you have no real image), then the headline as a link
+           `<a href="LINK">TITLE</a>`, the source + time in small grey text, and
+           the one-line summary.
+         - Inline CSS only (email clients strip <style>/external CSS). Use a
+           max-width ~600px centered container, system font stack, generous
+           spacing. Make it render well on mobile (max-width:100% images).
+         - A small footer: "Sent by forge-cockpit · news-digest pipeline".
+      4. Send it with the Gmail MCP `send_email` tool:
+         - to: {{input.to}}
+         - subject: "📰 {{input.topic}} news — <today's date>"
+         - Send the HTML as an HTML body (use the tool's `htmlBody` field if it
+           has one; otherwise set the body's mime type to text/html). Do NOT send
+           the raw HTML as plain text.
+      5. After sending, output a SHORT plain-text confirmation: the recipient,
+         the subject, and a numbered list of the stories included (headline +
+         source), and note how many had images. If the send failed, say so and
+         paste the tool error — do not pretend it succeeded.
+
+vars: {}
