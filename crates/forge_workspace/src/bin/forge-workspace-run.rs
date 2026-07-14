@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use forge_workspace::message::{self, Category};
 use forge_workspace::request::{self, RequestDocument, RequestStatus};
 use forge_workspace::team::{self, Stage, TeamConfig, TeamMember};
+use forge_workspace::terminal;
 use serde_json::json;
 
 const ENGINEER_SOP: &str = include_str!("../../roles/engineer.md");
@@ -73,6 +74,10 @@ struct Tracker {
 struct State {
     running: HashSet<String>,
     trackers: HashMap<String, Tracker>,
+    /// Terminal-resident members currently working a request. A resident
+    /// terminal is one pane — it can only take one prompt at a time, so other
+    /// requests for the same member wait (without burning stuck-attempts).
+    busy_members: HashSet<String>,
 }
 
 struct Cfg {
@@ -316,9 +321,13 @@ fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocu
             Some(r) => ("working", Some(r.clone())),
             None => ("idle", None),
         };
+        // For resident-terminal members, expose the live tmux session (when it
+        // exists) so the UI can offer `tmux attach -t <session>`.
+        let tmux = (m.terminal && terminal::has_session(&terminal::session_name(&m.id)))
+            .then(|| terminal::session_name(&m.id));
         out.insert(
             m.id.clone(),
-            serde_json::json!({ "status": status, "request": request, "has_log": has_log }),
+            serde_json::json!({ "status": status, "request": request, "has_log": has_log, "terminal": tmux }),
         );
     }
     let path = cfg.workspace.join(".team-status.json");
@@ -369,9 +378,19 @@ fn run() -> anyhow::Result<()> {
         team: team_cfg,
     };
 
+    // Terminal-resident members need tmux, and they read the project's
+    // .mcp.json (Claude Code's config), not FORGE_CONFIG — so the workspace
+    // MCP must land there even under --isolate-mcp.
+    let has_terminal = cfg.team.members.iter().any(|m| m.terminal);
+    if has_terminal && !cfg.dry_run && !terminal::tmux_available() {
+        anyhow::bail!(
+            "the team has terminal-resident members (terminal: true) but tmux is not installed / not on PATH"
+        );
+    }
+
     // With an isolated base_path the workspace MCP is provided there; otherwise
     // inject it into the project's .mcp.json (which merges with the global one).
-    if cfg.home.is_none() {
+    if cfg.home.is_none() || has_terminal {
         ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
     }
     println!(
@@ -395,7 +414,11 @@ fn run() -> anyhow::Result<()> {
         }
     }
 
-    let state = Arc::new(Mutex::new(State { running: HashSet::new(), trackers: HashMap::new() }));
+    let state = Arc::new(Mutex::new(State {
+        running: HashSet::new(),
+        trackers: HashMap::new(),
+        busy_members: HashSet::new(),
+    }));
     let cfg = Arc::new(cfg);
     let mut idle_since: Option<Instant> = None;
 
@@ -442,6 +465,13 @@ fn run() -> anyhow::Result<()> {
                     continue;
                 }
 
+                // One prompt at a time per resident terminal: like the
+                // concurrency gate above, waiting for the member's pane is not
+                // failure, so no attempt is consumed.
+                if member.terminal && st.busy_members.contains(&member.id) {
+                    continue;
+                }
+
                 // This request gets a turn. Consume an attempt; park it (once) if
                 // it has burned its budget without the status ever advancing.
                 let attempts = {
@@ -477,6 +507,9 @@ fn run() -> anyhow::Result<()> {
                     if cfg.dry_run { " (dry-run)" } else { "" }
                 );
                 st.running.insert(req.id.clone());
+                if member.terminal {
+                    st.busy_members.insert(member.id.clone());
+                }
                 spawn_agent(cfg.clone(), state.clone(), req.clone(), member, covering);
             }
         }
@@ -630,6 +663,10 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
          tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now.",
         id = m.id
     );
+    if m.terminal {
+        run_terminal_planner(cfg, m, &prompt);
+        return;
+    }
     let mut cmd = Command::new(&cfg.forge);
     cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
     cmd.arg("--conversation-id").arg(get_or_create_session(&cfg.workspace, &m.id));
@@ -646,6 +683,52 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
         }
     }
     let _ = cmd.status();
+}
+
+/// Planning through a resident terminal. Unlike work requests there is no
+/// status transition to watch — a planner's output is artifacts (PRD, design,
+/// board entries) — so completion is signalled over the message bus: the
+/// prompt asks the agent to message `orchestrator` with PLANNING-DONE, and we
+/// wait for that (bounded by the agent timeout).
+fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
+    let name = terminal::session_name(&m.id);
+    let prompt = format!(
+        "{prompt}\n\nIMPORTANT: when your planning work is completely finished, call send_message \
+         with to=`orchestrator` and a body starting with `PLANNING-DONE` — the pipeline waits for \
+         that signal before the next planner runs."
+    );
+    if let Err(e) = ensure_member_terminal(cfg, m, &name) {
+        eprintln!("  ! planner `{}` terminal: {e}", m.id);
+        return;
+    }
+    if let Err(e) = terminal::send_text(&name, &cfg.workspace, &prompt) {
+        eprintln!("  ! planner `{}` prompt injection failed: {e}", m.id);
+        return;
+    }
+    let deadline = Instant::now() + cfg.agent_timeout;
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        let done = message::get_inbox(&cfg.workspace, "orchestrator", true)
+            .unwrap_or_default()
+            .iter()
+            .any(|msg| msg.from.starts_with(&m.id) && msg.body.contains("PLANNING-DONE"));
+        if done {
+            break;
+        }
+        if Instant::now() >= deadline {
+            println!(
+                "  ⏱ planner `{}` sent no PLANNING-DONE within {}s — moving on.",
+                m.id,
+                cfg.agent_timeout.as_secs()
+            );
+            break;
+        }
+    }
+    if let Some(log) = open_member_log(&cfg.workspace, &m.id, "terminal planning") {
+        use std::io::Write;
+        let mut log = log;
+        let _ = writeln!(log, "{}", terminal::capture_pane(&name));
+    }
 }
 
 /// Spawn a role agent for a request on its own thread; clear `running` when done.
@@ -680,6 +763,11 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
                 req.id,
                 role = member.id
             );
+            if member.terminal {
+                timed_out = run_terminal_request(&cfg, &req, &member, &prompt);
+                finish_agent(&state, &req.id, &member, timed_out);
+                return;
+            }
             let mut cmd = Command::new(&cfg.forge);
             cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
             let agent = if !member.agent.trim().is_empty() { Some(member.agent.clone()) } else { cfg.agents.get(&member.id).cloned() };
@@ -727,14 +815,93 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
             // Simulate a session that does nothing (so stuck detection can be tested).
             std::thread::sleep(Duration::from_millis(200));
         }
-        let mut guard = state.lock().unwrap();
-        if timed_out {
-            if let Some(t) = guard.trackers.get_mut(&req.id) {
-                t.timeouts += 1;
-            }
-        }
-        guard.running.remove(&req.id);
+        finish_agent(&state, &req.id, &member, timed_out);
     });
+}
+
+/// Release the request's slot (and the member's pane, for terminal members).
+fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, timed_out: bool) {
+    let mut guard = state.lock().unwrap();
+    if timed_out {
+        if let Some(t) = guard.trackers.get_mut(req_id) {
+            t.timeouts += 1;
+        }
+    }
+    guard.running.remove(req_id);
+    if member.terminal {
+        guard.busy_members.remove(&member.id);
+    }
+}
+
+/// Drive one request through a terminal-resident member: make sure its tmux
+/// pane is alive, paste the prompt, then watch the board until the request
+/// leaves the member's stage (the agent submits through the workspace MCP) or
+/// the timeout passes. Returns true on timeout. The pane itself is never
+/// killed — it is the member's resident session, and a human may be attached.
+fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, prompt: &str) -> bool {
+    let name = terminal::session_name(&member.id);
+    if let Err(e) = ensure_member_terminal(cfg, member, &name) {
+        eprintln!("  ! {} terminal `{name}`: {e}", req.id);
+        return false;
+    }
+    if let Err(e) = terminal::send_text(&name, &cfg.workspace, prompt) {
+        eprintln!("  ! {} terminal `{name}` prompt injection failed: {e}", req.id);
+        return false;
+    }
+    let start_stage = stage_for(req.status);
+    let deadline = Instant::now() + cfg.agent_timeout;
+    let timed_out = loop {
+        std::thread::sleep(Duration::from_secs(2));
+        // Advanced = the request left this member's stage (done/rejected count).
+        // A same-stage transition (open → in_progress via claim) is the member
+        // still working, not a handoff — keep waiting.
+        let advanced = match request::get_request(&cfg.workspace, &req.id) {
+            Ok(Some((cur, _))) => !pending(&cur) || stage_for(cur.status) != start_stage,
+            Ok(None) => true, // request removed — nothing left to wait for
+            Err(_) => false,
+        };
+        if advanced {
+            break false;
+        }
+        if Instant::now() >= deadline {
+            println!(
+                "  ⏱ {} [{:?}] terminal member `{}` made no progress in {}s — freeing the slot; will retry.",
+                req.id,
+                req.status,
+                member.id,
+                cfg.agent_timeout.as_secs()
+            );
+            break true;
+        }
+    };
+    // The TUI's output can't be streamed like subprocess stdout — snapshot the
+    // visible pane into the member log instead.
+    if let Some(log) = open_member_log(&cfg.workspace, &member.id, &format!("terminal {}", req.id)) {
+        use std::io::Write;
+        let mut log = log;
+        let _ = writeln!(log, "{}", terminal::capture_pane(&name));
+    }
+    timed_out
+}
+
+/// Create (or revive) the member's resident tmux session. The conversation id
+/// doubles as the Claude Code session id, so a pane that died — reboot, crash,
+/// manual kill — comes back with `--resume` and keeps its memory.
+fn ensure_member_terminal(cfg: &Cfg, member: &TeamMember, name: &str) -> anyhow::Result<()> {
+    let session_id = get_or_create_session(&cfg.workspace, &member.id);
+    let resume = terminal::claude_session_exists(&session_id);
+    let cmd = terminal::launch_command(&member.terminal_cmd, &session_id, resume);
+    let created = terminal::ensure_session(name, &cfg.project, &cfg.workspace, &cmd)?;
+    if created {
+        println!(
+            "  ⌨ member `{}` resident terminal started ({}) — attach with: tmux attach -t {name}",
+            member.id,
+            if resume { "resumed session" } else { "new session" }
+        );
+        // Give the TUI a startup beat before the first paste lands.
+        std::thread::sleep(Duration::from_secs(5));
+    }
+    Ok(())
 }
 
 fn home_dir() -> PathBuf {

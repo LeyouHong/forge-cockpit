@@ -2913,6 +2913,7 @@ name = "forge_workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bstr",
  "chrono",
  "forge_domain",
  "pretty_assertions",

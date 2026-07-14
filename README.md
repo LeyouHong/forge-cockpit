@@ -127,6 +127,8 @@ Beyond chat, the cockpit ships a full orchestration stack — build reusable age
 
   <p align="center"><img src="docs/img/team.png" alt="Team — editable multi-agent canvas" width="900"></p>
 
+  Any member can instead run as a **resident terminal** (check *terminal* in the member editor): a persistent tmux session with an interactive CLI agent — **Claude Code by default, on its own subscription login, no provider API key**. The orchestrator drives it the way a human would (pastes the prompt, watches the board), the session keeps its memory across tasks via `--resume`, and you can join any member live with `tmux attach -t forge-team-<id>` (⌨ on its card copies the command). Requires `tmux` and the CLI agent installed and logged in.
+
 - **⏰ Schedules** — timed automation: a **trigger** (every N min / cron / once / manual) fires a **body** (a saved pipeline, or a one-shot agent prompt), then an optional **action** delivers the output (webhook/Slack or email). Run history with cleaned output tails.
 
   <p align="center"><img src="docs/img/schedules.png" alt="Schedules — timed automation" width="900"></p>
