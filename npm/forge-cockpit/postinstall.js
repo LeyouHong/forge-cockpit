@@ -9,32 +9,26 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { version } = require('./package.json');
-
-const REPO = 'LeyouHong/forge-cockpit';
-
-// host key -> release asset platform suffix
-const PLATFORMS = {
-  'darwin arm64': 'darwin-arm64',
-  'linux x64': 'linux-x64',
-  'linux arm64': 'linux-arm64',
-  'win32 x64': 'win32-x64',
-};
+const { REPO, BUILD_FROM_SOURCE, resolve } = require('./platforms');
 
 async function main() {
-  const key = `${process.platform} ${process.arch}`;
-  const suffix = PLATFORMS[key];
-  if (!suffix) {
-    console.warn(
-      `forge-cockpit: no prebuilt binary for "${key}". ` +
-        `Supported: ${Object.keys(PLATFORMS).join(', ')}. ` +
-        `You can still build from source: https://github.com/${REPO}#build-from-source`
+  const host = resolve();
+
+  // Unsupported host: fail the install. Returning quietly here left npm
+  // reporting success and the CLI erroring at first run with a *misleading*
+  // "install scripts were disabled" — sending users (notably Intel macOS and
+  // Alpine) into a reinstall loop that could never work.
+  if (!host.supported) {
+    console.error(
+      `forge-cockpit: ${host.reason}\n` +
+        `forge-cockpit: build from source instead: ${BUILD_FROM_SOURCE}`
     );
-    return; // don't hard-fail the install
+    process.exit(1);
   }
 
   const isWin = process.platform === 'win32';
   const ext = isWin ? '.exe' : '';
-  const asset = `forge-cockpit-${suffix}${ext}`;
+  const asset = `forge-cockpit-${host.suffix}${ext}`;
   const url = `https://github.com/${REPO}/releases/download/release-v${version}/${asset}`;
 
   const binDir = path.join(__dirname, 'bin');
@@ -78,8 +72,8 @@ function smokeTest(bin) {
     console.error(`forge-cockpit: the downloaded binary does not run on this system.\n${msg.trim()}`);
     if (msg.includes('GLIBC_')) {
       console.error(
-        'forge-cockpit: your glibc is older than the binary requires (Linux builds need glibc >= 2.35, i.e. Ubuntu 22.04+ / Debian 12+).\n' +
-          `forge-cockpit: you can build from source instead: https://github.com/${REPO}#build-from-source`
+        'forge-cockpit: your glibc is older than the binary requires (Linux builds need glibc >= 2.34, i.e. Ubuntu 22.04+ / Debian 12+).\n' +
+          `forge-cockpit: you can build from source instead: ${BUILD_FROM_SOURCE}`
       );
     }
     fs.rmSync(bin, { force: true });

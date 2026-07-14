@@ -7,17 +7,29 @@
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { BUILD_FROM_SOURCE, resolve } = require('../platforms');
 
 const exe = process.platform === 'win32' ? 'forge.exe' : 'forge';
 const bin = path.join(__dirname, exe);
 
 if (!fs.existsSync(bin)) {
-  console.error(
-    'forge-cockpit: the binary was not downloaded.\n' +
-      'This usually means install scripts were disabled. Reinstall with scripts enabled:\n' +
-      '  npm install -g forge-cockpit\n' +
-      'or build from source: https://github.com/LeyouHong/forge-cockpit#build-from-source'
-  );
+  // Two very different causes, and telling them apart matters: advising someone
+  // on an unsupported host to "reinstall with scripts enabled" is a loop that
+  // can never succeed. Name the real reason.
+  const host = resolve();
+  if (!host.supported) {
+    console.error(
+      `forge-cockpit: ${host.reason}\n` +
+        `forge-cockpit: build from source: ${BUILD_FROM_SOURCE}`
+    );
+  } else {
+    console.error(
+      'forge-cockpit: the binary was not downloaded.\n' +
+        'This usually means install scripts were disabled. Reinstall with scripts enabled:\n' +
+        '  npm install -g forge-cockpit\n' +
+        `or build from source: ${BUILD_FROM_SOURCE}`
+    );
+  }
   process.exit(1);
 }
 

@@ -30,6 +30,10 @@ jobs:
       matrix:
         include:
           - { os: macos-14,         target: aarch64-apple-darwin,      pkg: darwin-arm64, npm_os: darwin, npm_cpu: arm64 }
+          # macos-13 is the last Intel runner. Without this row there is no
+          # darwin-x64 asset, and Intel Mac users get an install that "succeeds"
+          # and a CLI that can never run.
+          - { os: macos-13,         target: x86_64-apple-darwin,       pkg: darwin-x64,   npm_os: darwin, npm_cpu: x64 }
           # Linux runners are pinned to ubuntu-22.04 (glibc 2.35) so the
           # binaries run on Ubuntu 22.04 LTS and anything newer; ubuntu-latest
           # (24.04, glibc 2.39) yields binaries that fail there (issue #10).

@@ -17,9 +17,10 @@ npm install -g forge-cockpit
 npx forge-cockpit --help
 ```
 
-On install, the prebuilt binary for your platform (macOS arm64, Linux x64/arm64,
-Windows x64) is downloaded from the matching GitHub Release — nothing is compiled
-on your machine. (Install with scripts enabled, i.e. not `--ignore-scripts`.)
+On install, the prebuilt binary for your platform (macOS arm64/x64, Linux
+x64/arm64, Windows x64) is downloaded from the matching GitHub Release — nothing
+is compiled on your machine. (Install with scripts enabled, i.e. not
+`--ignore-scripts`.)
 
 ## Bring your own key
 
@@ -79,7 +80,10 @@ Full documentation, architecture, and build-from-source instructions:
 ## Notes
 
 - **Linux:** the binary dynamically links OpenSSL (`libssl`) for IMAP email
-  support; present on virtually all distros (`libssl3` if missing).
-- **Intel Mac (x64):** no prebuilt binary yet — build from source.
+  support; present on virtually all distros (`libssl3` if missing). Builds are
+  glibc-linked and need **glibc >= 2.34** (Ubuntu 22.04+ / Debian 12+).
+- **Alpine / musl:** not supported — use a glibc image (`node:20-slim`, `debian`,
+  `ubuntu`) or build from source. Install fails fast rather than leaving you with
+  a binary that cannot run.
 - License: Apache-2.0. A community fork; "Forge" and "forgecode" are trademarks
   of their respective owners, and this package is not affiliated with them.
