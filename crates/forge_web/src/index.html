@@ -541,7 +541,12 @@
     .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
     .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
     .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
-    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28), 0 0 18px rgba(59,130,246,.35); animation: tm-pulse 1.8s ease-in-out infinite; }
+    @keyframes tm-pulse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(59,130,246,.28), 0 0 14px rgba(59,130,246,.28); }
+      50%      { box-shadow: 0 0 0 3px rgba(59,130,246,.45), 0 0 26px rgba(59,130,246,.5); }
+    }
+    @media (prefers-reduced-motion: reduce) { .tm-card.active { animation: none; } }
     .tm-card .th { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
     .tm-card .th .ico { font-size: 16px; }
     .tm-card .th .nm { font-weight: 700; }
@@ -3243,7 +3248,9 @@
       const meta = TM_STAGES[m.stage] || TM_STAGES.implement;
       const pos = tmPos(m.id, i);
       const mine = reqs.filter((r) => meta.statuses.includes(r.status));
-      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
+      const st0 = (TEAM.status || {})[m.id];
+      const working = (st0 && st0.status === 'working')
+        || mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
       const inbox = msgs.filter((x) => x.to === m.id + '-1' && !x.read && x.category === 'ticket').length;
       const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + m.id;
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
@@ -3285,7 +3292,9 @@
       const tb = document.createElement('div'); tb.className = 'tb';
       if (m.stage === 'plan') {
         const d = document.createElement('div'); d.className = 'rq';
-        d.textContent = (m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc;
+        d.textContent = (st0 && st0.request === 'planning')
+          ? '⏳ planning…'
+          : ((m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc);
         tb.appendChild(d);
       } else if (!mine.length) {
         const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n);

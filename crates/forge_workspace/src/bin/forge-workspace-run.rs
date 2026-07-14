@@ -324,6 +324,24 @@ fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocu
             }
         }
     }
+    write_status_file(cfg, &working, &paused);
+}
+
+/// A plan-stage member works before the board exists, so it can never appear in
+/// the request-derived `working` map — mark it working explicitly, otherwise
+/// planners look idle for the minutes they are actually the only ones running.
+fn write_planning_status(cfg: &Cfg, planner: Option<&str>) {
+    let paused = team::load_paused(&cfg.workspace);
+    let mut working: HashMap<String, String> = HashMap::new();
+    if let Some(id) = planner {
+        working.insert(id.to_string(), "planning".to_string());
+    }
+    write_status_file(cfg, &working, &paused);
+}
+
+/// `<workspace>/.team-status.json` — per-member `{status, request}` plus the
+/// live tmux session and pause flag. Read by the Team page.
+fn write_status_file(cfg: &Cfg, working: &HashMap<String, String>, paused: &HashSet<String>) {
     let mut out = serde_json::Map::new();
     for m in &cfg.team.members {
         let has_log = member_log_path(&cfg.workspace, &m.id).exists();
@@ -733,7 +751,9 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
          tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now.",
         id = m.id
     );
+    write_planning_status(cfg, Some(&m.id));
     run_terminal_planner(cfg, m, &prompt);
+    write_planning_status(cfg, None);
 }
 
 /// Planning through a resident terminal. Unlike work requests there is no
