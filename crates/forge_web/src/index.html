@@ -3733,7 +3733,13 @@
       const fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit); term.open(body); fit.fit(); term.focus();
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(proto + '://' + location.host + '/ws/terminal?token=' + encodeURIComponent(TOKEN) + '&session=' + encodeURIComponent(sessionName));
+      // The token rides in the subprotocol list, not the URL: a WebSocket URL
+      // shows up in devtools and proxy logs, and this one grants a shell. The
+      // server checks it and selects 'forge-terminal', never echoing it back.
+      const ws = new WebSocket(
+        proto + '://' + location.host + '/ws/terminal?session=' + encodeURIComponent(sessionName),
+        ['forge-terminal', TOKEN]
+      );
       ws.binaryType = 'arraybuffer';
       const sendResize = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows })); };
       ws.onopen = sendResize;

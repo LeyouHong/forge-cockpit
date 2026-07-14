@@ -249,6 +249,32 @@ fn css(body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], body).into_response()
 }
 
+/// Locks a mutex, recovering from poisoning rather than propagating the panic.
+///
+/// Every mutex in this crate guards plain data — a schedule file, a task log, an
+/// abort handle — with no invariant a panicking thread could leave half-updated.
+/// `lock().unwrap()` would turn one panicking request into a permanently broken
+/// panel: the mutex stays poisoned, so *every later request* panics too. The
+/// process-wide `schedule::LOCK` made that especially costly. Continuing with
+/// the data we have is strictly better than that cascade.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Compares two secrets without leaking their common prefix length via timing.
+///
+/// The token gates command execution on the host, and a page in the user's
+/// browser can hammer these endpoints cross-origin. A short-circuiting `==` is
+/// almost certainly not exploitable across 122 bits of UUID, but this costs one
+/// XOR per byte and removes the question.
+pub(crate) fn secret_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// Middleware that enforces the bearer token on `/api/*` routes.
 async fn auth<A>(
     State(state): State<AppState<A>>,
@@ -261,7 +287,7 @@ async fn auth<A>(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
 
-    if provided == Some(state.token.as_str()) {
+    if provided.is_some_and(|p| secret_eq(p, &state.token)) {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::UNAUTHORIZED)
@@ -291,7 +317,7 @@ async fn index<A>(
     let cookie_ok = headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
-        .map(|c| c.split(';').any(|kv| kv.trim() == want))
+        .map(|c| c.split(';').any(|kv| secret_eq(kv.trim(), &want)))
         .unwrap_or(false);
     if !query_ok && !cookie_ok {
         return (
@@ -877,6 +903,7 @@ async fn delete_mcp<A: API>(
 }
 
 /// Error wrapper that renders as a JSON error response.
+#[derive(Debug)]
 pub(crate) struct AppError {
     status: StatusCode,
     message: String,
@@ -904,5 +931,43 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (self.status, Json(json!({ "error": self.message }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_secret_eq_matches_only_the_exact_secret() {
+        assert_eq!(secret_eq("abc123", "abc123"), true);
+        assert_eq!(secret_eq("abc123", "abc124"), false);
+        // A prefix must not pass: length is checked before the byte compare.
+        assert_eq!(secret_eq("abc", "abc123"), false);
+        assert_eq!(secret_eq("abc123", "abc"), false);
+        assert_eq!(secret_eq("", ""), true);
+    }
+
+    /// One panicking request used to poison a mutex for the rest of the run,
+    /// so every later request panicked too. `lock` must get in anyway.
+    #[test]
+    fn test_lock_recovers_from_a_poisoned_mutex() {
+        let m = Arc::new(std::sync::Mutex::new(41));
+
+        let m2 = m.clone();
+        let poisoner = std::thread::spawn(move || {
+            let _held = m2.lock().unwrap();
+            panic!("poison the mutex while holding it");
+        });
+        assert_eq!(poisoner.join().is_err(), true);
+
+        // Genuinely poisoned — the plain API refuses.
+        assert_eq!(m.lock().is_err(), true);
+
+        // ...and ours still works, so the panel keeps serving.
+        *lock(&m) += 1;
+        assert_eq!(*lock(&m), 42);
     }
 }

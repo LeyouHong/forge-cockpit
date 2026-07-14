@@ -99,7 +99,7 @@ fn finish(turn: &ActiveTurn, key: &str, history: &TaskHistory) {
     if turn.done.swap(true, Ordering::SeqCst) {
         return;
     }
-    *turn.finished_at.lock().unwrap() = Some(Instant::now());
+    *crate::lock(&turn.finished_at) = Some(Instant::now());
     let _ = turn.tx.send(DONE_SENTINEL.to_string());
 
     let status = if turn.stopped.load(Ordering::SeqCst) {
@@ -109,7 +109,7 @@ fn finish(turn: &ActiveTurn, key: &str, history: &TaskHistory) {
     } else {
         "completed"
     };
-    let mut h = history.lock().unwrap();
+    let mut h = crate::lock(&history);
     h.push_front(TaskRecord {
         conversation_id: key.to_string(),
         prompt: turn.prompt.clone(),
@@ -123,7 +123,7 @@ fn finish(turn: &ActiveTurn, key: &str, history: &TaskHistory) {
 /// Drops finished turns past their TTL.
 async fn sweep(turns: &TurnRegistry) {
     turns.lock().await.retain(|_, t| {
-        match *t.finished_at.lock().unwrap() {
+        match *crate::lock(&t.finished_at) {
             Some(at) => at.elapsed() < FINISHED_TTL,
             None => true,
         }
@@ -337,7 +337,7 @@ pub(crate) async fn start_turn<A: API + 'static>(
         redact_todo_context(api.as_ref(), &conversation_id).await;
         finish(&turn2, &key2, &history);
     });
-    *turn.abort.lock().unwrap() = Some(handle.abort_handle());
+    *crate::lock(&turn.abort) = Some(handle.abort_handle());
 
     Ok(Json(json!({ "ok": true, "conversation_id": key })))
 }
@@ -392,7 +392,7 @@ pub(crate) async fn turn_stop<A: API>(
         .get(&conv)
         .cloned()
         .ok_or_else(|| AppError::not_found("no active turn"))?;
-    if let Some(h) = turn.abort.lock().unwrap().take() {
+    if let Some(h) = crate::lock(&turn.abort).take() {
         h.abort();
     }
     turn.stopped.store(true, Ordering::SeqCst);
@@ -420,7 +420,7 @@ pub(crate) async fn list_tasks<A: API>(State(state): State<AppState<A>>) -> Json
     }
     // Newest first, matching the recent list.
     running.sort_by_key(|v| std::cmp::Reverse(v["started_at_ms"].as_u64().unwrap_or(0)));
-    let recent: Vec<TaskRecord> = state.history.lock().unwrap().iter().cloned().collect();
+    let recent: Vec<TaskRecord> = crate::lock(&state.history).iter().cloned().collect();
     Json(json!({ "running": running, "recent": recent }))
 }
 

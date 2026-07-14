@@ -8,49 +8,74 @@
 //!
 //! Wire protocol: client → server is JSON text frames — `{"t":"i","d":"…"}`
 //! for input, `{"t":"r","c":cols,"r":rows}` for resize; server → client is
-//! raw PTY output as binary frames. The browser's WebSocket API can't set an
-//! Authorization header, so this route authorizes via a `token` query param
-//! checked against the same per-run bearer token as `/api/*`.
+//! raw PTY output as binary frames.
+//!
+//! Authorization rides in the WebSocket *subprotocol*, not the query string.
+//! The browser's WebSocket API cannot set an `Authorization` header, but it can
+//! offer subprotocols — and unlike a URL, those never reach devtools' network
+//! bar as a visible parameter, a proxy access log, or a copied-and-pasted link.
+//! The client offers `["forge-terminal", "<token>"]`; the server checks the
+//! token and selects `forge-terminal`, so the secret is never echoed back.
 
 use std::io::{Read, Write};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
 
 use crate::AppState;
 use forge_api::API;
 
+/// The subprotocol the server selects. The token is offered alongside it and is
+/// deliberately *not* the one selected — selecting it would echo the secret back
+/// in the handshake response.
+const TERM_PROTOCOL: &str = "forge-terminal";
+
 #[derive(Deserialize)]
 pub(crate) struct TermQuery {
-    token: String,
     session: String,
 }
 
 /// Only sessions the orchestrator created are attachable — this route must
 /// not become a generic "attach to any tmux on the box" endpoint.
 fn valid_session(name: &str) -> bool {
-    name.strip_prefix("forge-team-")
-        .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    name.strip_prefix("forge-team-").is_some_and(|id| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
 }
 
-/// GET /ws/terminal?token=…&session=forge-team-<id> — upgrade to the bridge.
+/// True when the client's offered subprotocols include the session token.
+fn offers_token(headers: &HeaderMap, token: &str) -> bool {
+    headers
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|list| list.split(',').any(|p| crate::secret_eq(p.trim(), token)))
+}
+
+/// GET /ws/terminal?session=forge-team-<id> — upgrade to the bridge.
+///
+/// Authorized by the token offered as a subprotocol (see the module docs).
 pub(crate) async fn terminal_ws<A: API>(
     State(state): State<AppState<A>>,
+    headers: HeaderMap,
     Query(q): Query<TermQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if q.token != *state.token {
+    if !offers_token(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if !valid_session(&q.session) {
         return (StatusCode::BAD_REQUEST, "invalid session name").into_response();
     }
-    ws.on_upgrade(move |socket| bridge(socket, q.session))
+    ws.protocols([TERM_PROTOCOL])
+        .on_upgrade(move |socket| bridge(socket, q.session))
 }
 
 /// Close reasons the client shows verbatim — keep them human.
@@ -172,8 +197,71 @@ async fn bridge(socket: WebSocket, session: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn headers_offering(protocols: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::SEC_WEBSOCKET_PROTOCOL, protocols.parse().unwrap());
+        h
+    }
+
+    /// This socket hands out a shell. Only the exact token opens it.
+    #[test]
+    fn test_offers_token_accepts_only_the_real_token() {
+        let tok = "5b1f0c9e-7a2d-4c3b-9f10-2b8e6d4a1c77";
+
+        assert_eq!(offers_token(&headers_offering(&format!("forge-terminal, {tok}")), tok), true);
+        assert_eq!(offers_token(&headers_offering(tok), tok), true);
+
+        assert_eq!(offers_token(&headers_offering("forge-terminal"), tok), false);
+        assert_eq!(offers_token(&headers_offering("forge-terminal, wrong"), tok), false);
+        // A prefix of the token must not pass.
+        assert_eq!(offers_token(&headers_offering(&tok[..8]), tok), false);
+        // No header at all.
+        assert_eq!(offers_token(&HeaderMap::new(), tok), false);
+    }
+
+    /// The token must never be echoed back in the handshake — the server picks
+    /// `forge-terminal` out of the offered list, not the secret.
+    #[tokio::test]
+    async fn test_handshake_selects_forge_terminal_and_never_echoes_the_token() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // The upgrade contract we depend on, exercised against a live axum
+        // server: offer [forge-terminal, <token>], expect 101 with
+        // forge-terminal selected. If axum ever answered differently the
+        // browser would close the socket and the terminal pane would go dark.
+        async fn upgrade(ws: WebSocketUpgrade) -> Response {
+            ws.protocols([TERM_PROTOCOL]).on_upgrade(|_| async {})
+        }
+        let app = axum::Router::new().route("/ws", axum::routing::get(upgrade));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let token = "5b1f0c9e-7a2d-4c3b-9f10-2b8e6d4a1c77";
+        let mut sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /ws HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+             Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Protocol: {TERM_PROTOCOL}, {token}\r\n\r\n"
+        );
+        sock.write_all(req.as_bytes()).await.unwrap();
+
+        let mut buf = vec![0u8; 1024];
+        let n = sock.read(&mut buf).await.unwrap();
+        let resp = String::from_utf8_lossy(&buf[..n]);
+
+        assert_eq!(resp.contains("101"), true, "handshake was refused:\n{resp}");
+        assert_eq!(
+            resp.to_lowercase().contains(&format!("sec-websocket-protocol: {TERM_PROTOCOL}")),
+            true,
+            "server did not select {TERM_PROTOCOL}:\n{resp}"
+        );
+        assert_eq!(resp.contains(token), false, "the token was echoed back in the handshake:\n{resp}");
+    }
 
     #[test]
     fn test_valid_session_names() {

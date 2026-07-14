@@ -1153,3 +1153,35 @@ pub(crate) async fn gcal_board<A: API>(
         ]
     })))
 }
+
+#[cfg(test)]
+mod ics_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// RFC 5545 folds long lines by starting the continuation with a space or
+    /// tab. Miss this and a calendar entry's summary is silently truncated.
+    #[test]
+    fn test_unfold_joins_continuation_lines() {
+        let ics = "SUMMARY:Long meeting\r\n title continues\r\nDTSTART:20240101\r\n";
+        assert_eq!(
+            unfold(ics),
+            vec!["SUMMARY:Long meetingtitle continues".to_string(), "DTSTART:20240101".to_string(), String::new()]
+        );
+    }
+
+    /// A leading space with nothing to continue must not index off the end.
+    #[test]
+    fn test_unfold_survives_a_leading_continuation() {
+        assert_eq!(unfold(" orphan"), vec![" orphan".to_string()]);
+    }
+
+    #[test]
+    fn test_days_from_civil_matches_the_unix_epoch() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(1970, 1, 2), 1);
+        assert_eq!(days_from_civil(1969, 12, 31), -1);
+        assert_eq!(days_from_civil(2000, 3, 1), 11017);
+    }
+}
