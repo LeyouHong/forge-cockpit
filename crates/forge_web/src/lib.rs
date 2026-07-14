@@ -163,10 +163,6 @@ where
         .route("/api/team/run", post(pipeline::team_run::<A>))
         .route("/api/team/stop", post(pipeline::team_stop::<A>))
         .route(
-            "/api/team/agents",
-            get(pipeline::team_agents_get::<A>).put(pipeline::team_agents_set::<A>),
-        )
-        .route(
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )

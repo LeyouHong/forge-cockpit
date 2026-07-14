@@ -3167,15 +3167,7 @@
       await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
       $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
     }
-    async function tmLoadAgents() {
-      const [al, am] = await Promise.all([
-        api('/api/agents').then((r) => r.json()).catch(() => []),
-        api('/api/team/agents?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ agents: {} })),
-      ]);
-      TEAM.agentList = Array.isArray(al) ? al : [];
-      TEAM.agentMap = (am && am.agents) || {};
-    }
-    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadConfig().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
       const [d, st, act] = await Promise.all([
@@ -3314,13 +3306,11 @@
         el.appendChild(tf);
       }
       const af = document.createElement('div'); af.className = 'tf';
-      const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
-      const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
-      sel.title = 'Which forge agent (model + persona + toolset) this member runs as.\nforge = full dev tools; muse = plan-only; sage = read-only research.\nDefine custom agents in ~/forge/agents to pick different models per role.';
-      const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
-      sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
-      af.appendChild(sel); el.appendChild(af);
+      const lbl = document.createElement('span'); lbl.textContent = 'terminal'; af.appendChild(lbl);
+      const cmd = document.createElement('span'); cmd.style.cssText = 'margin-left:auto;font-size:10px;opacity:.75;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      cmd.textContent = '⌨ ' + ((m.terminal_cmd || '').trim().split(/\s+/)[0] || 'claude');
+      cmd.title = 'this member is a resident tmux terminal running: ' + ((m.terminal_cmd || '').trim() || 'claude --dangerously-skip-permissions') + '\nedit via ✎';
+      af.appendChild(cmd); el.appendChild(af);
       tmMakeDraggable(el, m.id);
       const port = document.createElement('div'); port.className = 'tm-port';
       port.title = 'drag to another card to connect (that card will depend on this one)';
@@ -3506,11 +3496,6 @@
       stSel.title = 'Which lifecycle stage this member works:\nplan = runs once per goal, before the pipeline (PRD/design/requests)\nimplement = works requests in open/in_progress\nreview = works requests in review\nqa = works requests in qa';
       for (const st of ['plan', 'implement', 'review', 'qa']) { const o = document.createElement('option'); o.value = st; o.textContent = st; if (m && m.stage === st) o.selected = true; stSel.appendChild(o); }
       row('stage', stSel);
-      const agSel = document.createElement('select');
-      agSel.title = 'The forge agent (model + persona + toolset) this member runs as; custom agents in ~/forge/agents appear here';
-      const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
-      row('agent / model', agSel);
       const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
       apprCb.style.cssText = 'width:auto;margin:0';
       const apprWrap = document.createElement('div');
@@ -3520,22 +3505,11 @@
       apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
       apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
       row('approval', apprWrap);
-      const termCb = document.createElement('input'); termCb.type = 'checkbox'; termCb.checked = m ? !!m.terminal : true;
-      termCb.style.cssText = 'width:auto;margin:0';
-      const termWrap = document.createElement('div');
-      termWrap.style.cssText = 'display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text);cursor:pointer';
-      termWrap.title = 'When checked, this member runs as a persistent tmux terminal with an interactive CLI agent (Claude Code by default, on its own subscription login — no provider API key). Attach live with: tmux attach -t forge-team-<id>';
-      const termTxt = document.createElement('span'); termTxt.textContent = 'resident terminal (tmux + CLI agent, e.g. Claude Code subscription)';
-      termTxt.onclick = () => { termCb.checked = !termCb.checked; termCmdIn.parentElement.style.display = termCb.checked ? '' : 'none'; };
-      termWrap.appendChild(termCb); termWrap.appendChild(termTxt);
-      row('terminal', termWrap);
       const termCmdIn = document.createElement('input');
       termCmdIn.value = m ? (m.terminal_cmd || '') : '';
       termCmdIn.placeholder = 'claude --dangerously-skip-permissions (default)';
-      termCmdIn.title = 'Base command for the resident terminal. Leave empty for Claude Code with permission prompts off; claude-family commands get session-resume flags appended automatically.';
+      termCmdIn.title = 'The CLI this member\'s resident tmux terminal runs (on its own subscription login — no provider API key). Leave empty for Claude Code with permission prompts off; claude-family commands get session-resume flags appended automatically.';
       row('terminal cmd', termCmdIn);
-      termCmdIn.parentElement.style.display = termCb.checked ? '' : 'none';
-      termCb.onchange = () => { termCmdIn.parentElement.style.display = termCb.checked ? '' : 'none'; };
       const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
       depWrap.title = 'Upstream members (the canvas edges). For plan members this sets the planning ORDER; for workers it feeds topology context and notifications. Tip: drag the port on a card to connect visually.';
       for (const other of members) {
@@ -3565,9 +3539,7 @@
         if (t.name) nameIn.value = t.name;
         if (t.icon) icoIn.value = t.icon;
         if (t.stage) stSel.value = t.stage;
-        if (typeof t.agent === 'string') agSel.value = t.agent;
         if (typeof t.role_prompt === 'string') sopTa.value = t.role_prompt;
-        if (typeof t.terminal === 'boolean') { termCb.checked = t.terminal; termCb.onchange(); }
         if (typeof t.terminal_cmd === 'string') termCmdIn.value = t.terminal_cmd;
       };
       if (m) {
@@ -3575,13 +3547,13 @@
         const saveT = document.createElement('button'); saveT.className = 'btn btn-sm'; saveT.textContent = '💾 Save as template';
         saveT.onclick = async () => {
           const name = await uiPrompt('Template name:', { value: m.name || m.id }); if (!name) return;
-          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, terminal: termCb.checked, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
           const r = await api('/api/team/templates', plBody({ b: { name, member } }));
           $('tm-mem-msg').textContent = r.ok ? '✓ template saved' : 'save failed';
         };
         const expT = document.createElement('button'); expT.className = 'btn btn-sm'; expT.textContent = '📤 Export JSON';
         expT.onclick = () => {
-          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, terminal: termCb.checked, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
           const a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([JSON.stringify({ member }, null, 2)], { type: 'application/json' }));
           a.download = m.id + '.json'; a.click(); URL.revokeObjectURL(a.href);
@@ -3592,7 +3564,7 @@
       $('tm-mem-save').onclick = async () => {
         const nid = (m ? m.id : idIn.value).trim();
         if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
-        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, terminal: termCb.checked, terminal_cmd: termCmdIn.value.trim(), depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
+        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, terminal_cmd: termCmdIn.value.trim(), depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
         const list = (TEAM.cfg.members || []).slice();
         const at = list.findIndex((x) => x.id === nid);
         if (m) { list[at] = nm; } else { if (at !== -1) { $('tm-mem-msg').textContent = 'id already exists'; return; } list.push(nm); }
@@ -3701,17 +3673,13 @@
     }
     $('tm-watches').onclick = tmOpenWatches;
     // ── One-click: whole team ↔ resident terminals ──
-    // Mode note under the tabs. Terminal is the default; the note states the
-    // fact instead of offering a header toggle — per-member opt-out (forge
-    // API subprocess) lives in each member's editor.
+    // Mode note under the tabs: teams are terminal-only — every agent is a
+    // resident tmux terminal on the CLI's own subscription login.
     function tmSyncAllTermBtn() {
       const ms = (TEAM.cfg && TEAM.cfg.members) || [];
-      const on = ms.filter((m) => m.terminal).length;
-      const note = $('tm-mode-note');
-      if (!ms.length) { note.textContent = ''; }
-      else if (on === ms.length) { note.textContent = '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'; }
-      else if (on === 0) { note.textContent = 'all agents run as forge API agents (provider key) — check "terminal" in a member\'s editor to use your Claude subscription'; }
-      else { note.textContent = '⌨ ' + on + '/' + ms.length + ' agents on resident terminals; the rest use forge API agents'; }
+      $('tm-mode-note').textContent = ms.length
+        ? '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'
+        : '';
     }
     // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
     let xtermReady = null;

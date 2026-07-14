@@ -1,9 +1,12 @@
 //! The orchestrator — the resident "team brain".
 //!
-//! An event-driven loop over the workspace: for every pending request it spawns
-//! a `forge` subprocess acting as the right role (role SOP as prompt, workspace
-//! MCP connected). Agents drive status forward through the MCP tools; the
-//! orchestrator re-reads state and reacts. Compared to a one-shot runner it adds:
+//! An event-driven loop over the workspace: every member is a resident tmux
+//! terminal running an interactive CLI agent (Claude Code on the user's
+//! subscription — no provider API key). For each pending request the
+//! orchestrator pastes the role prompt (SOP + topology) into the member's
+//! pane; agents drive status forward through the workspace MCP tools and the
+//! orchestrator re-reads the board and reacts. Compared to a one-shot runner
+//! it adds:
 //!
 //!   - concurrency     — several requests worked in parallel (--concurrent N)
 //!   - stuck detection — if a request sits in one status for too many attempts,
@@ -13,18 +16,18 @@
 //! With --goal "<objective>" a coordinator (Lead) runs first and decomposes the
 //! objective into requests on the board, which the pipeline then works.
 //!
-//! Hung agents are recovered by killing any subprocess that outlives
-//! --agent-timeout-secs; a request that stays stuck past --max-attempts is
-//! parked and an alert is pushed to the --alert-to inbox on the message bus.
+//! A member that makes no board progress within --agent-timeout-secs frees
+//! its slot (the pane itself is never killed — a human may be attached); a
+//! request that stays stuck past --max-attempts is parked and an alert is
+//! pushed to the --alert-to inbox on the message bus.
 //!
-//!   forge-workspace-run --project DIR [--workspace DIR] [--forge PATH]
+//!   forge-workspace-run --project DIR [--workspace DIR]
 //!       [--goal "<objective>"] [--concurrent N] [--max-attempts N]
 //!       [--poll-secs N] [--agent-timeout-secs N] [--alert-to INBOX]
 //!       [--daemon] [--dry-run]
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -84,7 +87,6 @@ struct State {
 struct Cfg {
     project: PathBuf,
     workspace: PathBuf,
-    forge: PathBuf,
     concurrent: usize,
     max_attempts: u32,
     poll: Duration,
@@ -101,25 +103,8 @@ struct Cfg {
     /// When set (via --plan-only), run just the coordinator and exit — decompose
     /// the goal, print the board, don't work the pipeline.
     plan_only: bool,
-    /// When set (via --isolate-mcp), spawned agents run with FORGE_CONFIG=this,
-    /// an isolated base_path exposing ONLY the workspace MCP.
-    home: Option<PathBuf>,
-    /// Optional per-role forge agent (role name → agent id), loaded from
-    /// `<workspace>/.team-agents.json`. When a role has one, its `forge -p` gets
-    /// `--agent <id>` — that's how a role picks a different model/persona.
-    /// (Member.agent in the team config takes precedence.)
-    agents: HashMap<String, String>,
     /// The team roster (`<workspace>/.team.json`, or the built-in six roles).
     team: TeamConfig,
-}
-
-/// Load the role→agent map from `<workspace>/.team-agents.json` (if present).
-fn load_role_agents(workspace: &Path) -> HashMap<String, String> {
-    std::fs::read_to_string(workspace.join(".team-agents.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
-        .map(|m| m.into_iter().filter(|(_, v)| !v.trim().is_empty()).collect())
-        .unwrap_or_default()
 }
 
 fn pending(r: &RequestDocument) -> bool {
@@ -277,11 +262,11 @@ fn approval_granted(cfg: &Cfg, req: &RequestDocument, member: &TeamMember) -> bo
     }
 }
 
-/// Per-member conversation ids give each agent a PERSISTENT session that
-/// survives across tasks: `forge -p --conversation-id <id>` resumes the same
-/// conversation, so the member keeps its own memory (what it built, decided,
-/// was told) instead of starting cold every spawn. Stored at
-/// `<workspace>/.team-sessions.json` (member id -> conversation id).
+/// Per-member session ids give each agent a PERSISTENT conversation that
+/// survives across tasks: the id doubles as the Claude Code session id
+/// (`--session-id` on first launch, `--resume` after), so a member keeps its
+/// memory (what it built, decided, was told) instead of starting cold.
+/// Stored at `<workspace>/.team-sessions.json` (member id -> session id).
 fn sessions_path(workspace: &Path) -> PathBuf {
     workspace.join(".team-sessions.json")
 }
@@ -347,9 +332,9 @@ fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocu
             None if paused.contains(&m.id) => ("paused", None),
             None => ("idle", None),
         };
-        // For resident-terminal members, expose the live tmux session (when it
-        // exists) so the UI can offer `tmux attach -t <session>`.
-        let tmux = (m.terminal && terminal::has_session(&terminal::session_name(&m.id)))
+        // Expose the live tmux session (when it exists) so the UI can offer
+        // the in-cockpit terminal / `tmux attach`.
+        let tmux = terminal::has_session(&terminal::session_name(&m.id))
             .then(|| terminal::session_name(&m.id));
         out.insert(
             m.id.clone(),
@@ -377,12 +362,10 @@ fn run() -> anyhow::Result<()> {
     std::fs::create_dir_all(&workspace)?;
     let workspace = workspace.canonicalize()?;
     let exe_dir = std::env::current_exe()?.parent().unwrap().to_path_buf();
-    let forge = flag(&mut args, "--forge").map(PathBuf::from).unwrap_or_else(|| exe_dir.join("forge"));
     let mcp_bin = exe_dir.join("forge-workspace-mcp");
-
-    let isolate = has(&mut args, "--isolate-mcp");
-    let home = if isolate { Some(setup_isolated_home(&workspace, &mcp_bin)?) } else { None };
-    let agents = load_role_agents(&workspace);
+    // Accepted and ignored for backward compatibility (pre-terminal-only callers).
+    let _ = flag(&mut args, "--forge");
+    let _ = has(&mut args, "--isolate-mcp");
     let team_cfg = team::load_team(&workspace);
     if let Err(e) = team::validate_team(&team_cfg) {
         anyhow::bail!("invalid team config (<workspace>/.team.json): {e}");
@@ -390,7 +373,6 @@ fn run() -> anyhow::Result<()> {
     let cfg = Cfg {
         project,
         workspace,
-        forge,
         concurrent: flag(&mut args, "--concurrent").and_then(|s| s.parse().ok()).unwrap_or(1).max(1),
         max_attempts: flag(&mut args, "--max-attempts").and_then(|s| s.parse().ok()).unwrap_or(4),
         poll: Duration::from_secs(flag(&mut args, "--poll-secs").and_then(|s| s.parse().ok()).unwrap_or(3)),
@@ -402,30 +384,19 @@ fn run() -> anyhow::Result<()> {
         alert_to: flag(&mut args, "--alert-to").unwrap_or_else(|| "human".into()),
         goal: flag(&mut args, "--goal").filter(|g| !g.trim().is_empty()),
         plan_only: has(&mut args, "--plan-only"),
-        home,
-        agents,
         team: team_cfg,
     };
 
-    // Terminal-resident members need tmux, and they read the project's
-    // .mcp.json (Claude Code's config), not FORGE_CONFIG — so the workspace
-    // MCP must land there even under --isolate-mcp.
-    let has_terminal = cfg.team.members.iter().any(|m| m.terminal);
-    if has_terminal && !cfg.dry_run && !terminal::tmux_available() {
-        anyhow::bail!(
-            "the team has terminal-resident members (terminal: true) but tmux is not installed / not on PATH"
-        );
+    // Members ARE terminals — tmux and the .mcp.json wiring are hard
+    // requirements, checked up front so failure is one clear message.
+    if !cfg.dry_run && !terminal::tmux_available() {
+        anyhow::bail!("team members run as resident terminals, but tmux is not installed / not on PATH");
     }
-
-    // With an isolated base_path the workspace MCP is provided there; otherwise
-    // inject it into the project's .mcp.json (which merges with the global one).
-    if cfg.home.is_none() || has_terminal {
-        ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
-    }
+    ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
     println!(
-        "▶ orchestrator: project={} concurrent={} max-attempts={} agent-timeout={}s alert-to={} daemon={} dry-run={} isolate-mcp={}{}",
+        "▶ orchestrator: project={} concurrent={} max-attempts={} agent-timeout={}s alert-to={} daemon={} dry-run={}{}",
         cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.agent_timeout.as_secs(), cfg.alert_to,
-        cfg.daemon, cfg.dry_run, cfg.home.is_some(),
+        cfg.daemon, cfg.dry_run,
         cfg.goal.as_deref().map(|g| format!(" goal={g:?}")).unwrap_or_default()
     );
 
@@ -541,7 +512,7 @@ fn run() -> anyhow::Result<()> {
                 // One prompt at a time per resident terminal: like the
                 // concurrency gate above, waiting for the member's pane is not
                 // failure, so no attempt is consumed.
-                if member.terminal && st.busy_members.contains(&member.id) {
+                if st.busy_members.contains(&member.id) {
                     continue;
                 }
 
@@ -580,9 +551,7 @@ fn run() -> anyhow::Result<()> {
                     if cfg.dry_run { " (dry-run)" } else { "" }
                 );
                 st.running.insert(req.id.clone());
-                if member.terminal {
-                    st.busy_members.insert(member.id.clone());
-                }
+                st.busy_members.insert(member.id.clone());
                 spawn_agent(cfg.clone(), state.clone(), req.clone(), member, covering);
             }
         }
@@ -736,26 +705,7 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
          tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now.",
         id = m.id
     );
-    if m.terminal {
-        run_terminal_planner(cfg, m, &prompt);
-        return;
-    }
-    let mut cmd = Command::new(&cfg.forge);
-    cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
-    cmd.arg("--conversation-id").arg(get_or_create_session(&cfg.workspace, &m.id));
-    let agent = if !m.agent.trim().is_empty() { Some(m.agent.clone()) } else { cfg.agents.get(&m.id).cloned() };
-    if let Some(agent) = agent {
-        cmd.arg("--agent").arg(agent);
-    }
-    if let Some(home) = &cfg.home {
-        cmd.env("FORGE_CONFIG", home);
-    }
-    if let Some(log) = open_member_log(&cfg.workspace, &m.id, "planning") {
-        if let Ok(err) = log.try_clone() {
-            cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err));
-        }
-    }
-    let _ = cmd.status();
+    run_terminal_planner(cfg, m, &prompt);
 }
 
 /// Planning through a resident terminal. Unlike work requests there is no
@@ -836,54 +786,7 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
                 req.id,
                 role = member.id
             );
-            if member.terminal {
-                timed_out = run_terminal_request(&cfg, &req, &member, &prompt);
-                finish_agent(&state, &req.id, &member, timed_out);
-                return;
-            }
-            let mut cmd = Command::new(&cfg.forge);
-            cmd.arg("-p").arg(&prompt).current_dir(&cfg.project);
-            let agent = if !member.agent.trim().is_empty() { Some(member.agent.clone()) } else { cfg.agents.get(&member.id).cloned() };
-            if let Some(agent) = agent {
-                cmd.arg("--agent").arg(agent);
-            }
-            if let Some(home) = &cfg.home {
-                cmd.env("FORGE_CONFIG", home);
-            }
-            cmd.arg("--conversation-id").arg(get_or_create_session(&cfg.workspace, &member.id));
-            if let Some(log) = open_member_log(&cfg.workspace, &member.id, &format!("working {}", req.id)) {
-                if let Ok(err) = log.try_clone() {
-                    cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err));
-                }
-            }
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    let deadline = Instant::now() + cfg.agent_timeout;
-                    loop {
-                        match child.try_wait() {
-                            Ok(Some(_)) => break, // exited on its own
-                            Ok(None) => {
-                                if Instant::now() >= deadline {
-                                    let _ = child.kill();
-                                    let _ = child.wait();
-                                    timed_out = true;
-                                    println!(
-                                        "  ⏱ {} [{:?}] agent exceeded {}s — killed; will retry.",
-                                        req.id, req.status, cfg.agent_timeout.as_secs()
-                                    );
-                                    break;
-                                }
-                                std::thread::sleep(Duration::from_millis(500));
-                            }
-                            Err(e) => {
-                                eprintln!("  ! {} wait error: {e}", req.id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => eprintln!("  ! {} failed to spawn forge: {e}", req.id),
-            }
+            timed_out = run_terminal_request(&cfg, &req, &member, &prompt);
         } else {
             // Simulate a session that does nothing (so stuck detection can be tested).
             std::thread::sleep(Duration::from_millis(200));
@@ -901,9 +804,7 @@ fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, ti
         }
     }
     guard.running.remove(req_id);
-    if member.terminal {
-        guard.busy_members.remove(&member.id);
-    }
+    guard.busy_members.remove(&member.id);
 }
 
 /// Drive one request through a terminal-resident member: make sure its tmux
@@ -975,46 +876,6 @@ fn ensure_member_terminal(cfg: &Cfg, member: &TeamMember, name: &str) -> anyhow:
         std::thread::sleep(Duration::from_secs(5));
     }
     Ok(())
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-/// Build an isolated base_path (used as FORGE_CONFIG) that reuses the user's real
-/// provider credentials/config but exposes ONLY the workspace MCP — so spawned
-/// agents don't load unrelated global MCP servers (faster startup, more reliable
-/// tool registration). Credentials are symlinked, never copied.
-fn setup_isolated_home(workspace: &Path, mcp_bin: &Path) -> anyhow::Result<PathBuf> {
-    let home = workspace.join(".forge-home");
-    std::fs::create_dir_all(&home)?;
-    let real = std::env::var("FORGE_CONFIG")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            let h = home_dir();
-            [".forge", "forge"].iter().map(|d| h.join(d)).find(|p| p.join(".credentials.json").exists())
-        })
-        .unwrap_or_else(|| home_dir().join(".forge"));
-    // Reuse real provider config/credentials; exclude .mcp.json (we write our own).
-    for f in [".credentials.json", ".forge.toml", ".mcp_trust.json", ".mcp-credentials.json", ".config.json"] {
-        let (src, dst) = (real.join(f), home.join(f));
-        if src.exists() && !dst.exists() {
-            #[cfg(unix)]
-            let _ = std::os::unix::fs::symlink(&src, &dst);
-            #[cfg(not(unix))]
-            let _ = std::fs::copy(&src, &dst);
-        }
-    }
-    let mcp = json!({ "mcpServers": { "forge-workspace": {
-        "command": mcp_bin.to_string_lossy(),
-        "env": { "FORGE_WORKSPACE_DIR": workspace.to_string_lossy() }
-    }}});
-    std::fs::write(home.join(".mcp.json"), serde_json::to_string_pretty(&mcp)?)?;
-    Ok(home)
 }
 
 fn ensure_workspace_mcp(project: &Path, mcp_bin: &Path, workspace: &Path) -> anyhow::Result<()> {
