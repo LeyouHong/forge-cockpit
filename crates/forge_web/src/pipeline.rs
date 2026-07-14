@@ -30,9 +30,6 @@ fn projects_from(s: &Value) -> Vec<Value> {
     s.get("pipeline_projects").and_then(Value::as_array).cloned().unwrap_or_default()
 }
 
-pub(crate) fn project_path_pub(name: &str) -> Option<PathBuf> {
-    project_path(name)
-}
 fn project_path(name: &str) -> Option<PathBuf> {
     projects_from(&read_settings())
         .iter()

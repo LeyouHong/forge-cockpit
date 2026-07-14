@@ -12,7 +12,6 @@
 mod board;
 mod dto;
 mod live;
-mod craft;
 mod pipeline;
 mod schedule;
 mod usage;
@@ -192,10 +191,6 @@ where
         .route("/api/schedules/fire", post(schedule::fire_now::<A>))
         .route("/api/schedule-runs", get(schedule::runs::<A>))
         .route("/api/usage", get(usage::usage::<A>))
-        .route("/api/crafts", get(craft::list::<A>))
-        .route("/api/craft", get(craft::read::<A>))
-        .route("/api/craft/generate", post(craft::generate::<A>))
-        .route("/api/craft/delete", post(craft::delete::<A>))
         .route_layer(from_fn_with_state(state.clone(), auth::<A>));
 
     let app = Router::new()
@@ -204,11 +199,6 @@ where
         // token query param (browsers can't set headers on WebSockets), so it
         // lives outside the bearer-header /api group.
         .route("/ws/terminal", get(webterm::terminal_ws::<A>))
-        // A craft renders as its own document (not `srcdoc`) so it carries its
-        // own CSP instead of inheriting the page's nonce policy, which would
-        // refuse every craft's inline script. Gated by the session cookie —
-        // an iframe navigation cannot send a bearer header.
-        .route("/craft/view", get(craft::view::<A>))
         // The cockpit's own frontend, split by concern. These are classic
         // scripts sharing one global scope, executed in the order index.html
         // lists them — the split is a move, not a module rewrite. `'self'` in
@@ -268,7 +258,6 @@ async fn app_script(Path(file): Path<String>) -> Response {
         "panel.js" => include_str!("app/panel.js"),
         "boards.js" => include_str!("app/boards.js"),
         "pipeline.js" => include_str!("app/pipeline.js"),
-        "crafts.js" => include_str!("app/crafts.js"),
         "usage.js" => include_str!("app/usage.js"),
         "schedules.js" => include_str!("app/schedules.js"),
         "team.js" => include_str!("app/team.js"),
@@ -397,9 +386,8 @@ async fn index<A>(
 
 /// True when the request carries the session cookie set by [`index`].
 ///
-/// Used by routes a browser loads as a *document* (the page shell, and a
-/// craft's iframe), which cannot send an `Authorization` header the way the
-/// `/api/*` fetches do.
+/// Used by the page shell, which a browser loads as a *document* and so cannot
+/// send an `Authorization` header the way the `/api/*` fetches do.
 pub(crate) fn cookie_ok(headers: &axum::http::HeaderMap, token: &str) -> bool {
     let want = format!("forge_token={token}");
     headers
@@ -434,7 +422,7 @@ fn page_csp(nonce: &str) -> String {
          img-src 'self' data: blob:; \
          font-src 'self' data:; \
          connect-src 'self'; \
-         frame-src 'self'; \
+         frame-src 'none'; \
          base-uri 'none'; \
          form-action 'none'; \
          object-src 'none'; \
@@ -1096,7 +1084,6 @@ mod csp_tests {
         ("app/panel.js", include_str!("app/panel.js")),
         ("app/boards.js", include_str!("app/boards.js")),
         ("app/pipeline.js", include_str!("app/pipeline.js")),
-        ("app/crafts.js", include_str!("app/crafts.js")),
         ("app/usage.js", include_str!("app/usage.js")),
         ("app/schedules.js", include_str!("app/schedules.js")),
         ("app/team.js", include_str!("app/team.js")),

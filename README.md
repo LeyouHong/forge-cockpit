@@ -43,7 +43,7 @@ It runs two ways from one engine:
 | Browser UI | — | **Web cockpit**: chat + dashboards + one-click integrations |
 | Platform dashboards | — | GitHub · GitHub Actions · Jira · Sentry · Google Calendar · Slack · Gmail |
 | One-click integrations | — | Slack (bot token), Gmail (app password), plus GitHub/Jira/Sentry/Calendar and any custom MCP |
-| Orchestration | — | **Pipelines** (visual DAG workflows, agent-invokable) · **Team** (editable multi-agent canvas) · **Schedules** (cron + actions) · **Usage** analytics · **Crafts** (AI-generated mini-apps) |
+| Orchestration | — | **Pipelines** (visual DAG workflows, agent-invokable) · **Team** (editable multi-agent canvas) · **Schedules** (cron + actions) · **Usage** analytics |
 | Distribution | — | Published to npm (`npx forge-cockpit`) with prebuilt binaries per platform |
 
 The underlying agent engine, tools, and provider support are inherited from Forge.
@@ -141,9 +141,6 @@ Beyond chat, the cockpit ships a full orchestration stack — build reusable age
 
   <p align="center"><img src="docs/img/usage.png" alt="Usage — token and cost analytics" width="900"></p>
 
-- **🎨 Crafts** — project-scoped mini-apps. Describe what you want ("a dashboard of our REST endpoints") and a background builder agent reads your project and writes a self-contained HTML page under `<project>/.forge/crafts/`, rendered in a sandboxed iframe tab. Refine it in place; commit it so the team gets the same tab.
-
-  <p align="center"><img src="docs/img/crafts.png" alt="Crafts — AI-generated project mini-apps" width="900"></p>
 
 ## Terminal usage
 

@@ -874,10 +874,10 @@ loadCommandsSkills();
 inputEl.focus();
 
 // Deep-link a panel via the URL hash (#pipeline / #team / #schedules /
-// #usage / #crafts) — shareable links, and lets headless capture render a
-// specific overlay directly.
+// #usage) — shareable links, and lets headless capture render a specific
+// overlay directly.
 function openPanelFromHash() {
-  const map = { pipeline: 'pipeline-open', team: 'team-open', schedules: 'sched-open', usage: 'usage-open', crafts: 'craft-open' };
+  const map = { pipeline: 'pipeline-open', team: 'team-open', schedules: 'sched-open', usage: 'usage-open' };
   const id = map[(location.hash || '').replace('#', '')];
   if (id && $(id)) $(id).click();
 }

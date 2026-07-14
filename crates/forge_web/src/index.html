@@ -606,7 +606,6 @@
       <button class="icon-btn" id="team-open" title="Team — the resident agent team (pm → architect → engineer → reviewer → qa)">🤝</button>
       <button class="icon-btn" id="sched-open" title="Schedules — timed automation (pipeline or prompt on a trigger)">⏰</button>
       <button class="icon-btn" id="usage-open" title="Usage — token and cost of your forge agents">📊</button>
-      <button class="icon-btn" id="craft-open" title="Crafts — AI-generated project mini-apps">🎨</button>
       <button class="icon-btn" id="export-conv" title="Export conversation (HTML)">⬇</button>
       <button class="icon-btn" id="settings" title="AI providers &amp; sign-in">⚙</button>
       <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
@@ -767,34 +766,6 @@
             <textarea id="pl-editor" class="pl-editor" style="display:none" spellcheck="false"></textarea>
             <div id="pl-status" class="pl-status"></div>
           </div>
-        </div>
-      </section>
-    </div>
-  </div>
-
-  <!-- Team (resident agent team) page -->
-  <div class="kanban-overlay" id="craft-overlay">
-    <div class="kanban-head">
-      <span><b>🎨 Crafts</b> <span class="drawer-hint">AI-generated mini-apps that live in your project (.forge/crafts)</span></span>
-      <div style="flex:1"></div>
-      <label class="sl" style="margin-right:4px">Project</label>
-      <select id="craft-project" class="repo-select" style="border:1px solid var(--border);min-width:140px"></select>
-      <button class="btn btn-primary btn-sm" id="craft-new">+ Craft</button>
-      <button class="btn btn-ghost btn-sm" id="craft-refresh">Refresh</button>
-      <button class="icon-btn" id="craft-close" title="Close">✕</button>
-    </div>
-    <div class="kanban-scroll">
-      <section class="kanban-section" style="display:flex;gap:12px;height:calc(100vh - 120px)">
-        <div id="craft-list" style="width:220px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:4px"></div>
-        <div style="flex:1;border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative">
-          <div id="craft-toolbar" style="display:none;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);align-items:center">
-            <b id="craft-cur-name" style="font-size:13px"></b>
-            <div style="flex:1"></div>
-            <button class="btn btn-sm" id="craft-refine">⚙ Refine</button>
-            <button class="btn btn-sm" id="craft-del" style="color:#e5484d">Delete</button>
-          </div>
-          <iframe id="craft-frame" sandbox="allow-scripts" style="width:100%;height:100%;border:0;background:#fff"></iframe>
-          <div id="craft-empty" class="sl" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">select a craft, or "+ Craft" to make one</div>
         </div>
       </section>
     </div>
@@ -978,7 +949,6 @@
   <script src="/app/panel.js"></script>
   <script src="/app/boards.js"></script>
   <script src="/app/pipeline.js"></script>
-  <script src="/app/crafts.js"></script>
   <script src="/app/usage.js"></script>
   <script src="/app/schedules.js"></script>
   <script src="/app/team.js"></script>

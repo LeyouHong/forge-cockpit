@@ -53,8 +53,6 @@ And a full orchestration stack:
 - **⏰ Schedules** — cron/interval/one-shot triggers → a pipeline or prompt →
   optional webhook / email delivery.
 - **📊 Usage** — token & cost of your agents, priced at your provider's rate.
-- **🎨 Crafts** — describe a mini-app; a builder agent writes a self-contained
-  HTML page into your project and renders it in a tab.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/LeyouHong/forge-cockpit/main/docs/img/dashboard.png" alt="Dashboard" width="820">
