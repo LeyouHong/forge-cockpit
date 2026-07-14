@@ -16,6 +16,7 @@ mod craft;
 mod pipeline;
 mod schedule;
 mod usage;
+mod webterm;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -198,6 +199,14 @@ where
 
     let app = Router::new()
         .route("/", get(index::<A>))
+        // Browser terminal for resident team members. Authorizes via the
+        // token query param (browsers can't set headers on WebSockets), so it
+        // lives outside the bearer-header /api group.
+        .route("/ws/terminal", get(webterm::terminal_ws::<A>))
+        // Vendored xterm.js — static library code, served like the page shell.
+        .route("/vendor/xterm.js", get(|| async { js(include_str!("vendor/xterm.js")) }))
+        .route("/vendor/xterm-addon-fit.js", get(|| async { js(include_str!("vendor/xterm-addon-fit.js")) }))
+        .route("/vendor/xterm.css", get(|| async { css(include_str!("vendor/xterm.css")) }))
         .merge(api_routes)
         .with_state(state.clone());
 
@@ -229,6 +238,14 @@ where
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn js(body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], body).into_response()
+}
+
+fn css(body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], body).into_response()
 }
 
 /// Middleware that enforces the bearer token on `/api/*` routes.

@@ -3271,9 +3271,9 @@
           th.appendChild(lg);
         }
         if (ms.terminal) {
-          const tm = document.createElement('span'); tm.textContent = '⌨'; tm.title = 'resident terminal live — click to copy: tmux attach -t ' + ms.terminal;
+          const tm = document.createElement('span'); tm.textContent = '⌨'; tm.title = 'open this member\'s live terminal (watch or take over)';
           tm.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
-          tm.onclick = (e) => { e.stopPropagation(); navigator.clipboard && navigator.clipboard.writeText('tmux attach -t ' + ms.terminal); tm.textContent = '✓'; setTimeout(() => { tm.textContent = '⌨'; }, 1200); };
+          tm.onclick = (e) => { e.stopPropagation(); tmOpenTerminal(ms.terminal, m.name || m.id); };
           th.appendChild(tm);
         }
       }
@@ -3636,6 +3636,64 @@
       $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
+    // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
+    let xtermReady = null;
+    function loadXterm() {
+      if (xtermReady) return xtermReady;
+      xtermReady = new Promise((resolve, reject) => {
+        const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = '/vendor/xterm.css';
+        document.head.appendChild(css);
+        const s1 = document.createElement('script'); s1.src = '/vendor/xterm.js';
+        s1.onload = () => {
+          const s2 = document.createElement('script'); s2.src = '/vendor/xterm-addon-fit.js';
+          s2.onload = resolve; s2.onerror = reject;
+          document.head.appendChild(s2);
+        };
+        s1.onerror = reject;
+        document.head.appendChild(s1);
+      });
+      return xtermReady;
+    }
+    async function tmOpenTerminal(sessionName, title) {
+      try { await loadXterm(); } catch { alert('failed to load terminal assets'); return; }
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+      const box = document.createElement('div');
+      box.style.cssText = 'width:min(1000px,94vw);height:min(640px,86vh);background:#0d1117;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.5)';
+      const hd = document.createElement('div');
+      hd.style.cssText = 'display:flex;gap:10px;align-items:center;padding:8px 12px;background:#161b22;color:#e6edf3;font-size:12px';
+      hd.innerHTML = '<span>⌨ ' + escapeHtml(title) + ' — live member terminal</span><span style="opacity:.55">keystrokes go straight to the agent\'s session; closing detaches (the member keeps running)</span>';
+      const cp = document.createElement('button'); cp.className = 'btn btn-sm'; cp.textContent = '📋 attach cmd'; cp.style.marginLeft = 'auto';
+      cp.title = 'copy: tmux attach -t ' + sessionName;
+      cp.onclick = () => { navigator.clipboard && navigator.clipboard.writeText('tmux attach -t ' + sessionName); cp.textContent = '✓'; setTimeout(() => { cp.textContent = '📋 attach cmd'; }, 1200); };
+      const cl = document.createElement('button'); cl.className = 'btn btn-sm'; cl.textContent = '✕';
+      hd.appendChild(cp); hd.appendChild(cl);
+      const body = document.createElement('div'); body.style.cssText = 'flex:1;min-height:0;padding:4px';
+      box.appendChild(hd); box.appendChild(body); ov.appendChild(box); document.body.appendChild(ov);
+      const term = new window.Terminal({ fontSize: 13, cursorBlink: true, theme: { background: '#0d1117' } });
+      const fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit); term.open(body); fit.fit(); term.focus();
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host + '/ws/terminal?token=' + encodeURIComponent(TOKEN) + '&session=' + encodeURIComponent(sessionName));
+      ws.binaryType = 'arraybuffer';
+      const sendResize = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows })); };
+      ws.onopen = sendResize;
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          // \x01-prefixed text frame = human-readable error from the server
+          term.write('\r\n\x1b[31m' + ev.data.replace(/^\x01/, '') + '\x1b[0m\r\n');
+          return;
+        }
+        term.write(new Uint8Array(ev.data));
+      };
+      ws.onclose = () => term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');
+      term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'i', d })); });
+      const ro = new ResizeObserver(() => { try { fit.fit(); sendResize(); } catch {} });
+      ro.observe(body);
+      const close = () => { ro.disconnect(); try { ws.close(); } catch {} term.dispose(); ov.remove(); };
+      cl.onclick = close;
+      ov.onclick = (e) => { if (e.target === ov) close(); };
+    }
     async function tmShowRequest(id) {
       const d = await (await api('/api/team/request?project=' + encodeURIComponent(TEAM.project) + '&id=' + encodeURIComponent(id))).json().catch(() => null);
       if (!d || !d.request) return;
