@@ -16,8 +16,10 @@ pub mod message;
 pub mod pipeline;
 pub mod request;
 pub mod team;
+pub mod terminal;
+pub mod watch;
 
-pub use message::{get_inbox, list_messages, send_message, Category, Message};
+pub use message::{ack, get_inbox, list_messages, request, respond, send_message, Category, Liveness, Message, Status};
 pub use request::{
     claim_request, create_request, get_request, list_requests, update_response, Finding, NewRequest,
     QaResult, RequestDocument, RequestStatus, ResponseDocument, ReviewResult, Section, Severity,

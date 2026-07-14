@@ -1,8 +1,8 @@
 //! Team composition as data — `<workspace>/.team.json`.
 //!
 //! The team is no longer compiled into the orchestrator: it is a list of
-//! **members** (id, display, stage, optional custom SOP, optional forge agent,
-//! DAG `depends_on` edges) that the web canvas edits and
+//! **members** (id, display, stage, optional custom SOP, optional terminal
+//! command, DAG `depends_on` edges) that the web canvas edits and
 //! `forge-workspace-run` executes. When no file exists, [`default_team`]
 //! yields the built-in six-role roster (pm → architect → coordinator →
 //! engineer → reviewer → qa), so existing workspaces keep working unchanged.
@@ -36,10 +36,6 @@ pub struct TeamMember {
     #[serde(default)]
     pub icon: String,
     pub stage: Stage,
-    /// Optional forge agent id (`forge -p --agent <id>`) — how a member gets
-    /// its own model/persona. Empty → the default agent.
-    #[serde(default)]
-    pub agent: String,
     /// Custom SOP (markdown). Empty → the built-in SOP for well-known ids
     /// (pm, architect, coordinator, engineer, reviewer, qa), or a generic
     /// stage SOP for custom members.
@@ -53,6 +49,14 @@ pub struct TeamMember {
     /// is spawned for it (the orchestrator parks the request and alerts).
     #[serde(default)]
     pub requires_approval: bool,
+    /// Base command for the member's resident terminal. Every member IS a
+    /// terminal — a persistent tmux session running an interactive CLI agent
+    /// on the CLI's own subscription auth; `tmux attach -t forge-team-<id>`
+    /// joins it live. Empty → Claude Code with permission prompts off
+    /// (unattended operation); session-resume flags are appended
+    /// automatically for claude-family commands.
+    #[serde(default)]
+    pub terminal_cmd: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -75,10 +79,10 @@ fn member(id: &str, name: &str, icon: &str, stage: Stage, depends_on: &[&str]) -
         name: name.into(),
         icon: icon.into(),
         stage,
-        agent: String::new(),
         role_prompt: String::new(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
         requires_approval: false,
+        terminal_cmd: String::new(),
     }
 }
 
@@ -111,6 +115,37 @@ pub fn save_team(workspace: &Path, cfg: &TeamConfig) -> Result<()> {
     validate_team(cfg)?;
     std::fs::create_dir_all(workspace)?;
     std::fs::write(workspace.join(".team.json"), serde_json::to_string_pretty(cfg)?)?;
+    Ok(())
+}
+
+/// Pause flags, persisted at `<workspace>/.team-paused.json` as
+/// `{"<member-id>": true}`. A paused member is never scheduled new work
+/// (in-flight work finishes normally); requests for its stage wait rather
+/// than being rerouted or covered — pause means "hold", not "reassign".
+fn paused_path(workspace: &Path) -> std::path::PathBuf {
+    workspace.join(".team-paused.json")
+}
+
+pub fn load_paused(workspace: &Path) -> HashSet<String> {
+    std::fs::read_to_string(paused_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str::<BTreeMap<String, bool>>(&s).ok())
+        .map(|m| m.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect())
+        .unwrap_or_default()
+}
+
+pub fn set_paused(workspace: &Path, member: &str, paused: bool) -> Result<()> {
+    let mut map: BTreeMap<String, bool> = std::fs::read_to_string(paused_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    if paused {
+        map.insert(member.to_string(), true);
+    } else {
+        map.remove(member);
+    }
+    std::fs::create_dir_all(workspace)?;
+    std::fs::write(paused_path(workspace), serde_json::to_string_pretty(&map)?)?;
     Ok(())
 }
 
@@ -197,6 +232,19 @@ mod tests {
         cfg.members.push(member("engineer-2", "Engineer 2", "🔨", Stage::Implement, &["coordinator"]));
         save_team(tmp.path(), &cfg).unwrap();
         assert_eq!(load_team(tmp.path()).members.len(), 7);
+    }
+
+    #[test]
+    fn test_pause_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(load_paused(tmp.path()).is_empty());
+        set_paused(tmp.path(), "eng", true).unwrap();
+        set_paused(tmp.path(), "qa", true).unwrap();
+        let p = load_paused(tmp.path());
+        assert!(p.contains("eng") && p.contains("qa"));
+        set_paused(tmp.path(), "eng", false).unwrap();
+        let p = load_paused(tmp.path());
+        assert!(!p.contains("eng") && p.contains("qa"));
     }
 
     #[test]

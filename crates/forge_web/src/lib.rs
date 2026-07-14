@@ -16,6 +16,7 @@ mod craft;
 mod pipeline;
 mod schedule;
 mod usage;
+mod webterm;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -162,13 +163,14 @@ where
         .route("/api/team/run", post(pipeline::team_run::<A>))
         .route("/api/team/stop", post(pipeline::team_stop::<A>))
         .route(
-            "/api/team/agents",
-            get(pipeline::team_agents_get::<A>).put(pipeline::team_agents_set::<A>),
-        )
-        .route(
             "/api/team/config",
             get(pipeline::team_config_get::<A>).put(pipeline::team_config_set::<A>),
         )
+        .route(
+            "/api/team/watches",
+            get(pipeline::team_watches_get::<A>).put(pipeline::team_watches_set::<A>),
+        )
+        .route("/api/team/pause", post(pipeline::team_pause_set::<A>))
         .route("/api/team/files", get(pipeline::team_files::<A>))
         .route("/api/team/file", get(pipeline::team_file::<A>))
         .route("/api/team/diff", get(pipeline::team_diff::<A>))
@@ -198,6 +200,14 @@ where
 
     let app = Router::new()
         .route("/", get(index::<A>))
+        // Browser terminal for resident team members. Authorizes via the
+        // token query param (browsers can't set headers on WebSockets), so it
+        // lives outside the bearer-header /api group.
+        .route("/ws/terminal", get(webterm::terminal_ws::<A>))
+        // Vendored xterm.js — static library code, served like the page shell.
+        .route("/vendor/xterm.js", get(|| async { js(include_str!("vendor/xterm.js")) }))
+        .route("/vendor/xterm-addon-fit.js", get(|| async { js(include_str!("vendor/xterm-addon-fit.js")) }))
+        .route("/vendor/xterm.css", get(|| async { css(include_str!("vendor/xterm.css")) }))
         .merge(api_routes)
         .with_state(state.clone());
 
@@ -229,6 +239,14 @@ where
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn js(body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], body).into_response()
+}
+
+fn css(body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], body).into_response()
 }
 
 /// Middleware that enforces the bearer token on `/api/*` routes.

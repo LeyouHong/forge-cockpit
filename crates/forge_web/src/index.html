@@ -541,7 +541,12 @@
     .tm-edges path { fill: none; stroke: #8a8f98; stroke-width: 2; }
     .tm-edges path.rework { stroke: #d9822b; stroke-dasharray: 5,4; }
     .tm-card { position: absolute; width: 200px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.14); font-size: 12px; }
-    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28); }
+    .tm-card.active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.28), 0 0 18px rgba(59,130,246,.35); animation: tm-pulse 1.8s ease-in-out infinite; }
+    @keyframes tm-pulse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(59,130,246,.28), 0 0 14px rgba(59,130,246,.28); }
+      50%      { box-shadow: 0 0 0 3px rgba(59,130,246,.45), 0 0 26px rgba(59,130,246,.5); }
+    }
+    @media (prefers-reduced-motion: reduce) { .tm-card.active { animation: none; } }
     .tm-card .th { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
     .tm-card .th .ico { font-size: 16px; }
     .tm-card .th .nm { font-weight: 700; }
@@ -860,6 +865,8 @@
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
           <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
+          <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
+          <span id="tm-mode-note" class="sl" style="margin-left:8px"></span>
         </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
         <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
@@ -3170,15 +3177,7 @@
       await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
       $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
     }
-    async function tmLoadAgents() {
-      const [al, am] = await Promise.all([
-        api('/api/agents').then((r) => r.json()).catch(() => []),
-        api('/api/team/agents?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => ({ agents: {} })),
-      ]);
-      TEAM.agentList = Array.isArray(al) ? al : [];
-      TEAM.agentMap = (am && am.agents) || {};
-    }
-    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; Promise.all([tmLoadAgents(), tmLoadConfig()]).then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
+    function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadConfig().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
     async function loadTeam() {
       if (!TEAM.project) return;
       const [d, st, act] = await Promise.all([
@@ -3189,6 +3188,7 @@
       TEAM.status = (st && st.members) || {};
       renderActivity(act);
       if (d) renderTeam(d);
+      tmSyncAllTermBtn();
     }
     function renderActivity(act) {
       const box = $('tm-activity');
@@ -3253,7 +3253,9 @@
       const meta = TM_STAGES[m.stage] || TM_STAGES.implement;
       const pos = tmPos(m.id, i);
       const mine = reqs.filter((r) => meta.statuses.includes(r.status));
-      const working = mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
+      const st0 = (TEAM.status || {})[m.id];
+      const working = (st0 && st0.status === 'working')
+        || mine.find((r) => r.claimed_by && r.claimed_by.indexOf(m.id) === 0);
       const inbox = msgs.filter((x) => x.to === m.id + '-1' && !x.read && x.category === 'ticket').length;
       const el = document.createElement('div'); el.className = 'tm-card' + (working ? ' active' : ''); el.id = 'tm-' + m.id;
       el.style.left = pos.x + 'px'; el.style.top = pos.y + 'px';
@@ -3265,21 +3267,39 @@
       th.appendChild(edit);
       const cnt = document.createElement('span'); cnt.className = 'cnt' + (mine.length ? '' : ' zero'); cnt.textContent = mine.length; th.appendChild(cnt);
       const ms = (TEAM.status || {})[m.id];
+      if (ms && ms.paused) { el.style.opacity = '0.55'; }
       if (ms) {
-        const dotColor = ms.status === 'working' ? '#2e9e44' : '#8a8f98';
-        const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '');
+        const dotColor = ms.status === 'working' ? '#2e9e44' : ms.paused ? '#d4a72c' : '#8a8f98';
+        const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '') + (ms.paused ? ' · paused (finishing current work, taking nothing new)' : '');
         dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:4px' + (ms.status === 'working' ? ';box-shadow:0 0 0 3px rgba(46,158,68,.25)' : '');
         th.appendChild(dot);
+        const pp = document.createElement('span'); pp.textContent = ms.paused ? '▶' : '⏸';
+        pp.title = ms.paused ? 'resume — start taking new work again' : 'pause — finish current work, take nothing new (requests for this stage wait)';
+        pp.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+        pp.onclick = async (e) => {
+          e.stopPropagation();
+          await api('/api/team/pause', plBody({ b: { project: TEAM.project, member: m.id, paused: !ms.paused } }));
+          TEAM._sig = null; loadTeam();
+        };
+        th.appendChild(pp);
         if (ms.has_log) {
           const lg = document.createElement('span'); lg.textContent = '📜'; lg.title = 'view resident session log'; lg.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
           lg.onclick = (e) => { e.stopPropagation(); tmShowSession(m); };
           th.appendChild(lg);
         }
+        if (ms.terminal) {
+          const tm = document.createElement('span'); tm.textContent = '⌨'; tm.title = 'open this member\'s live terminal (watch or take over)';
+          tm.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+          tm.onclick = (e) => { e.stopPropagation(); tmOpenTerminal(ms.terminal, m.name || m.id); };
+          th.appendChild(tm);
+        }
       }
       const tb = document.createElement('div'); tb.className = 'tb';
       if (m.stage === 'plan') {
         const d = document.createElement('div'); d.className = 'rq';
-        d.textContent = (m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc;
+        d.textContent = (st0 && st0.request === 'planning')
+          ? '⏳ planning…'
+          : ((m.role_prompt || '').trim() ? 'custom SOP · ' + TM_STAGES.plan.desc : TM_STAGES.plan.desc);
         tb.appendChild(d);
       } else if (!mine.length) {
         const n = document.createElement('div'); n.className = 'none'; n.textContent = '(idle)'; tb.appendChild(n);
@@ -3300,13 +3320,11 @@
         el.appendChild(tf);
       }
       const af = document.createElement('div'); af.className = 'tf';
-      const lbl = document.createElement('span'); lbl.textContent = 'agent'; af.appendChild(lbl);
-      const sel = document.createElement('select'); sel.style.cssText = 'font:inherit;font-size:10px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:5px;padding:1px 4px;margin-left:auto;max-width:118px';
-      sel.title = 'Which forge agent (model + persona + toolset) this member runs as.\nforge = full dev tools; muse = plan-only; sage = read-only research.\nDefine custom agents in ~/forge/agents to pick different models per role.';
-      const def = document.createElement('option'); def.value = ''; def.textContent = 'default'; sel.appendChild(def);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m.agent === a.id) o.selected = true; sel.appendChild(o); }
-      sel.onchange = async () => { m.agent = sel.value; await tmSaveConfig(); };
-      af.appendChild(sel); el.appendChild(af);
+      const lbl = document.createElement('span'); lbl.textContent = 'terminal'; af.appendChild(lbl);
+      const cmd = document.createElement('span'); cmd.style.cssText = 'margin-left:auto;font-size:10px;opacity:.75;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      cmd.textContent = '⌨ ' + ((m.terminal_cmd || '').trim().split(/\s+/)[0] || 'claude');
+      cmd.title = 'this member is a resident tmux terminal running: ' + ((m.terminal_cmd || '').trim() || 'claude --dangerously-skip-permissions') + '\nedit via ✎';
+      af.appendChild(cmd); el.appendChild(af);
       tmMakeDraggable(el, m.id);
       const port = document.createElement('div'); port.className = 'tm-port';
       port.title = 'drag to another card to connect (that card will depend on this one)';
@@ -3492,11 +3510,6 @@
       stSel.title = 'Which lifecycle stage this member works:\nplan = runs once per goal, before the pipeline (PRD/design/requests)\nimplement = works requests in open/in_progress\nreview = works requests in review\nqa = works requests in qa';
       for (const st of ['plan', 'implement', 'review', 'qa']) { const o = document.createElement('option'); o.value = st; o.textContent = st; if (m && m.stage === st) o.selected = true; stSel.appendChild(o); }
       row('stage', stSel);
-      const agSel = document.createElement('select');
-      agSel.title = 'The forge agent (model + persona + toolset) this member runs as; custom agents in ~/forge/agents appear here';
-      const d0 = document.createElement('option'); d0.value = ''; d0.textContent = 'default agent'; agSel.appendChild(d0);
-      for (const a of (TEAM.agentList || [])) { const o = document.createElement('option'); o.value = a.id; o.textContent = a.title ? a.id + ' — ' + a.title : a.id; if (m && m.agent === a.id) o.selected = true; agSel.appendChild(o); }
-      row('agent / model', agSel);
       const apprCb = document.createElement('input'); apprCb.type = 'checkbox'; apprCb.checked = !!(m && m.requires_approval);
       apprCb.style.cssText = 'width:auto;margin:0';
       const apprWrap = document.createElement('div');
@@ -3506,6 +3519,11 @@
       apprTxt.onclick = () => { apprCb.checked = !apprCb.checked; };
       apprWrap.appendChild(apprCb); apprWrap.appendChild(apprTxt);
       row('approval', apprWrap);
+      const termCmdIn = document.createElement('input');
+      termCmdIn.value = m ? (m.terminal_cmd || '') : '';
+      termCmdIn.placeholder = 'claude --dangerously-skip-permissions (default)';
+      termCmdIn.title = 'The CLI this member\'s resident tmux terminal runs (on its own subscription login — no provider API key). Leave empty for Claude Code with permission prompts off; claude-family commands get session-resume flags appended automatically.';
+      row('terminal cmd', termCmdIn);
       const depWrap = document.createElement('div'); depWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
       depWrap.title = 'Upstream members (the canvas edges). For plan members this sets the planning ORDER; for workers it feeds topology context and notifications. Tip: drag the port on a card to connect visually.';
       for (const other of members) {
@@ -3535,21 +3553,21 @@
         if (t.name) nameIn.value = t.name;
         if (t.icon) icoIn.value = t.icon;
         if (t.stage) stSel.value = t.stage;
-        if (typeof t.agent === 'string') agSel.value = t.agent;
         if (typeof t.role_prompt === 'string') sopTa.value = t.role_prompt;
+        if (typeof t.terminal_cmd === 'string') termCmdIn.value = t.terminal_cmd;
       };
       if (m) {
         const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:6px';
         const saveT = document.createElement('button'); saveT.className = 'btn btn-sm'; saveT.textContent = '💾 Save as template';
         saveT.onclick = async () => {
           const name = await uiPrompt('Template name:', { value: m.name || m.id }); if (!name) return;
-          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
           const r = await api('/api/team/templates', plBody({ b: { name, member } }));
           $('tm-mem-msg').textContent = r.ok ? '✓ template saved' : 'save failed';
         };
         const expT = document.createElement('button'); expT.className = 'btn btn-sm'; expT.textContent = '📤 Export JSON';
         expT.onclick = () => {
-          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, depends_on: [] };
+          const member = { id: m.id, name: nameIn.value.trim() || m.id, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, terminal_cmd: termCmdIn.value.trim(), depends_on: [] };
           const a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([JSON.stringify({ member }, null, 2)], { type: 'application/json' }));
           a.download = m.id + '.json'; a.click(); URL.revokeObjectURL(a.href);
@@ -3560,7 +3578,7 @@
       $('tm-mem-save').onclick = async () => {
         const nid = (m ? m.id : idIn.value).trim();
         if (!nid) { $('tm-mem-msg').textContent = 'id required'; return; }
-        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, agent: agSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
+        const nm = { id: nid, name: nameIn.value.trim() || nid, icon: icoIn.value.trim(), stage: stSel.value, role_prompt: sopTa.value, requires_approval: apprCb.checked, terminal_cmd: termCmdIn.value.trim(), depends_on: [...depWrap.querySelectorAll('input:checked')].map((c) => c.value) };
         const list = (TEAM.cfg.members || []).slice();
         const at = list.findIndex((x) => x.id === nid);
         if (m) { list[at] = nm; } else { if (at !== -1) { $('tm-mem-msg').textContent = 'id already exists'; return; } list.push(nm); }
@@ -3617,6 +3635,124 @@
       $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
+    // ── Watches: monitor files/git/commands, route changes to board or inbox ──
+    async function tmOpenWatches() {
+      if (!TEAM.project) { alert('pick a project first'); return; }
+      let watches = await api('/api/team/watches?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => []);
+      if (!Array.isArray(watches)) watches = [];
+      $('tm-req-title').textContent = '👁 Watches — ' + TEAM.project.split('/').pop();
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const info = document.createElement('div'); info.className = 'sl'; info.style.marginBottom = '8px';
+      info.textContent = 'Evaluated by the running orchestrator on its poll loop. First look sets a baseline; changes then create a board request (the team handles it) or ticket the human inbox.';
+      b.appendChild(info);
+      const list = document.createElement('div'); b.appendChild(list);
+      const msg = document.createElement('span'); msg.className = 'sl';
+      const rowFor = (w) => {
+        const r = document.createElement('div');
+        r.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:6px;font-size:12px';
+        const en = document.createElement('input'); en.type = 'checkbox'; en.checked = w.enabled !== false; en.title = 'enabled'; en.style.cssText = 'width:auto;margin:0';
+        const id = document.createElement('input'); id.value = w.id || ''; id.placeholder = 'id'; id.style.maxWidth = '110px';
+        const kind = document.createElement('select');
+        for (const k of ['files', 'git', 'command']) { const o = document.createElement('option'); o.value = k; o.textContent = k; if ((w.kind || 'files') === k) o.selected = true; kind.appendChild(o); }
+        const target = document.createElement('input'); target.value = w.target || ''; target.style.flex = '1'; target.style.minWidth = '140px';
+        const pattern = document.createElement('input'); pattern.value = w.pattern || ''; pattern.placeholder = '*.rs / substring'; pattern.style.maxWidth = '110px';
+        const action = document.createElement('select'); action.title = 'request = auto-create a board request; alert = ticket the human inbox';
+        for (const a of ['request', 'alert']) { const o = document.createElement('option'); o.value = a; o.textContent = a === 'request' ? '→ board request' : '→ human alert'; if ((w.action || 'request') === a) o.selected = true; action.appendChild(o); }
+        const iv = document.createElement('input'); iv.type = 'number'; iv.min = '1'; iv.value = w.interval_secs || 30; iv.title = 'check interval (seconds)'; iv.style.maxWidth = '70px';
+        const brief = document.createElement('input'); brief.value = w.brief || ''; brief.placeholder = 'brief: what should the team DO about a change?'; brief.style.cssText = 'flex-basis:100%;min-width:0';
+        const del = document.createElement('button'); del.className = 'btn btn-sm'; del.textContent = '🗑'; del.onclick = () => r.remove();
+        const syncPh = () => {
+          target.placeholder = kind.value === 'files' ? 'path under project (e.g. src)' : kind.value === 'command' ? 'shell command (e.g. npm test 2>&1 | tail -5)' : '(tracks HEAD + working tree)';
+          target.disabled = kind.value === 'git';
+          pattern.style.display = kind.value === 'files' ? '' : 'none';
+        };
+        kind.onchange = syncPh; syncPh();
+        r.append(en, id, kind, target, pattern, action, iv, del, brief);
+        r._get = () => ({ id: id.value.trim(), kind: kind.value, target: target.value.trim(), pattern: pattern.value.trim(), action: action.value, brief: brief.value.trim(), interval_secs: Math.max(1, parseInt(iv.value, 10) || 30), enabled: en.checked });
+        return r;
+      };
+      watches.forEach((w) => list.appendChild(rowFor(w)));
+      const ctl = document.createElement('div'); ctl.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px';
+      const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ Add watch';
+      add.onclick = () => list.appendChild(rowFor({ id: 'watch-' + (list.children.length + 1), kind: 'files', interval_secs: 30, enabled: true }));
+      const save = document.createElement('button'); save.className = 'btn btn-primary btn-sm'; save.textContent = '💾 Save';
+      save.onclick = async () => {
+        const ws = [...list.children].map((r) => r._get());
+        const resp = await api('/api/team/watches', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, watches: ws }) });
+        if (resp.ok) { msg.textContent = '✓ saved'; setTimeout(() => { msg.textContent = ''; }, 1500); }
+        else { msg.textContent = (await resp.json().catch(() => ({}))).error || 'save failed'; }
+      };
+      ctl.append(add, save, msg); b.appendChild(ctl);
+      $('tm-reqmodal').classList.add('open');
+    }
+    $('tm-watches').onclick = tmOpenWatches;
+    // ── One-click: whole team ↔ resident terminals ──
+    // Mode note under the tabs: teams are terminal-only — every agent is a
+    // resident tmux terminal on the CLI's own subscription login.
+    function tmSyncAllTermBtn() {
+      const ms = (TEAM.cfg && TEAM.cfg.members) || [];
+      $('tm-mode-note').textContent = ms.length
+        ? '⌨ all agents run in resident terminals — Claude Code on your subscription, no provider API key'
+        : '';
+    }
+    // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
+    let xtermReady = null;
+    function loadXterm() {
+      if (xtermReady) return xtermReady;
+      xtermReady = new Promise((resolve, reject) => {
+        const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = '/vendor/xterm.css';
+        document.head.appendChild(css);
+        const s1 = document.createElement('script'); s1.src = '/vendor/xterm.js';
+        s1.onload = () => {
+          const s2 = document.createElement('script'); s2.src = '/vendor/xterm-addon-fit.js';
+          s2.onload = resolve; s2.onerror = reject;
+          document.head.appendChild(s2);
+        };
+        s1.onerror = reject;
+        document.head.appendChild(s1);
+      });
+      return xtermReady;
+    }
+    async function tmOpenTerminal(sessionName, title) {
+      try { await loadXterm(); } catch { alert('failed to load terminal assets'); return; }
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+      const box = document.createElement('div');
+      box.style.cssText = 'width:min(1000px,94vw);height:min(640px,86vh);background:#0d1117;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.5)';
+      const hd = document.createElement('div');
+      hd.style.cssText = 'display:flex;gap:10px;align-items:center;padding:8px 12px;background:#161b22;color:#e6edf3;font-size:12px';
+      hd.innerHTML = '<span>⌨ ' + escapeHtml(title) + ' — live member terminal</span><span style="opacity:.55">keystrokes go straight to the agent\'s session; closing detaches (the member keeps running)</span>';
+      const cp = document.createElement('button'); cp.className = 'btn btn-sm'; cp.textContent = '📋 attach cmd'; cp.style.marginLeft = 'auto';
+      cp.title = 'copy: tmux attach -t ' + sessionName;
+      cp.onclick = () => { navigator.clipboard && navigator.clipboard.writeText('tmux attach -t ' + sessionName); cp.textContent = '✓'; setTimeout(() => { cp.textContent = '📋 attach cmd'; }, 1200); };
+      const cl = document.createElement('button'); cl.className = 'btn btn-sm'; cl.textContent = '✕';
+      hd.appendChild(cp); hd.appendChild(cl);
+      const body = document.createElement('div'); body.style.cssText = 'flex:1;min-height:0;padding:4px';
+      box.appendChild(hd); box.appendChild(body); ov.appendChild(box); document.body.appendChild(ov);
+      const term = new window.Terminal({ fontSize: 13, cursorBlink: true, theme: { background: '#0d1117' } });
+      const fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit); term.open(body); fit.fit(); term.focus();
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host + '/ws/terminal?token=' + encodeURIComponent(TOKEN) + '&session=' + encodeURIComponent(sessionName));
+      ws.binaryType = 'arraybuffer';
+      const sendResize = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows })); };
+      ws.onopen = sendResize;
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          // \x01-prefixed text frame = human-readable error from the server
+          term.write('\r\n\x1b[31m' + ev.data.replace(/^\x01/, '') + '\x1b[0m\r\n');
+          return;
+        }
+        term.write(new Uint8Array(ev.data));
+      };
+      ws.onclose = () => term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');
+      term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'i', d })); });
+      const ro = new ResizeObserver(() => { try { fit.fit(); sendResize(); } catch {} });
+      ro.observe(body);
+      const close = () => { ro.disconnect(); try { ws.close(); } catch {} term.dispose(); ov.remove(); };
+      cl.onclick = close;
+      ov.onclick = (e) => { if (e.target === ov) close(); };
+    }
     async function tmShowRequest(id) {
       const d = await (await api('/api/team/request?project=' + encodeURIComponent(TEAM.project) + '&id=' + encodeURIComponent(id))).json().catch(() => null);
       if (!d || !d.request) return;
