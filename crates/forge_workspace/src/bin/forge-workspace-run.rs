@@ -779,11 +779,12 @@ fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
     let deadline = Instant::now() + cfg.agent_timeout;
     loop {
         std::thread::sleep(Duration::from_secs(2));
-        let done = message::get_inbox(&cfg.workspace, "orchestrator", true)
+        let done_msg = message::get_inbox(&cfg.workspace, "orchestrator", true)
             .unwrap_or_default()
-            .iter()
-            .any(|msg| msg.from.starts_with(&m.id) && msg.body.contains("PLANNING-DONE"));
-        if done {
+            .into_iter()
+            .find(|msg| msg.from.starts_with(&m.id) && msg.body.contains("PLANNING-DONE"));
+        if let Some(msg) = done_msg {
+            let _ = message::ack(&cfg.workspace, "orchestrator", &msg.id);
             break;
         }
         if Instant::now() >= deadline {
@@ -868,11 +869,13 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
     let name = terminal::session_name(&member.id);
     if let Err(e) = ensure_member_terminal(cfg, member, &name) {
         eprintln!("  ! {} terminal `{name}`: {e}", req.id);
-        return false;
+        // Terminal unreachable — treat as timeout so the tracker shows timeouts
+        // in the stuck message; this won't self-heal without human intervention.
+        return true;
     }
     if let Err(e) = terminal::send_text(&name, &cfg.workspace, prompt) {
         eprintln!("  ! {} terminal `{name}` prompt injection failed: {e}", req.id);
-        return false;
+        return true;
     }
     let start_stage = stage_for(req.status);
     let deadline = Instant::now() + cfg.agent_timeout;
