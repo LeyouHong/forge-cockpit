@@ -168,6 +168,29 @@ fn pipeline_file(file: &str) -> Result<PathBuf, AppError> {
     Ok(global_pipelines_dir().join(file))
 }
 
+/// Joins a browser-supplied relative path onto a project directory, refusing
+/// anything that could escape it.
+///
+/// A `contains("..")` check alone is not enough: `Path::join` *discards the base
+/// entirely* when the argument is absolute, so `path=/etc/passwd` sails through
+/// a `..`-only guard and reads straight off the filesystem root. Reject absolute
+/// paths (and Windows drive prefixes) as well as `..` and empty.
+fn project_rel(project: &std::path::Path, rel: &str) -> Result<PathBuf, AppError> {
+    let rel = rel.trim();
+    if rel.is_empty() || rel.contains("..") {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    let p = std::path::Path::new(rel);
+    let escapes = p.is_absolute()
+        || p.components().any(|c| {
+            matches!(c, std::path::Component::RootDir | std::path::Component::Prefix(_))
+        });
+    if escapes {
+        return Err(AppError::bad_request("invalid path"));
+    }
+    Ok(project.join(rel))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct ProjectQuery {
     project: String,
@@ -599,10 +622,7 @@ pub(crate) async fn team_files<A: API>(
     Query(q): Query<CodeQuery>,
 ) -> Result<Json<Value>, AppError> {
     let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    if q.path.contains("..") {
-        return Err(AppError::bad_request("invalid path"));
-    }
-    let dir = if q.path.is_empty() { project.clone() } else { project.join(&q.path) };
+    let dir = if q.path.is_empty() { project.clone() } else { project_rel(&project, &q.path)? };
     // Changed paths (repo-relative) from git — marks dirty files/dirs in the tree.
     let changed: Vec<String> = Command::new("git")
         .args(["status", "--porcelain"])
@@ -644,10 +664,7 @@ pub(crate) async fn team_file<A: API>(
     Query(q): Query<CodeQuery>,
 ) -> Result<Json<Value>, AppError> {
     let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    if q.path.contains("..") || q.path.is_empty() {
-        return Err(AppError::bad_request("invalid path"));
-    }
-    let mut content = std::fs::read_to_string(project.join(&q.path))
+    let mut content = std::fs::read_to_string(project_rel(&project, &q.path)?)
         .map_err(|_| AppError::not_found("not a readable text file"))?;
     if content.len() > 200_000 {
         content.truncate(200_000);
@@ -669,7 +686,14 @@ pub(crate) async fn team_diff<A: API>(
     Query(q): Query<DiffQuery>,
 ) -> Result<Json<Value>, AppError> {
     let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let files: Vec<&str> = q.files.split(',').map(str::trim).filter(|f| !f.is_empty() && !f.contains("..")).collect();
+    // Pathspecs after `--`, so no option injection; still, keep them repo-relative
+    // and traversal-free for the same reason team_file does (see project_rel).
+    let files: Vec<&str> = q
+        .files
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty() && !f.contains("..") && !std::path::Path::new(f).is_absolute())
+        .collect();
     if files.is_empty() {
         return Ok(Json(json!({ "diff": "" })));
     }
@@ -1203,5 +1227,27 @@ mod path_tests {
             projects_from(&serde_json::json!({"pipeline_projects": [{"name": "a", "path": "/p"}]})).len(),
             1
         );
+    }
+
+    /// The team code viewer reads whatever file `project_rel` resolves to. An
+    /// absolute path must not escape the project: `Path::join` throws the base
+    /// away for an absolute argument, so `/etc/passwd` used to read through a
+    /// `..`-only check. This is the regression test for that read.
+    #[test]
+    fn test_project_rel_blocks_escapes() {
+        let project = std::path::Path::new("/home/u/proj");
+
+        // The exploit that motivated this: absolute path, no "..".
+        assert_eq!(project_rel(project, "/etc/passwd").is_err(), true);
+        assert_eq!(project_rel(project, "..").is_err(), true);
+        assert_eq!(project_rel(project, "../../etc/passwd").is_err(), true);
+        assert_eq!(project_rel(project, "a/../../../etc").is_err(), true);
+        assert_eq!(project_rel(project, "").is_err(), true);
+        assert_eq!(project_rel(project, "   ").is_err(), true);
+
+        // Legitimate repo-relative paths still resolve, under the project.
+        let ok = project_rel(project, "src/main.rs").expect("relative path");
+        assert_eq!(ok, std::path::Path::new("/home/u/proj/src/main.rs"));
+        assert_eq!(ok.starts_with(project), true);
     }
 }
