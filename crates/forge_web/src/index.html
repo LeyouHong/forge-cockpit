@@ -3261,11 +3261,21 @@
       th.appendChild(edit);
       const cnt = document.createElement('span'); cnt.className = 'cnt' + (mine.length ? '' : ' zero'); cnt.textContent = mine.length; th.appendChild(cnt);
       const ms = (TEAM.status || {})[m.id];
+      if (ms && ms.paused) { el.style.opacity = '0.55'; }
       if (ms) {
-        const dotColor = ms.status === 'working' ? '#2e9e44' : '#8a8f98';
-        const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '');
+        const dotColor = ms.status === 'working' ? '#2e9e44' : ms.paused ? '#d4a72c' : '#8a8f98';
+        const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '') + (ms.paused ? ' · paused (finishing current work, taking nothing new)' : '');
         dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:4px' + (ms.status === 'working' ? ';box-shadow:0 0 0 3px rgba(46,158,68,.25)' : '');
         th.appendChild(dot);
+        const pp = document.createElement('span'); pp.textContent = ms.paused ? '▶' : '⏸';
+        pp.title = ms.paused ? 'resume — start taking new work again' : 'pause — finish current work, take nothing new (requests for this stage wait)';
+        pp.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+        pp.onclick = async (e) => {
+          e.stopPropagation();
+          await api('/api/team/pause', plBody({ b: { project: TEAM.project, member: m.id, paused: !ms.paused } }));
+          TEAM._sig = null; loadTeam();
+        };
+        th.appendChild(pp);
         if (ms.has_log) {
           const lg = document.createElement('span'); lg.textContent = '📜'; lg.title = 'view resident session log'; lg.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
           lg.onclick = (e) => { e.stopPropagation(); tmShowSession(m); };

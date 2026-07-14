@@ -127,6 +127,37 @@ pub fn save_team(workspace: &Path, cfg: &TeamConfig) -> Result<()> {
     Ok(())
 }
 
+/// Pause flags, persisted at `<workspace>/.team-paused.json` as
+/// `{"<member-id>": true}`. A paused member is never scheduled new work
+/// (in-flight work finishes normally); requests for its stage wait rather
+/// than being rerouted or covered — pause means "hold", not "reassign".
+fn paused_path(workspace: &Path) -> std::path::PathBuf {
+    workspace.join(".team-paused.json")
+}
+
+pub fn load_paused(workspace: &Path) -> HashSet<String> {
+    std::fs::read_to_string(paused_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str::<BTreeMap<String, bool>>(&s).ok())
+        .map(|m| m.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect())
+        .unwrap_or_default()
+}
+
+pub fn set_paused(workspace: &Path, member: &str, paused: bool) -> Result<()> {
+    let mut map: BTreeMap<String, bool> = std::fs::read_to_string(paused_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    if paused {
+        map.insert(member.to_string(), true);
+    } else {
+        map.remove(member);
+    }
+    std::fs::create_dir_all(workspace)?;
+    std::fs::write(paused_path(workspace), serde_json::to_string_pretty(&map)?)?;
+    Ok(())
+}
+
 /// Reject configs the orchestrator can't run: duplicate/empty ids, unknown
 /// `depends_on` targets, dependency cycles, or no implement-stage member.
 pub fn validate_team(cfg: &TeamConfig) -> Result<()> {
@@ -210,6 +241,19 @@ mod tests {
         cfg.members.push(member("engineer-2", "Engineer 2", "🔨", Stage::Implement, &["coordinator"]));
         save_team(tmp.path(), &cfg).unwrap();
         assert_eq!(load_team(tmp.path()).members.len(), 7);
+    }
+
+    #[test]
+    fn test_pause_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(load_paused(tmp.path()).is_empty());
+        set_paused(tmp.path(), "eng", true).unwrap();
+        set_paused(tmp.path(), "qa", true).unwrap();
+        let p = load_paused(tmp.path());
+        assert!(p.contains("eng") && p.contains("qa"));
+        set_paused(tmp.path(), "eng", false).unwrap();
+        let p = load_paused(tmp.path());
+        assert!(!p.contains("eng") && p.contains("qa"));
     }
 
     #[test]

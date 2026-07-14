@@ -8,6 +8,8 @@
 //!     engineer <id> [--files a,b] [--notes N]   write engineer section (-> review)
 //!     review   <id> --result R                  approved|changes_requested|rejected
 //!     qa       <id> --result R                  passed|failed
+//!     pause    <member>                         hold new work for a member
+//!     resume   <member>                         release the hold
 //!
 //! Default root: ./.forge-workspace (override with --root or FORGE_WORKSPACE_DIR).
 
@@ -125,6 +127,17 @@ fn run() -> anyhow::Result<()> {
             };
             let r = request::update_response(&root, &id, Section::Qa { result, notes: String::new() })?;
             println!("{} -> {:?}", r.id, r.status);
+        }
+        "pause" | "resume" => {
+            let Some(member) = rest.first() else {
+                anyhow::bail!("usage: forge-workspace pause|resume <member-id>");
+            };
+            let paused = cmd == "pause";
+            forge_workspace::team::set_paused(&root, member, paused)?;
+            println!(
+                "{member} {}",
+                if paused { "paused — finishes current work, takes nothing new" } else { "resumed" }
+            );
         }
         other => {
             eprintln!("unknown command: {other:?}\nsee the header of this file for usage");

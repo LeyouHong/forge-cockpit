@@ -777,11 +777,53 @@ pub(crate) async fn team_status<A: API>(
                 .unwrap_or(false)
         })
         .unwrap_or(false);
-    let members: Value = std::fs::read_to_string(ws.join(".team-status.json"))
+    let mut members: Value = std::fs::read_to_string(ws.join(".team-status.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}));
+    // Overlay live pause flags: .team-status.json is only written by a
+    // running orchestrator, but ⏸/▶ must read truthfully (and be toggleable)
+    // while the daemon is down too.
+    let paused = forge_workspace::team::load_paused(&ws);
+    if let Some(map) = members.as_object_mut() {
+        // Every roster member gets an entry even before the orchestrator has
+        // ever written status — the ⏸/▶ toggle must exist from the start.
+        for m in &forge_workspace::team::load_team(&ws).members {
+            map.entry(m.id.clone()).or_insert_with(|| json!({ "status": "idle" }));
+        }
+        for m in map.values_mut() {
+            m["paused"] = json!(false);
+        }
+        for id in &paused {
+            let entry = map.entry(id.clone()).or_insert_with(|| json!({ "status": "paused" }));
+            entry["paused"] = json!(true);
+            if entry["status"] == json!("idle") {
+                entry["status"] = json!("paused");
+            }
+        }
+    }
     Ok(Json(json!({ "running": alive, "members": members })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PauseSet {
+    project: String,
+    member: String,
+    paused: bool,
+}
+
+/// POST /api/team/pause — hold (or release) new work for one member. Takes
+/// effect at the orchestrator's next scheduling decision; in-flight work
+/// finishes normally.
+pub(crate) async fn team_pause_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<PauseSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::set_paused(&ws, &body.member, body.paused)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "member": body.member, "paused": body.paused })))
 }
 
 #[derive(Deserialize)]

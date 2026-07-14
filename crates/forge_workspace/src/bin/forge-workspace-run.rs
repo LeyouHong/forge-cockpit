@@ -187,20 +187,41 @@ fn stage_sop(stage: Stage) -> &'static str {
 /// reference forge's Lead SOP): coordinator if present, else any plan-stage
 /// member, else the first member. The second tuple field is true in that case
 /// so the spawn swaps in the stage's SOP instead of the member's own.
-fn member_for(team: &TeamConfig, status: RequestStatus, req_id: &str) -> Option<(TeamMember, bool)> {
+enum Pick {
+    /// A member takes it (bool = Lead covering a stage gap).
+    Member(TeamMember, bool),
+    /// Everyone who could take it is paused — the request waits. Pause means
+    /// "hold this stage's work", so held requests are neither rerouted to
+    /// other stages nor covered by the Lead.
+    Held,
+    /// The team is empty.
+    Empty,
+}
+
+fn member_for(team: &TeamConfig, paused: &HashSet<String>, status: RequestStatus, req_id: &str) -> Pick {
     let stage = stage_for(status);
     let pool: Vec<&TeamMember> = team.members.iter().filter(|m| m.stage == stage).collect();
     if !pool.is_empty() {
+        let avail: Vec<&&TeamMember> = pool.iter().filter(|m| !paused.contains(&m.id)).collect();
+        if avail.is_empty() {
+            return Pick::Held;
+        }
         let n: usize = req_id.bytes().map(|b| b as usize).sum();
-        return Some((pool[n % pool.len()].clone(), false));
+        return Pick::Member((*avail[n % avail.len()]).clone(), false);
     }
-    let lead = team
+    let Some(lead) = team
         .members
         .iter()
         .find(|m| m.id == "coordinator")
         .or_else(|| team.members.iter().find(|m| m.stage == Stage::Plan))
-        .or_else(|| team.members.first())?;
-    Some((lead.clone(), true))
+        .or_else(|| team.members.first())
+    else {
+        return Pick::Empty;
+    };
+    if paused.contains(&lead.id) {
+        return Pick::Held;
+    }
+    Pick::Member(lead.clone(), true)
 }
 
 /// Approval gate state, persisted at `<workspace>/.team-approvals.json` as
@@ -306,11 +327,14 @@ fn now_banner() -> String {
 /// whether each has a persistent session log. Read by the Team page.
 fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocument]) {
     let running = state.lock().unwrap().running.clone();
-    // Which member owns each running request (stable pick, mirrors scheduling).
+    let paused = team::load_paused(&cfg.workspace);
+    // Which member owns each running request (stable pick, mirrors scheduling
+    // — including the paused filter, so attribution matches who was actually
+    // picked; a member paused mid-run simply shows paused once it finishes).
     let mut working: HashMap<String, String> = HashMap::new();
     for req in todo {
         if running.contains(&req.id) {
-            if let Some((m, _)) = member_for(&cfg.team, req.status, &req.id) {
+            if let Pick::Member(m, _) = member_for(&cfg.team, &paused, req.status, &req.id) {
                 working.insert(m.id, req.id.clone());
             }
         }
@@ -320,6 +344,7 @@ fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocu
         let has_log = member_log_path(&cfg.workspace, &m.id).exists();
         let (status, request) = match working.get(&m.id) {
             Some(r) => ("working", Some(r.clone())),
+            None if paused.contains(&m.id) => ("paused", None),
             None => ("idle", None),
         };
         // For resident-terminal members, expose the live tmux session (when it
@@ -328,7 +353,10 @@ fn write_member_status(cfg: &Cfg, state: &Arc<Mutex<State>>, todo: &[RequestDocu
             .then(|| terminal::session_name(&m.id));
         out.insert(
             m.id.clone(),
-            serde_json::json!({ "status": status, "request": request, "has_log": has_log, "terminal": tmux }),
+            serde_json::json!({
+                "status": status, "request": request, "has_log": has_log,
+                "terminal": tmux, "paused": paused.contains(&m.id),
+            }),
         );
     }
     let path = cfg.workspace.join(".team-status.json");
@@ -461,6 +489,10 @@ fn run() -> anyhow::Result<()> {
         let reqs = request::list_requests(&cfg.workspace, None)?;
         let todo: Vec<RequestDocument> = reqs.into_iter().filter(pending).collect();
 
+        // Pause flags are re-read every poll so a ⏸ pressed in the web UI
+        // takes effect at the next scheduling decision without a restart.
+        let paused = team::load_paused(&cfg.workspace);
+
         // Schedule pending requests that aren't already running / stuck.
         {
             let mut guard = state.lock().unwrap();
@@ -492,9 +524,15 @@ fn run() -> anyhow::Result<()> {
 
                 // Approval gate — checked before the attempt counter so a
                 // request waiting on a human never accrues stuck-attempts.
-                let Some((member, covering)) = member_for(&cfg.team, req.status, &req.id) else {
-                    println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
-                    continue;
+                // (Held-by-pause likewise consumes nothing: waiting for a
+                // human to press ▶ is not failure.)
+                let (member, covering) = match member_for(&cfg.team, &paused, req.status, &req.id) {
+                    Pick::Member(m, c) => (m, c),
+                    Pick::Held => continue,
+                    Pick::Empty => {
+                        println!("  ! {} [{:?}] team is empty — skipping", req.id, req.status);
+                        continue;
+                    }
                 };
                 if !cfg.dry_run && !approval_granted(&cfg, req, &member) {
                     continue;
@@ -995,4 +1033,60 @@ fn ensure_workspace_mcp(project: &Path, mcp_bin: &Path, workspace: &Path) -> any
     });
     std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_member_for_pause_semantics() {
+        let team = team::default_team();
+        let none = HashSet::new();
+        let eng_paused: HashSet<String> = ["engineer".to_string()].into();
+
+        // Unpaused: engineer takes open work.
+        assert!(matches!(
+            member_for(&team, &none, RequestStatus::Open, "req-1"),
+            Pick::Member(m, false) if m.id == "engineer"
+        ));
+        // Paused sole stage member: the request is held — no reroute, no cover.
+        assert!(matches!(member_for(&team, &eng_paused, RequestStatus::Open, "req-1"), Pick::Held));
+        // Other stages unaffected.
+        assert!(matches!(
+            member_for(&team, &eng_paused, RequestStatus::Review, "req-1"),
+            Pick::Member(m, false) if m.id == "reviewer"
+        ));
+    }
+
+    #[test]
+    fn test_member_for_covering_lead_respects_pause() {
+        let mut team = team::default_team();
+        team.members.retain(|m| m.stage != Stage::Qa); // gap: nobody for qa
+        let none = HashSet::new();
+        // Lead (coordinator) covers the gap…
+        assert!(matches!(
+            member_for(&team, &none, RequestStatus::Qa, "req-1"),
+            Pick::Member(m, true) if m.id == "coordinator"
+        ));
+        // …unless the Lead itself is paused — then the request waits.
+        let lead_paused: HashSet<String> = ["coordinator".to_string()].into();
+        assert!(matches!(member_for(&team, &lead_paused, RequestStatus::Qa, "req-1"), Pick::Held));
+    }
+
+    #[test]
+    fn test_member_for_multi_member_stage_skips_paused() {
+        let mut team = team::default_team();
+        let mut e2 = team.members.iter().find(|m| m.id == "engineer").unwrap().clone();
+        e2.id = "engineer-2".into();
+        team.members.push(e2);
+        // With one engineer paused, every open request lands on the other.
+        let one_paused: HashSet<String> = ["engineer".to_string()].into();
+        for req in ["req-a", "req-b", "req-c"] {
+            assert!(matches!(
+                member_for(&team, &one_paused, RequestStatus::Open, req),
+                Pick::Member(m, false) if m.id == "engineer-2"
+            ));
+        }
+    }
 }
