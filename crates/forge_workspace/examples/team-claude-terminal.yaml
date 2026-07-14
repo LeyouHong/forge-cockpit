@@ -1,0 +1,50 @@
+# The default team shape, spelled out. Every member IS a resident terminal:
+# a persistent tmux session running an interactive CLI agent on the user's
+# subscription login (Claude Code unless terminal_cmd says otherwise) — no
+# provider API key is spent on team work. The orchestrator injects prompts
+# into each pane and watches the board; join any member live from the Team
+# page (⌨ on its card) or with `tmux attach -t forge-team-<id>`.
+#
+# Requires: tmux installed, `claude` installed and logged in. The default
+# command is `claude --dangerously-skip-permissions` (unattended operation);
+# set terminal_cmd to `claude` to keep permission prompts on, or point it at
+# another CLI agent entirely.
+#
+# Import from the Team page (team YAML import), or save as
+# <project>/.forge-workspace/.team.json in JSON form.
+members:
+  - id: coordinator
+    name: Lead
+    icon: 🧭
+    stage: plan
+    role_prompt: ""
+    depends_on: []
+    requires_approval: false
+    terminal_cmd: ""
+  - id: engineer
+    name: Engineer
+    icon: 🔨
+    stage: implement
+    role_prompt: ""
+    depends_on:
+      - coordinator
+    requires_approval: false
+    terminal_cmd: ""
+  - id: reviewer
+    name: Reviewer
+    icon: 🔍
+    stage: review
+    role_prompt: ""
+    depends_on:
+      - engineer
+    requires_approval: false
+    terminal_cmd: ""
+  - id: qa
+    name: QA
+    icon: ✅
+    stage: qa
+    role_prompt: ""
+    depends_on:
+      - reviewer
+    requires_approval: false
+    terminal_cmd: ""

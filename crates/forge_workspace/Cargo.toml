@@ -10,6 +10,7 @@ rust-version.workspace = true
 # on its own before any orchestration is wired up.
 
 [dependencies]
+bstr.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_yml.workspace = true
 serde_json.workspace = true

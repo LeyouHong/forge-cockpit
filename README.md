@@ -127,6 +127,12 @@ Beyond chat, the cockpit ships a full orchestration stack — build reusable age
 
   <p align="center"><img src="docs/img/team.png" alt="Team — editable multi-agent canvas" width="900"></p>
 
+  Every member runs as a **resident terminal**: a persistent tmux session with an interactive CLI agent — **Claude Code by default, on its own subscription login, no provider API key**. The orchestrator drives it the way a human would (pastes the prompt, watches the board), and the session keeps its memory across tasks via `--resume`. Click ⌨ on a live member's card to open its **terminal right in the cockpit** (xterm.js over WebSocket) — watch the agent work or take over and type, from any browser; closing the pane detaches without disturbing the member. `tmux attach -t forge-team-<id>` works locally too. Requires `tmux` and the CLI agent installed and logged in — the team runs entirely on the CLI's subscription auth; no provider API key is spent on team work.
+
+  Every member card has a **⏸/▶ pause toggle** (also `forge-workspace pause|resume <member>`): a paused member finishes its current work but takes nothing new — requests for its stage wait rather than being rerouted or Lead-covered, and pause survives orchestrator restarts. Handy for taking over a resident terminal without the orchestrator injecting the next prompt mid-conversation.
+
+  **Watches** (👁 on the Team page) keep an idle team reactive: monitor a directory (with a `*.ext` filter), the git state (HEAD + working tree), or any shell command's output — on change, either a request lands on the board (the team analyzes/handles it autonomously, with an optional *brief* telling it what to do) or a ticket alerts the human inbox. The first look only sets a baseline, and state survives orchestrator restarts.
+
 - **⏰ Schedules** — timed automation: a **trigger** (every N min / cron / once / manual) fires a **body** (a saved pipeline, or a one-shot agent prompt), then an optional **action** delivers the output (webhook/Slack or email). Run history with cleaned output tails.
 
   <p align="center"><img src="docs/img/schedules.png" alt="Schedules — timed automation" width="900"></p>

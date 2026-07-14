@@ -403,12 +403,38 @@ mod tests {
         assert!(claim_request(d.path(), &req.id, "eng-2").is_err());
     }
 
+    /// A board notification for a member whose pane is down is HELD, not lost —
+    /// it lands the moment the orchestrator sees the pane come up.
+    #[test]
+    fn notify_to_a_down_member_is_held_then_delivered() {
+        let d = tmp();
+        create_request(d.path(), NewRequest { title: "x".into(), ..Default::default() }).unwrap();
+        assert_eq!(
+            crate::message::get_inbox(d.path(), "engineer-1", true).unwrap().len(),
+            0,
+            "engineer's pane is down — the notification waits in the outbox"
+        );
+        crate::message::set_liveness(d.path(), "engineer-1", crate::message::Liveness::Alive).unwrap();
+        assert_eq!(
+            crate::message::get_inbox(d.path(), "engineer-1", true).unwrap().len(),
+            1,
+            "pane up → outbox flushed → notification delivered"
+        );
+    }
+
     #[test]
     fn transitions_auto_notify_the_next_stage() {
         // Default team applies (no .team.json): engineer / reviewer / qa /
         // plan trio. Each transition should drop a Notification in the inbox
         // of the stage that now owns the request.
+        //
+        // Members must be alive for mail to land: the bus holds messages for a
+        // member whose pane is down (see the outbox case below), and in a real
+        // run the orchestrator marks liveness from live tmux panes each poll.
         let d = tmp();
+        for who in ["engineer-1", "reviewer-1", "qa-1", "coordinator-1"] {
+            crate::message::set_liveness(d.path(), who, crate::message::Liveness::Alive).unwrap();
+        }
         let unread = |who: &str| crate::message::get_inbox(d.path(), who, true).unwrap().len();
 
         let req = create_request(d.path(), NewRequest { title: "x".into(), ..Default::default() }).unwrap();
