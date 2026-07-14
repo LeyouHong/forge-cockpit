@@ -300,7 +300,7 @@ fn tail(s: &str, n: usize) -> String {
 fn fire(s: Schedule, fired_by: &str) {
     let started = Utc::now();
     {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::lock(&LOCK);
         let mut runs = load_runs();
         runs.push(ScheduleRun {
             schedule_id: s.id.clone(),
@@ -348,7 +348,7 @@ fn fire(s: Schedule, fired_by: &str) {
         } else {
             forge_workspace::pipeline::strip_ansi(&out)
         };
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::lock(&LOCK);
         let mut runs = load_runs();
         // Action layer: only on success with non-empty output (reference-forge
         // semantics); status recorded independently of the body status.
@@ -415,7 +415,7 @@ pub async fn tick_loop() {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         let now = Utc::now();
         let (due, runs_changed): (Vec<Schedule>, bool) = {
-            let _g = LOCK.lock().unwrap();
+            let _g = crate::lock(&LOCK);
             let mut list = load_schedules();
             let runs = load_runs();
             let mut due = Vec::new();
@@ -493,7 +493,7 @@ fn decorate(s: &Schedule, runs: &[ScheduleRun]) -> Value {
 
 /// GET /api/schedules
 pub(crate) async fn list<A: API>(State(_): State<AppState<A>>) -> Json<Value> {
-    let _g = LOCK.lock().unwrap();
+    let _g = crate::lock(&LOCK);
     let runs = load_runs();
     let out: Vec<Value> = load_schedules().iter().map(|s| decorate(s, &runs)).collect();
     Json(json!({ "schedules": out }))
@@ -509,7 +509,7 @@ pub(crate) async fn create<A: API>(
     body.next_run_at = None;
     validate(&body).map_err(AppError::bad_request)?;
     body.next_run_at = compute_next(&body, Utc::now());
-    let _g = LOCK.lock().unwrap();
+    let _g = crate::lock(&LOCK);
     let mut list = load_schedules();
     list.push(body.clone());
     save_schedules(&list);
@@ -534,7 +534,7 @@ pub(crate) async fn update<A: API>(
     Json(body): Json<Schedule>,
 ) -> Result<Json<Value>, AppError> {
     validate(&body).map_err(AppError::bad_request)?;
-    let _g = LOCK.lock().unwrap();
+    let _g = crate::lock(&LOCK);
     let mut list = load_schedules();
     let Some(cur) = list.iter_mut().find(|s| s.id == body.id) else {
         return Err(AppError::not_found("no such schedule"));
@@ -552,7 +552,7 @@ pub(crate) async fn delete<A: API>(
     State(_): State<AppState<A>>,
     Json(q): Json<IdRef>,
 ) -> Json<Value> {
-    let _g = LOCK.lock().unwrap();
+    let _g = crate::lock(&LOCK);
     let mut list = load_schedules();
     list.retain(|s| s.id != q.id);
     save_schedules(&list);
@@ -565,7 +565,7 @@ pub(crate) async fn fire_now<A: API>(
     Json(q): Json<IdRef>,
 ) -> Result<Json<Value>, AppError> {
     let s = {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::lock(&LOCK);
         load_schedules().into_iter().find(|s| s.id == q.id)
     }
     .ok_or_else(|| AppError::not_found("no such schedule"))?;
@@ -583,7 +583,7 @@ pub(crate) async fn runs<A: API>(
     State(_): State<AppState<A>>,
     Query(q): Query<RunsQuery>,
 ) -> Json<Value> {
-    let _g = LOCK.lock().unwrap();
+    let _g = crate::lock(&LOCK);
     let mut mine: Vec<ScheduleRun> = load_runs().into_iter().filter(|r| r.schedule_id == q.id).collect();
     mine.reverse();
     mine.truncate(20);

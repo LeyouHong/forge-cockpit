@@ -44,6 +44,8 @@ jobs/**
 *.map
 # vendored web assets are source, not build output
 !crates/forge_web/src/vendor/*.js
+# the cockpit's own frontend is source too
+!crates/forge_web/src/app/*.js
 # the npm wrapper package is hand-written source, not build output — without
 # these, a new file here is silently left out of the commit and ships broken
 !npm/forge-cockpit/*.js

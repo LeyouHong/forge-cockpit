@@ -209,6 +209,11 @@ where
         // refuse every craft's inline script. Gated by the session cookie —
         // an iframe navigation cannot send a bearer header.
         .route("/craft/view", get(craft::view::<A>))
+        // The cockpit's own frontend, split by concern. These are classic
+        // scripts sharing one global scope, executed in the order index.html
+        // lists them — the split is a move, not a module rewrite. `'self'` in
+        // the page CSP covers them, so they need no nonce.
+        .route("/app/{file}", get(app_script))
         // Vendored xterm.js — static library code, served like the page shell.
         .route("/vendor/xterm.js", get(|| async { js(include_str!("vendor/xterm.js")) }))
         .route("/vendor/xterm-addon-fit.js", get(|| async { js(include_str!("vendor/xterm-addon-fit.js")) }))
@@ -250,8 +255,64 @@ fn js(body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], body).into_response()
 }
 
+/// The frontend's scripts, compiled into the binary alongside index.html.
+///
+/// Matched by name rather than read from disk: the whole cockpit ships as one
+/// executable, and an installed binary has no `src/` to read from. An unknown
+/// name is a 404, so this cannot be turned into a file-read primitive.
+async fn app_script(Path(file): Path<String>) -> Response {
+    let body = match file.as_str() {
+        "core.js" => include_str!("app/core.js"),
+        "chat.js" => include_str!("app/chat.js"),
+        "connections.js" => include_str!("app/connections.js"),
+        "panel.js" => include_str!("app/panel.js"),
+        "boards.js" => include_str!("app/boards.js"),
+        "pipeline.js" => include_str!("app/pipeline.js"),
+        "crafts.js" => include_str!("app/crafts.js"),
+        "usage.js" => include_str!("app/usage.js"),
+        "schedules.js" => include_str!("app/schedules.js"),
+        "team.js" => include_str!("app/team.js"),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    js(body)
+}
+
 fn css(body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], body).into_response()
+}
+
+/// Locks a mutex, recovering from poisoning rather than propagating the panic.
+///
+/// Every mutex in this crate guards plain data — a schedule file, a task log, an
+/// abort handle — with no invariant a panicking thread could leave half-updated.
+/// `lock().unwrap()` would turn one panicking request into a permanently broken
+/// panel: the mutex stays poisoned, so *every later request* panics too. The
+/// process-wide `schedule::LOCK` made that especially costly. Continuing with
+/// the data we have is strictly better than that cascade.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!(
+            "recovered from a poisoned mutex — a previous request panicked while holding it"
+        );
+        poisoned.into_inner()
+    })
+}
+
+/// Compares two secrets without leaking their common prefix length via timing.
+///
+/// The token gates command execution on the host, and a page in the user's
+/// browser can hammer these endpoints cross-origin. A short-circuiting `==` is
+/// almost certainly not exploitable across 122 bits of UUID, but this costs one
+/// XOR per byte and removes the question.
+///
+/// The length check short-circuits early — safe only because the cockpit token
+/// format is fixed-width (UUID v4). Do not use this with variable-length secrets.
+pub(crate) fn secret_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Middleware that enforces the bearer token on `/api/*` routes.
@@ -266,7 +327,7 @@ async fn auth<A>(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
 
-    if provided == Some(state.token.as_str()) {
+    if provided.is_some_and(|p| secret_eq(p, &state.token)) {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::UNAUTHORIZED)
@@ -291,7 +352,10 @@ async fn index<A>(
     Query(query): Query<IndexQuery>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let query_ok = query.token.as_deref() == Some(state.token.as_str());
+    let query_ok = secret_eq(
+        query.token.as_deref().unwrap_or(""),
+        &state.token,
+    );
     if !query_ok && !cookie_ok(&headers, &state.token) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -341,7 +405,7 @@ pub(crate) fn cookie_ok(headers: &axum::http::HeaderMap, token: &str) -> bool {
     headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
-        .map(|c| c.split(';').any(|kv| kv.trim() == want))
+        .map(|c| c.split(';').any(|kv| secret_eq(kv.trim(), &want)))
         .unwrap_or(false)
 }
 
@@ -945,6 +1009,7 @@ async fn delete_mcp<A: API>(
 }
 
 /// Error wrapper that renders as a JSON error response.
+#[derive(Debug)]
 pub(crate) struct AppError {
     status: StatusCode,
     message: String,
@@ -976,12 +1041,66 @@ impl IntoResponse for AppError {
 }
 
 #[cfg(test)]
+mod guard_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_secret_eq_matches_only_the_exact_secret() {
+        assert_eq!(secret_eq("abc123", "abc123"), true);
+        assert_eq!(secret_eq("abc123", "abc124"), false);
+        // A prefix must not pass: length is checked before the byte compare.
+        assert_eq!(secret_eq("abc", "abc123"), false);
+        assert_eq!(secret_eq("abc123", "abc"), false);
+        assert_eq!(secret_eq("", ""), true);
+    }
+
+    /// One panicking request used to poison a mutex for the rest of the run,
+    /// so every later request panicked too. `lock` must get in anyway.
+    #[test]
+    fn test_lock_recovers_from_a_poisoned_mutex() {
+        let m = Arc::new(std::sync::Mutex::new(41));
+
+        let m2 = m.clone();
+        let poisoner = std::thread::spawn(move || {
+            let _held = m2.lock().unwrap();
+            panic!("poison the mutex while holding it");
+        });
+        assert_eq!(poisoner.join().is_err(), true);
+
+        // Genuinely poisoned — the plain API refuses.
+        assert_eq!(m.lock().is_err(), true);
+
+        // ...and ours still works, so the panel keeps serving.
+        *lock(&m) += 1;
+        assert_eq!(*lock(&m), 42);
+    }
+}
+
+#[cfg(test)]
 mod csp_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     const PAGE: &str = include_str!("index.html");
+
+    /// Every file that can put markup on the page. The inline-handler guard has
+    /// to see all of them, or a handler added in team.js quietly never fires.
+    const FRONTEND: &[(&str, &str)] = &[
+        ("index.html", PAGE),
+        ("app/core.js", include_str!("app/core.js")),
+        ("app/chat.js", include_str!("app/chat.js")),
+        ("app/connections.js", include_str!("app/connections.js")),
+        ("app/panel.js", include_str!("app/panel.js")),
+        ("app/boards.js", include_str!("app/boards.js")),
+        ("app/pipeline.js", include_str!("app/pipeline.js")),
+        ("app/crafts.js", include_str!("app/crafts.js")),
+        ("app/usage.js", include_str!("app/usage.js")),
+        ("app/schedules.js", include_str!("app/schedules.js")),
+        ("app/team.js", include_str!("app/team.js")),
+    ];
 
     /// The whole point of the nonce is that *no other* inline script may run.
     /// `'unsafe-inline'` in `script-src` would silently restore exactly the
@@ -1014,18 +1133,34 @@ mod csp_tests {
     /// instead, and point at the delegation pattern that replaced them.
     #[test]
     fn test_page_has_no_inline_event_handlers() {
-        let re = regex::Regex::new(r"\bon\w+=").unwrap();
-        let offenders: Vec<usize> = PAGE
-            .lines()
-            .enumerate()
-            .filter(|(_, l)| re.is_match(l))
-            .map(|(i, _)| i + 1)
+        // The regex catches every on*= attribute, not just a hardcoded few; the
+        // scan covers all ten scripts, not just index.html, since markup is now
+        // built in app/*.js. A handler added in team.js is just as dead.
+        let re = regex::Regex::new(r#"\bon\w+=["']"#).unwrap();
+        let offenders: Vec<String> = FRONTEND
+            .iter()
+            .flat_map(|(name, src)| {
+                src.lines()
+                    .enumerate()
+                    .filter(|(_, l)| re.is_match(l))
+                    .map(move |(i, _)| format!("{name}:{}", i + 1))
+            })
             .collect();
         assert_eq!(
             offenders,
-            Vec::<usize>::new(),
+            Vec::<String>::new(),
             "inline handlers never fire under the page CSP — use a data-* attribute \
              plus a delegated listener (see the [data-code-rel] handler)"
         );
+    }
+
+    /// index.html must load every extracted script, in order, or a whole panel
+    /// silently disappears. Pins the list against the routes in `app_script`.
+    #[test]
+    fn test_index_loads_every_app_script() {
+        for (name, _) in FRONTEND.iter().filter(|(n, _)| n.starts_with("app/")) {
+            let tag = format!("<script src=\"/{name}\"></script>");
+            assert_eq!(PAGE.contains(&tag), true, "index.html never loads {name}");
+        }
     }
 }

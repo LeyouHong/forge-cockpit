@@ -273,10 +273,33 @@ pub(crate) async fn generate<A: API>(
 }
 
 #[cfg(test)]
-mod csp_tests {
+mod path_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    fn project() -> PathBuf {
+        PathBuf::from("/tmp/proj")
+    }
+
+    /// The craft name comes from the query string, so it decides which file the
+    /// server reads and serves. It must stay inside the crafts directory.
+    #[test]
+    fn test_craft_file_rejects_traversal() {
+        for bad in ["../secret", "..", "a/../../etc/passwd", "sub/dir", "a\\b", "", "   "] {
+            assert_eq!(
+                craft_file(&project(), bad).is_err(),
+                true,
+                "craft name {bad:?} escaped the crafts directory"
+            );
+        }
+    }
+
+    #[test]
+    fn test_craft_file_accepts_a_plain_name() {
+        let p = craft_file(&project(), "endpoints").expect("plain name");
+        assert_eq!(p, PathBuf::from("/tmp/proj/.forge/crafts/endpoints.html"));
+    }
 
     /// A craft is agent-written code. It gets inline script (it needs it) and
     /// nothing else — in particular no way to reach the network, which is what

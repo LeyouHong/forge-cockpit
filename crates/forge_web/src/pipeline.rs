@@ -1141,3 +1141,67 @@ fn shellexpand(path: &str) -> String {
     }
     path.to_string()
 }
+
+#[cfg(test)]
+mod path_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// The pipeline name is user input that selects a file to read, write or
+    /// delete under ~/.forge-web/pipelines. Traversal here is a write primitive.
+    #[test]
+    fn test_pipeline_file_rejects_traversal_and_bad_extensions() {
+        for bad in [
+            "../../.bashrc.yaml",
+            "..",
+            "sub/dir.yaml",
+            "back\\slash.yaml",
+            "",
+            "   ",
+            "no-extension",
+            "wrong.json",
+            "wrong.yaml.txt",
+        ] {
+            assert_eq!(
+                pipeline_file(bad).is_err(),
+                true,
+                "pipeline name {bad:?} should have been rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pipeline_file_accepts_yaml_and_yml() {
+        for good in ["build.yaml", "build.yml"] {
+            let p = pipeline_file(good).expect("valid name");
+            assert_eq!(p.parent(), Some(global_pipelines_dir()).as_deref());
+            assert_eq!(p.file_name().and_then(|f| f.to_str()), Some(good));
+        }
+    }
+
+    /// The layout file sits beside the pipeline, and inherits the same guard.
+    #[test]
+    fn test_layout_path_sits_beside_the_pipeline_and_inherits_the_guard() {
+        let p = layout_path("build.yaml").expect("valid name");
+        assert_eq!(p.file_name().and_then(|f| f.to_str()), Some("build.layout.json"));
+        assert_eq!(layout_path("../escape.yaml").is_err(), true);
+    }
+
+    #[test]
+    fn test_validate_reports_bad_yaml_instead_of_panicking() {
+        let (ok, err) = validate("this: is: not: valid: yaml:");
+        assert_eq!(ok, false);
+        assert_eq!(err.is_some(), true);
+    }
+
+    #[test]
+    fn test_projects_from_tolerates_a_missing_or_malformed_key() {
+        assert_eq!(projects_from(&serde_json::json!({})).len(), 0);
+        assert_eq!(projects_from(&serde_json::json!({"pipeline_projects": "nope"})).len(), 0);
+        assert_eq!(
+            projects_from(&serde_json::json!({"pipeline_projects": [{"name": "a", "path": "/p"}]})).len(),
+            1
+        );
+    }
+}
