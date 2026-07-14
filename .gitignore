@@ -42,6 +42,8 @@ jobs/**
 *.d.ts
 *.js
 *.map
+# vendored web assets are source, not build output
+!crates/forge_web/src/vendor/*.js
 **/.forge/request.body.json
 # Pipeline/team runtime state (pipelines are now global under ~/.forge-web)
 **/.forge/pipelines/
