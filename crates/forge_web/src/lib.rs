@@ -204,6 +204,11 @@ where
         // token query param (browsers can't set headers on WebSockets), so it
         // lives outside the bearer-header /api group.
         .route("/ws/terminal", get(webterm::terminal_ws::<A>))
+        // A craft renders as its own document (not `srcdoc`) so it carries its
+        // own CSP instead of inheriting the page's nonce policy, which would
+        // refuse every craft's inline script. Gated by the session cookie —
+        // an iframe navigation cannot send a bearer header.
+        .route("/craft/view", get(craft::view::<A>))
         // Vendored xterm.js — static library code, served like the page shell.
         .route("/vendor/xterm.js", get(|| async { js(include_str!("vendor/xterm.js")) }))
         .route("/vendor/xterm-addon-fit.js", get(|| async { js(include_str!("vendor/xterm-addon-fit.js")) }))
@@ -313,27 +318,71 @@ async fn index<A>(
     headers: axum::http::HeaderMap,
 ) -> Response {
     let query_ok = query.token.as_deref() == Some(state.token.as_str());
-    let want = format!("forge_token={}", state.token);
-    let cookie_ok = headers
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .map(|c| c.split(';').any(|kv| secret_eq(kv.trim(), &want)))
-        .unwrap_or(false);
-    if !query_ok && !cookie_ok {
+    if !query_ok && !cookie_ok(&headers, &state.token) {
         return (
             StatusCode::UNAUTHORIZED,
             Html("<h1>Unauthorized</h1><p>Open the URL printed by <code>forge serve</code>, which includes the access token.</p>"),
         )
             .into_response();
     }
-    let page = include_str!("index.html").replace("__FORGE_TOKEN__", &state.token);
+
+    // A per-response nonce is what lets the page keep its one big inline
+    // <script> while still refusing every *other* inline script. The page
+    // renders attacker-influenced text (GitHub issue titles, Sentry messages,
+    // agent output), so an escaping slip must not become script execution.
+    let nonce = ConversationId::generate().into_string();
+    let page = include_str!("index.html")
+        .replace("__FORGE_TOKEN__", &state.token)
+        .replace("__CSP_NONCE__", &nonce);
+
     let mut resp = Html(page).into_response();
+    if let Ok(csp) = page_csp(&nonce).parse() {
+        resp.headers_mut().insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
     if query_ok {
+        let want = format!("forge_token={}", state.token);
         if let Ok(cookie) = format!("{want}; Path=/; SameSite=Strict; HttpOnly").parse() {
             resp.headers_mut().insert(axum::http::header::SET_COOKIE, cookie);
         }
     }
     resp
+}
+
+/// True when the request carries the session cookie set by [`index`].
+///
+/// Used by routes a browser loads as a *document* (the page shell, and a
+/// craft's iframe), which cannot send an `Authorization` header the way the
+/// `/api/*` fetches do.
+pub(crate) fn cookie_ok(headers: &axum::http::HeaderMap, token: &str) -> bool {
+    let want = format!("forge_token={token}");
+    headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|c| c.split(';').any(|kv| secret_eq(kv.trim(), &want)))
+        .unwrap_or(false)
+}
+
+/// CSP for the cockpit page.
+///
+/// `script-src` carries no `'unsafe-inline'`: the page's own script runs by
+/// nonce, `/vendor/*.js` by `'self'`, and anything injected into the DOM runs
+/// not at all. `style-src` keeps `'unsafe-inline'` because the UI builds markup
+/// with inline `style="…"` attributes throughout; style injection cannot execute
+/// code, so that is a deliberate trade rather than an oversight.
+fn page_csp(nonce: &str) -> String {
+    format!(
+        "default-src 'none'; \
+         script-src 'nonce-{nonce}' 'self'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob:; \
+         font-src 'self' data:; \
+         connect-src 'self'; \
+         frame-src 'self'; \
+         base-uri 'none'; \
+         form-action 'none'; \
+         object-src 'none'; \
+         frame-ancestors 'none'"
+    )
 }
 
 /// A lightweight conversation summary for the sidebar.
@@ -969,5 +1018,63 @@ mod guard_tests {
         // ...and ours still works, so the panel keeps serving.
         *lock(&m) += 1;
         assert_eq!(*lock(&m), 42);
+    }
+}
+
+#[cfg(test)]
+mod csp_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const PAGE: &str = include_str!("index.html");
+
+    /// The whole point of the nonce is that *no other* inline script may run.
+    /// `'unsafe-inline'` in `script-src` would silently restore exactly the
+    /// capability being removed.
+    #[test]
+    fn test_page_csp_forbids_inline_script() {
+        let csp = page_csp("abc");
+        let script_src = csp
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("script-src"))
+            .expect("script-src directive");
+        assert_eq!(script_src.contains("'unsafe-inline'"), false);
+        assert_eq!(script_src.contains("'nonce-abc'"), true);
+        assert_eq!(csp.contains("object-src 'none'"), true);
+        assert_eq!(csp.contains("base-uri 'none'"), true);
+    }
+
+    /// The page's own script only runs if the handler can substitute a nonce
+    /// into it. If the placeholder is ever dropped from index.html the page
+    /// goes blank, so pin it.
+    #[test]
+    fn test_page_carries_the_nonce_placeholder() {
+        assert_eq!(PAGE.matches("__CSP_NONCE__").count(), 1);
+        assert_eq!(PAGE.contains("<script nonce=\"__CSP_NONCE__\">"), true);
+    }
+
+    /// An inline `onclick=` cannot carry a nonce, so under this CSP it simply
+    /// never fires — a button that looks fine and does nothing. Fail the build
+    /// instead, and point at the delegation pattern that replaced them.
+    #[test]
+    fn test_page_has_no_inline_event_handlers() {
+        let offenders: Vec<usize> = PAGE
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| {
+                ["onclick=\"", "onchange=\"", "oninput=\"", "onsubmit=\"", "onload=\""]
+                    .iter()
+                    .any(|h| l.contains(h))
+            })
+            .map(|(i, _)| i + 1)
+            .collect();
+        assert_eq!(
+            offenders,
+            Vec::<usize>::new(),
+            "inline handlers never fire under the page CSP — use a data-* attribute \
+             plus a delegated listener (see the [data-code-rel] handler)"
+        );
     }
 }
