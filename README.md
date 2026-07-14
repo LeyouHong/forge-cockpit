@@ -56,7 +56,7 @@ npm install -g forge-cockpit     # or run once with: npx forge-cockpit
 
 On install, the right prebuilt binary for your platform (macOS arm64, Linux x64/arm64, Windows x64) is downloaded from the matching GitHub Release — nothing is compiled on your machine. Prefer building yourself, or on an Intel Mac? See [Build from source](#build-from-source).
 
-> On Linux the binary dynamically links OpenSSL (`libssl`) for IMAP email support; install `libssl3` if it's missing (present on virtually all modern distros).
+> On Linux the prebuilt binaries need glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+); on older distros, [build from source](#build-from-source). The binary also dynamically links OpenSSL (`libssl`) for IMAP email support; install `libssl3` if it's missing (present on virtually all modern distros).
 
 ## Quickstart (bring your own key)
 
