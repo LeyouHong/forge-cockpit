@@ -846,6 +846,7 @@
       <button class="btn btn-sm" id="tm-import" title="Load a team YAML — replaces this project's team (validated first)">📂 Import</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
       <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
+      <button class="btn btn-sm" id="tm-allterm" title="Toggle the WHOLE team between resident terminals (tmux + Claude Code on your subscription — no provider API key) and forge subprocess agents (provider API). Per-member overrides live in each member's editor.">⌨ All Terminal</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
     </div>
@@ -3185,6 +3186,7 @@
       TEAM.status = (st && st.members) || {};
       renderActivity(act);
       if (d) renderTeam(d);
+      tmSyncAllTermBtn();
     }
     function renderActivity(act) {
       const box = $('tm-activity');
@@ -3698,6 +3700,27 @@
       $('tm-reqmodal').classList.add('open');
     }
     $('tm-watches').onclick = tmOpenWatches;
+    // ── One-click: whole team ↔ resident terminals ──
+    function tmSyncAllTermBtn() {
+      const ms = (TEAM.cfg && TEAM.cfg.members) || [];
+      const allOn = ms.length > 0 && ms.every((m) => m.terminal);
+      $('tm-allterm').textContent = allOn ? '⌨ All Terminal ✓' : '⌨ All Terminal';
+    }
+    $('tm-allterm').onclick = async () => {
+      const ms = (TEAM.cfg && TEAM.cfg.members) || [];
+      if (!TEAM.project || !ms.length) { alert('pick a project with a team first'); return; }
+      const allOn = ms.every((m) => m.terminal);
+      const q = allOn
+        ? 'Switch ALL ' + ms.length + ' members back to forge subprocess agents (provider API key)?'
+        : 'Switch ALL ' + ms.length + ' members to resident terminals (tmux + Claude Code on your subscription)? Requires tmux and a logged-in claude CLI.';
+      if (!(await uiConfirm(q, { confirmText: allOn ? 'Use API agents' : 'Use terminals' }))) return;
+      ms.forEach((m) => { m.terminal = !allOn; });
+      if (await tmSaveConfig()) {
+        $('tm-status').textContent = allOn ? '✓ team on forge API agents' : '✓ team on resident terminals';
+        $('tm-status').style.color = '';
+        loadTeam(); tmSyncAllTermBtn();
+      }
+    };
     // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
     let xtermReady = null;
     function loadXterm() {
