@@ -129,6 +129,8 @@ Beyond chat, the cockpit ships a full orchestration stack — build reusable age
 
   Any member can instead run as a **resident terminal** (check *terminal* in the member editor): a persistent tmux session with an interactive CLI agent — **Claude Code by default, on its own subscription login, no provider API key**. The orchestrator drives it the way a human would (pastes the prompt, watches the board), and the session keeps its memory across tasks via `--resume`. Click ⌨ on a live member's card to open its **terminal right in the cockpit** (xterm.js over WebSocket) — watch the agent work or take over and type, from any browser; closing the pane detaches without disturbing the member. `tmux attach -t forge-team-<id>` works locally too. Requires `tmux` and the CLI agent installed and logged in.
 
+  **Watches** (👁 on the Team page) keep an idle team reactive: monitor a directory (with a `*.ext` filter), the git state (HEAD + working tree), or any shell command's output — on change, either a request lands on the board (the team analyzes/handles it autonomously, with an optional *brief* telling it what to do) or a ticket alerts the human inbox. The first look only sets a baseline, and state survives orchestrator restarts.
+
 - **⏰ Schedules** — timed automation: a **trigger** (every N min / cron / once / manual) fires a **body** (a saved pipeline, or a one-shot agent prompt), then an optional **action** delivers the output (webhook/Slack or email). Run history with cleaned output tails.
 
   <p align="center"><img src="docs/img/schedules.png" alt="Schedules — timed automation" width="900"></p>

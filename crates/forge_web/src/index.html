@@ -845,6 +845,7 @@
       <button class="btn btn-sm" id="tm-export" title="Download this team (members, SOPs, connections, layout) as YAML">📤 Export</button>
       <button class="btn btn-sm" id="tm-import" title="Load a team YAML — replaces this project's team (validated first)">📂 Import</button>
       <button class="btn btn-sm" id="tm-addproject" title="Add a project folder">+ Project</button>
+      <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
       <button class="btn btn-ghost btn-sm" id="tm-refresh">Refresh</button>
       <button class="icon-btn" id="team-close" title="Close">✕</button>
     </div>
@@ -3636,6 +3637,57 @@
       $('tm-reqmodal').classList.add('open');
     }
     $('tm-req-close').onclick = () => $('tm-reqmodal').classList.remove('open');
+    // ── Watches: monitor files/git/commands, route changes to board or inbox ──
+    async function tmOpenWatches() {
+      if (!TEAM.project) { alert('pick a project first'); return; }
+      let watches = await api('/api/team/watches?project=' + encodeURIComponent(TEAM.project)).then((r) => r.json()).catch(() => []);
+      if (!Array.isArray(watches)) watches = [];
+      $('tm-req-title').textContent = '👁 Watches — ' + TEAM.project.split('/').pop();
+      const b = $('tm-req-body'); b.innerHTML = '';
+      const info = document.createElement('div'); info.className = 'sl'; info.style.marginBottom = '8px';
+      info.textContent = 'Evaluated by the running orchestrator on its poll loop. First look sets a baseline; changes then create a board request (the team handles it) or ticket the human inbox.';
+      b.appendChild(info);
+      const list = document.createElement('div'); b.appendChild(list);
+      const msg = document.createElement('span'); msg.className = 'sl';
+      const rowFor = (w) => {
+        const r = document.createElement('div');
+        r.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:6px;font-size:12px';
+        const en = document.createElement('input'); en.type = 'checkbox'; en.checked = w.enabled !== false; en.title = 'enabled'; en.style.cssText = 'width:auto;margin:0';
+        const id = document.createElement('input'); id.value = w.id || ''; id.placeholder = 'id'; id.style.maxWidth = '110px';
+        const kind = document.createElement('select');
+        for (const k of ['files', 'git', 'command']) { const o = document.createElement('option'); o.value = k; o.textContent = k; if ((w.kind || 'files') === k) o.selected = true; kind.appendChild(o); }
+        const target = document.createElement('input'); target.value = w.target || ''; target.style.flex = '1'; target.style.minWidth = '140px';
+        const pattern = document.createElement('input'); pattern.value = w.pattern || ''; pattern.placeholder = '*.rs / substring'; pattern.style.maxWidth = '110px';
+        const action = document.createElement('select'); action.title = 'request = auto-create a board request; alert = ticket the human inbox';
+        for (const a of ['request', 'alert']) { const o = document.createElement('option'); o.value = a; o.textContent = a === 'request' ? '→ board request' : '→ human alert'; if ((w.action || 'request') === a) o.selected = true; action.appendChild(o); }
+        const iv = document.createElement('input'); iv.type = 'number'; iv.min = '1'; iv.value = w.interval_secs || 30; iv.title = 'check interval (seconds)'; iv.style.maxWidth = '70px';
+        const brief = document.createElement('input'); brief.value = w.brief || ''; brief.placeholder = 'brief: what should the team DO about a change?'; brief.style.cssText = 'flex-basis:100%;min-width:0';
+        const del = document.createElement('button'); del.className = 'btn btn-sm'; del.textContent = '🗑'; del.onclick = () => r.remove();
+        const syncPh = () => {
+          target.placeholder = kind.value === 'files' ? 'path under project (e.g. src)' : kind.value === 'command' ? 'shell command (e.g. npm test 2>&1 | tail -5)' : '(tracks HEAD + working tree)';
+          target.disabled = kind.value === 'git';
+          pattern.style.display = kind.value === 'files' ? '' : 'none';
+        };
+        kind.onchange = syncPh; syncPh();
+        r.append(en, id, kind, target, pattern, action, iv, del, brief);
+        r._get = () => ({ id: id.value.trim(), kind: kind.value, target: target.value.trim(), pattern: pattern.value.trim(), action: action.value, brief: brief.value.trim(), interval_secs: Math.max(1, parseInt(iv.value, 10) || 30), enabled: en.checked });
+        return r;
+      };
+      watches.forEach((w) => list.appendChild(rowFor(w)));
+      const ctl = document.createElement('div'); ctl.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px';
+      const add = document.createElement('button'); add.className = 'btn btn-sm'; add.textContent = '+ Add watch';
+      add.onclick = () => list.appendChild(rowFor({ id: 'watch-' + (list.children.length + 1), kind: 'files', interval_secs: 30, enabled: true }));
+      const save = document.createElement('button'); save.className = 'btn btn-primary btn-sm'; save.textContent = '💾 Save';
+      save.onclick = async () => {
+        const ws = [...list.children].map((r) => r._get());
+        const resp = await api('/api/team/watches', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, watches: ws }) });
+        if (resp.ok) { msg.textContent = '✓ saved'; setTimeout(() => { msg.textContent = ''; }, 1500); }
+        else { msg.textContent = (await resp.json().catch(() => ({}))).error || 'save failed'; }
+      };
+      ctl.append(add, save, msg); b.appendChild(ctl);
+      $('tm-reqmodal').classList.add('open');
+    }
+    $('tm-watches').onclick = tmOpenWatches;
     // ── Live member terminal (xterm.js over WebSocket → tmux attach) ──
     let xtermReady = null;
     function loadXterm() {

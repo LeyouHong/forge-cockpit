@@ -32,6 +32,7 @@ use forge_workspace::message::{self, Category};
 use forge_workspace::request::{self, RequestDocument, RequestStatus};
 use forge_workspace::team::{self, Stage, TeamConfig, TeamMember};
 use forge_workspace::terminal;
+use forge_workspace::watch::{self, WatchAction};
 use serde_json::json;
 
 const ENGINEER_SOP: &str = include_str!("../../roles/engineer.md");
@@ -423,6 +424,40 @@ fn run() -> anyhow::Result<()> {
     let mut idle_since: Option<Instant> = None;
 
     loop {
+        // Watches: evaluate due monitors and route what fired. A `request`
+        // watch lands on the board and is scheduled below like any other
+        // work; an `alert` watch tickets the human inbox. In daemon mode
+        // this is what wakes an idle team when the world changes.
+        for f in watch::tick(&cfg.project, &cfg.workspace) {
+            match f.action {
+                WatchAction::Request if !cfg.dry_run => {
+                    match request::create_request(
+                        &cfg.workspace,
+                        request::NewRequest {
+                            title: format!("[watch:{}] {}", f.watch_id, f.headline),
+                            description: f.body,
+                            acceptance_criteria: Vec::new(),
+                            batch: None,
+                        },
+                    ) {
+                        Ok(r) => println!("  ⚑ watch `{}` fired → {}", f.watch_id, r.id),
+                        Err(e) => eprintln!("  ! watch `{}` fired but create_request failed: {e:#}", f.watch_id),
+                    }
+                }
+                WatchAction::Request => println!("  ⚑ watch `{}` fired (dry-run, no request)", f.watch_id),
+                WatchAction::Alert => {
+                    let _ = message::send_message(
+                        &cfg.workspace,
+                        "watch-manager",
+                        &cfg.alert_to,
+                        &format!("Watch `{}`: {}\n\n{}", f.watch_id, f.headline, f.body),
+                        Category::Ticket,
+                    );
+                    println!("  ⚑ watch `{}` fired → alerted `{}`", f.watch_id, cfg.alert_to);
+                }
+            }
+        }
+
         let reqs = request::list_requests(&cfg.workspace, None)?;
         let todo: Vec<RequestDocument> = reqs.into_iter().filter(pending).collect();
 

@@ -17,6 +17,7 @@ pub mod pipeline;
 pub mod request;
 pub mod team;
 pub mod terminal;
+pub mod watch;
 
 pub use message::{get_inbox, list_messages, send_message, Category, Message};
 pub use request::{

@@ -543,6 +543,35 @@ pub(crate) async fn team_config_set<A: API>(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// GET /api/team/watches?project= — the project's watch list.
+pub(crate) async fn team_watches_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let watches = forge_workspace::watch::load_watches(&ws);
+    Ok(Json(serde_json::to_value(&watches).unwrap_or_else(|_| json!([]))))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WatchesSet {
+    project: String,
+    watches: Vec<forge_workspace::watch::Watch>,
+}
+
+/// PUT /api/team/watches — save the watch list (validated).
+pub(crate) async fn team_watches_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<WatchesSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::watch::save_watches(&ws, &body.watches)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CodeQuery {
     project: String,
