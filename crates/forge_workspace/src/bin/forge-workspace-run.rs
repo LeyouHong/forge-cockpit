@@ -423,6 +423,34 @@ fn run() -> anyhow::Result<()> {
     let mut idle_since: Option<Instant> = None;
 
     loop {
+        // Bus upkeep, before any scheduling:
+        //   1. liveness — a member is up iff its pane is; coming back flushes
+        //      the outbox, so mail sent while it was down lands now.
+        //   2. retries  — tickets/requests not acked within the ACK window
+        //      resurface in the recipient's inbox; exhausted ones fail and
+        //      alert a human (a dropped rework request is silent otherwise).
+        for m in &cfg.team.members {
+            let live = if terminal::has_session(&terminal::session_name(&m.id)) {
+                message::Liveness::Alive
+            } else {
+                message::Liveness::Down
+            };
+            let _ = message::set_liveness(&cfg.workspace, &format!("{}-1", m.id), live);
+        }
+        let (retried, failed) = message::retry_stale(&cfg.workspace);
+        if !retried.is_empty() {
+            println!("  ↻ bus: {} message(s) re-delivered (no ack within {}s)", retried.len(), message::ACK_TIMEOUT_SECS);
+        }
+        for id in &failed {
+            let body = format!(
+                "Message `{id}` was never acknowledged after {} delivery attempts — the recipient \
+                 is ignoring it or cannot act. A human should look.",
+                message::MAX_RETRIES
+            );
+            println!("  ✗ bus: message {id} FAILED after {} attempts — alerting `{}`.", message::MAX_RETRIES, cfg.alert_to);
+            let _ = message::send_message(&cfg.workspace, "bus", &cfg.alert_to, &body, Category::Ticket);
+        }
+
         // Watches: evaluate due monitors and route what fired. A `request`
         // watch lands on the board and is scheduled below like any other
         // work; an `alert` watch tickets the human inbox. In daemon mode
@@ -780,7 +808,11 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
             let prompt = format!(
                 "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
-                 submit_engineer_work, submit_review, submit_qa, send_message, get_inbox). Follow \
+                 submit_engineer_work, submit_review, submit_qa, send_message, get_inbox, \
+                 ack_message, ask_agent, reply_to_agent). Check get_inbox before you start: a \
+                 ticket there is retried until you ack_message it, and a request must be answered \
+                 with reply_to_agent. When you are blocked on a teammate's decision, ask_agent \
+                 waits for their answer instead of guessing. Follow \
                  your SOP to find the request that needs your role and complete exactly your step. \
                  The request likely waiting for you is `{}`. Start now.",
                 req.id,

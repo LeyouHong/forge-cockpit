@@ -10,6 +10,8 @@
 //!     qa       <id> --result R                  passed|failed
 //!     pause    <member>                         hold new work for a member
 //!     resume   <member>                         release the hold
+//!     bus                                       show the message bus (delivery state)
+//!     liveness <agent> alive|down               mark an agent up/down (flushes its outbox)
 //!
 //! Default root: ./.forge-workspace (override with --root or FORGE_WORKSPACE_DIR).
 
@@ -127,6 +129,34 @@ fn run() -> anyhow::Result<()> {
             };
             let r = request::update_response(&root, &id, Section::Qa { result, notes: String::new() })?;
             println!("{} -> {:?}", r.id, r.status);
+        }
+        "bus" => {
+            for m in forge_workspace::message::list_messages(&root)? {
+                let extra = match (m.retries, m.reply_to.as_deref()) {
+                    (0, None) => String::new(),
+                    (r, None) => format!(" retries={r}"),
+                    (0, Some(x)) => format!(" reply_to={x}"),
+                    (r, Some(x)) => format!(" retries={r} reply_to={x}"),
+                };
+                println!(
+                    "{}  [{:?}/{:?}]{}  {} -> {}: {}",
+                    m.id, m.category, m.status, extra, m.from, m.to, m.body.lines().next().unwrap_or("")
+                );
+            }
+        }
+        "liveness" => {
+            let agent = rest.first().cloned().unwrap_or_default();
+            let up = rest.get(1).map(|s| s == "alive").unwrap_or(false);
+            if agent.is_empty() {
+                anyhow::bail!("usage: forge-workspace liveness <agent> alive|down");
+            }
+            let status = if up {
+                forge_workspace::message::Liveness::Alive
+            } else {
+                forge_workspace::message::Liveness::Down
+            };
+            forge_workspace::message::set_liveness(&root, &agent, status)?;
+            println!("{agent} is {}{}", if up { "alive" } else { "down" }, if up { " (outbox flushed)" } else { "" });
         }
         "pause" | "resume" => {
             let Some(member) = rest.first() else {

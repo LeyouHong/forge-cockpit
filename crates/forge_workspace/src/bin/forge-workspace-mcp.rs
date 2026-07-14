@@ -172,8 +172,17 @@ fn handle_call(msg: &Value) -> Result<Value, String> {
                     let text = if msgs.is_empty() {
                         "(inbox empty)".to_string()
                     } else {
+                        // Ids are part of the payload: tickets and requests are
+                        // retried until acked, and a request needs its id to answer.
                         msgs.iter()
-                            .map(|m| format!("[{:?}] from {}: {}", m.category, m.from, m.body))
+                            .map(|m| {
+                                let duty = match m.category {
+                                    Category::Ticket => "  → when handled: ack_message(id)",
+                                    Category::Request => "  → answer with: reply_to_agent(request_id)",
+                                    _ => "",
+                                };
+                                format!("{} [{:?}] from {}: {}{}", m.id, m.category, m.from, m.body, duty)
+                            })
                             .collect::<Vec<_>>()
                             .join("\n")
                     };
@@ -182,6 +191,32 @@ fn handle_call(msg: &Value) -> Result<Value, String> {
                 Err(e) => text_result(format!("error: {e:#}"), true),
             }
         }
+        "ack_message" => match message::ack(&r, &s("agent"), &s("id")) {
+            Ok(true) => text_result(format!("acked {}", s("id")), false),
+            Ok(false) => text_result(format!("no such message: {}", s("id")), true),
+            Err(e) => text_result(format!("error: {e:#}"), true),
+        },
+        "ask_agent" => {
+            let secs = args.get("timeout_secs").and_then(Value::as_u64).unwrap_or(300).clamp(10, 900);
+            match message::request(
+                &r,
+                &s("from"),
+                &s("to"),
+                &s("body"),
+                std::time::Duration::from_secs(secs),
+            ) {
+                Ok(Some(answer)) => text_result(format!("{} answered: {}", answer.from, answer.body), false),
+                Ok(None) => text_result(
+                    format!("no answer from {} within {secs}s — proceed on your own judgement", s("to")),
+                    false,
+                ),
+                Err(e) => text_result(format!("error: {e:#}"), true),
+            }
+        }
+        "reply_to_agent" => match message::respond(&r, &s("from"), &s("request_id"), &s("body")) {
+            Ok(m) => text_result(format!("answered {} ({})", s("request_id"), m.id), false),
+            Err(e) => text_result(format!("error: {e:#}"), true),
+        },
         other => return Err(format!("unknown tool: {other}")),
     };
     Ok(out)
@@ -252,7 +287,22 @@ fn tool_defs() -> Value {
             "body": str_prop("Message text"),
             "category": json!({ "type": "string", "enum": ["notification","ticket"], "description": "notification = FYI; ticket = please act on it (default ticket)" })
           }), json!(["from","to","body"])) },
-        { "name": "get_inbox", "description": "Read your inbox. Returned messages are marked read, so poll unread_only to see each once.",
-          "inputSchema": obj(json!({ "agent": str_prop("Your agent name"), "unread_only": json!({ "type": "boolean", "description": "Only unread messages (default true)" }) }), json!(["agent"])) }
+        { "name": "get_inbox", "description": "Read your inbox. Each message is returned with its id. Tickets are RETRIED until you ack_message them; requests must be answered with reply_to_agent.",
+          "inputSchema": obj(json!({ "agent": str_prop("Your agent name"), "unread_only": json!({ "type": "boolean", "description": "Only unread messages (default true)" }) }), json!(["agent"])) },
+        { "name": "ack_message", "description": "Confirm you have HANDLED a ticket. Un-acked tickets resurface in your inbox and eventually fail — ack only when the work is actually done.",
+          "inputSchema": obj(json!({ "agent": str_prop("Your agent name"), "id": str_prop("Message id from get_inbox") }), json!(["agent","id"])) },
+        { "name": "ask_agent", "description": "Ask a teammate a question and WAIT for the answer (blocks until they reply or the timeout passes). Use when you are blocked on someone else's decision; for fire-and-forget use send_message.",
+          "inputSchema": obj(json!({
+            "from": str_prop("Your agent name"),
+            "to": str_prop("Agent to ask (e.g. architect-1)"),
+            "body": str_prop("Your question"),
+            "timeout_secs": json!({ "type": "integer", "description": "How long to wait (default 300, max 900)" })
+          }), json!(["from","to","body"])) },
+        { "name": "reply_to_agent", "description": "Answer a question another agent asked you (a Request in your inbox). This closes their ask_agent wait.",
+          "inputSchema": obj(json!({
+            "from": str_prop("Your agent name"),
+            "request_id": str_prop("The request's message id, from get_inbox"),
+            "body": str_prop("Your answer")
+          }), json!(["from","request_id","body"])) }
     ])
 }
