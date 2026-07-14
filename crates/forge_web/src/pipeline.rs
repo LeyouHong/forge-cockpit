@@ -472,10 +472,15 @@ pub(crate) async fn team_run<A: API>(
     }
     let _ = std::fs::remove_file(ws.join(".team-status.json"));
     // Reset the board too: drop old requests so the Done column starts empty
-    // for this run (their record lived on the previous session).
-    if let Ok(entries) = std::fs::read_dir(ws.join("requests")) {
+    // for this run (their record lived on the previous session). Requests live
+    // as `<ws>/<req-id>/request.yml` directly under the workspace root — only
+    // dirs actually containing a request.yml are removed, so pipelines/,
+    // messages/, .team-terminal/ etc. are untouched.
+    if let Ok(entries) = std::fs::read_dir(&ws) {
         for e in entries.flatten() {
-            let _ = std::fs::remove_dir_all(e.path());
+            if e.path().join("request.yml").exists() {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
         }
     }
     if let Ok(entries) = std::fs::read_dir(ws.join(".team-logs")) {
@@ -487,7 +492,7 @@ pub(crate) async fn team_run<A: API>(
     let log = std::fs::File::create(ws.join(".team-run.log"))?;
     let err = log.try_clone()?;
     let mut cmd = Command::new(&bin);
-    cmd.arg("--project").arg(&project).arg("--workspace").arg(&ws).arg("--isolate-mcp");
+    cmd.arg("--project").arg(&project).arg("--workspace").arg(&ws);
     if let Some(g) = body.goal.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
         cmd.arg("--goal").arg(g);
     }
@@ -539,6 +544,35 @@ pub(crate) async fn team_config_set<A: API>(
     let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
     let ws = project.join(".forge-workspace");
     forge_workspace::team::save_team(&ws, &body.config)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /api/team/watches?project= — the project's watch list.
+pub(crate) async fn team_watches_get<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<ProjectQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let watches = forge_workspace::watch::load_watches(&ws);
+    Ok(Json(serde_json::to_value(&watches).unwrap_or_else(|_| json!([]))))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WatchesSet {
+    project: String,
+    watches: Vec<forge_workspace::watch::Watch>,
+}
+
+/// PUT /api/team/watches — save the watch list (validated).
+pub(crate) async fn team_watches_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<WatchesSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::watch::save_watches(&ws, &body.watches)
         .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -748,11 +782,53 @@ pub(crate) async fn team_status<A: API>(
                 .unwrap_or(false)
         })
         .unwrap_or(false);
-    let members: Value = std::fs::read_to_string(ws.join(".team-status.json"))
+    let mut members: Value = std::fs::read_to_string(ws.join(".team-status.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}));
+    // Overlay live pause flags: .team-status.json is only written by a
+    // running orchestrator, but ⏸/▶ must read truthfully (and be toggleable)
+    // while the daemon is down too.
+    let paused = forge_workspace::team::load_paused(&ws);
+    if let Some(map) = members.as_object_mut() {
+        // Every roster member gets an entry even before the orchestrator has
+        // ever written status — the ⏸/▶ toggle must exist from the start.
+        for m in &forge_workspace::team::load_team(&ws).members {
+            map.entry(m.id.clone()).or_insert_with(|| json!({ "status": "idle" }));
+        }
+        for m in map.values_mut() {
+            m["paused"] = json!(false);
+        }
+        for id in &paused {
+            let entry = map.entry(id.clone()).or_insert_with(|| json!({ "status": "paused" }));
+            entry["paused"] = json!(true);
+            if entry["status"] == json!("idle") {
+                entry["status"] = json!("paused");
+            }
+        }
+    }
     Ok(Json(json!({ "running": alive, "members": members })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PauseSet {
+    project: String,
+    member: String,
+    paused: bool,
+}
+
+/// POST /api/team/pause — hold (or release) new work for one member. Takes
+/// effect at the orchestrator's next scheduling decision; in-flight work
+/// finishes normally.
+pub(crate) async fn team_pause_set<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<PauseSet>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::set_paused(&ws, &body.member, body.paused)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "member": body.member, "paused": body.paused })))
 }
 
 #[derive(Deserialize)]
@@ -916,48 +992,6 @@ pub(crate) async fn team_templates_delete<A: API>(
     list.retain(|t| t.get("name").and_then(Value::as_str) != Some(q.name.as_str()));
     save_team_templates(&list);
     Json(json!({ "ok": true }))
-}
-
-/// GET /api/team/agents?project=NAME — the role→agent map for this project.
-pub(crate) async fn team_agents_get<A: API>(
-    State(_): State<AppState<A>>,
-    Query(q): Query<ProjectQuery>,
-) -> Result<Json<Value>, AppError> {
-    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let map: Value = std::fs::read_to_string(project.join(".forge-workspace").join(".team-agents.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}));
-    Ok(Json(json!({ "agents": map })))
-}
-
-#[derive(Deserialize)]
-pub(crate) struct TeamAgentsSet {
-    project: String,
-    agents: Value,
-}
-
-/// PUT /api/team/agents — save the role→agent map (used by the orchestrator to
-/// pass `--agent` per role). Empty values are dropped.
-pub(crate) async fn team_agents_set<A: API>(
-    State(_): State<AppState<A>>,
-    Json(body): Json<TeamAgentsSet>,
-) -> Result<Json<Value>, AppError> {
-    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
-    let ws = project.join(".forge-workspace");
-    std::fs::create_dir_all(&ws)?;
-    let clean: serde_json::Map<String, Value> = body
-        .agents
-        .as_object()
-        .map(|m| {
-            m.iter()
-                .filter(|(_, v)| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    std::fs::write(ws.join(".team-agents.json"), serde_json::to_string_pretty(&clean).unwrap_or_default())?;
-    Ok(Json(json!({ "ok": true })))
 }
 
 /// POST /api/team/stop — stop the orchestrator running for a project.
