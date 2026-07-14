@@ -766,9 +766,11 @@ mod tests {
         use fake::{Fake, Faker};
         let mut fixture: Environment = Faker.fake();
         fixture = fixture.os(os.to_string());
-        if let Some(home_path) = home {
-            fixture = fixture.home(PathBuf::from(home_path));
-        }
+        // Set home unconditionally. `Faker` fills it with a *random* path, so a
+        // `None` argument used to leave that random home in place — the "no home"
+        // case never actually tested no-home, and when the random path happened
+        // to prefix the test path the assertion flipped. This test was flaky.
+        fixture.home = home.map(PathBuf::from);
         fixture
     }
 
