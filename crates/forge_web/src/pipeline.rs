@@ -836,6 +836,19 @@ pub(crate) async fn team_status<A: API>(
                 entry["status"] = json!("paused");
             }
         }
+        // Real-time activity overlay: query each member's pane so the UI can tell
+        // an agent that's actively producing output ("live") from one that's
+        // assigned but sitting quiet ("stalled"). Read fresh every poll (the
+        // .team-status.json `status` only reflects request assignment, updated
+        // at the orchestrator's slower cadence). Cheap: one tmux call per member.
+        const ACTIVE_WINDOW_SECS: u64 = 8;
+        for (id, entry) in map.iter_mut() {
+            let session = forge_workspace::terminal::session_name(&project, id);
+            if let Some(secs) = forge_workspace::terminal::seconds_since_activity(&session) {
+                entry["active"] = json!(secs <= ACTIVE_WINDOW_SECS);
+                entry["idle_secs"] = json!(secs);
+            }
+        }
     }
     Ok(Json(json!({ "running": alive, "members": members })))
 }

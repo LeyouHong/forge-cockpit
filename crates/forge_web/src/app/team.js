@@ -221,9 +221,19 @@ function tmCard(m, i, reqs, msgs) {
   const ms = (TEAM.status || {})[m.id];
   if (ms && ms.paused) { el.style.opacity = '0.55'; }
   if (ms) {
-    const dotColor = ms.status === 'working' ? '#2e9e44' : ms.paused ? '#d4a72c' : '#8a8f98';
-    const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '') + (ms.paused ? ' · paused (finishing current work, taking nothing new)' : '');
-    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:4px' + (ms.status === 'working' ? ';box-shadow:0 0 0 3px rgba(46,158,68,.25)' : '');
+    // Real-time activity (from the pane's last output) refines the coarse
+    // assignment status: live = producing output now; stalled = assigned but
+    // quiet; else idle/paused.
+    const live = ms.active === true;
+    const stalled = ms.status === 'working' && ms.active === false;
+    const idleSecs = (typeof ms.idle_secs === 'number') ? ms.idle_secs : null;
+    const dotColor = live ? '#2e9e44' : stalled ? '#d97706' : ms.paused ? '#d4a72c' : '#8a8f98';
+    let actNote = '';
+    if (live) actNote = ' · live (producing output now)';
+    else if (stalled && idleSecs != null) actNote = ' · quiet ' + idleSecs + 's (assigned, no output)';
+    else if (idleSecs != null && ms.terminal) actNote = ' · idle ' + idleSecs + 's';
+    const dot = document.createElement('span'); dot.title = 'session: ' + ms.status + (ms.request ? ' · ' + ms.request : '') + actNote + (ms.paused ? ' · paused (taking nothing new)' : '');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:4px' + (live ? ';box-shadow:0 0 0 3px rgba(46,158,68,.25)' : stalled ? ';box-shadow:0 0 0 3px rgba(217,119,6,.2)' : '');
     th.appendChild(dot);
     const pp = document.createElement('span'); pp.textContent = ms.paused ? '▶' : '⏸';
     pp.title = ms.paused ? 'resume — start taking new work again' : 'pause — finish current work, take nothing new (requests for this stage wait)';

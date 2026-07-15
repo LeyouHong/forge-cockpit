@@ -137,6 +137,28 @@ fn kill_session(name: &str) {
     let _ = tmux().args(["kill-session", "-t", name]).output();
 }
 
+/// Seconds since the session last produced pane output (tmux `session_activity`),
+/// or `None` when there is no such session. A live agent's TUI keeps redrawing —
+/// the "✻ …" spinner is real PTY output — so a small value means it is actively
+/// working, while a value that stops climbing means it is sitting idle at its
+/// prompt. This is the real-time signal behind the UI's working/idle indicator,
+/// finer than "is a request assigned".
+pub fn seconds_since_activity(name: &str) -> Option<u64> {
+    let out = tmux()
+        .args(["display-message", "-p", "-t", name, "#{session_activity}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let ts: u64 = out.stdout.to_str_lossy().trim().parse().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(ts);
+    Some(now.saturating_sub(ts))
+}
+
 /// All `forge-team-*` sessions as `(name, last-activity-epoch-secs)`; the
 /// activity is `None` when tmux reports no readable timestamp. Best-effort: a
 /// missing server or tmux error yields an empty list.
@@ -423,6 +445,25 @@ mod tests {
         assert!(!has_session(&a_pm), "project A session should be gone");
         assert!(has_session(&b_pm), "project B session must survive");
         let _ = kill_session(&b_pm);
+    }
+
+    #[test]
+    fn test_seconds_since_activity() {
+        if !tmux_available() {
+            return; // CI without tmux — the real path is covered by the e2e run
+        }
+        let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _sandbox = TmuxSandbox::new();
+        // No such session → None.
+        assert_eq!(seconds_since_activity("forge-team-nope-x-pm"), None);
+        // A fresh session was just active → a small, defined number of seconds.
+        let name = "forge-team-actv-a1b2c3-pm";
+        let _ = kill_session(name);
+        let out = tmux().args(["new-session", "-d", "-s", name, "sh", "-c", "sleep 30"]).output().unwrap();
+        assert!(out.status.success());
+        let secs = seconds_since_activity(name).expect("live session has an activity time");
+        assert!(secs < 60, "a just-created session should look recently active, got {secs}s");
+        let _ = kill_session(name);
     }
 
     #[test]
