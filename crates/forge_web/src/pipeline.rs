@@ -836,6 +836,19 @@ pub(crate) async fn team_status<A: API>(
                 entry["status"] = json!("paused");
             }
         }
+        // Real-time activity overlay: query each member's pane so the UI can tell
+        // an agent that's actively producing output ("live") from one that's
+        // assigned but sitting quiet ("stalled"). Read fresh every poll (the
+        // .team-status.json `status` only reflects request assignment, updated
+        // at the orchestrator's slower cadence). Cheap: one tmux call per member.
+        const ACTIVE_WINDOW_SECS: u64 = 8;
+        for (id, entry) in map.iter_mut() {
+            let session = forge_workspace::terminal::session_name(&project, id);
+            if let Some(secs) = forge_workspace::terminal::seconds_since_activity(&session) {
+                entry["active"] = json!(secs <= ACTIVE_WINDOW_SECS);
+                entry["idle_secs"] = json!(secs);
+            }
+        }
     }
     Ok(Json(json!({ "running": alive, "members": members })))
 }
@@ -862,9 +875,46 @@ pub(crate) async fn team_pause_set<A: API>(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct InterruptReq {
+    project: String,
+    member: String,
+}
+
+/// POST /api/team/interrupt — stop a member's CURRENT turn (unlike pause, which
+/// only holds new work). The orchestrator sends the agent's stop key at its next
+/// poll and lets the request retry fresh; the resident session is not killed.
+pub(crate) async fn team_interrupt<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<InterruptReq>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::request_interrupt(&ws, &body.member)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "member": body.member })))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct SessionLogQuery {
     project: String,
     member: String,
+}
+
+/// GET /api/team/memory?project=&member= — a member's structured memory
+/// (observations it recorded via record_observation), newest first.
+pub(crate) async fn team_memory<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<SessionLogQuery>,
+) -> Result<Json<Value>, AppError> {
+    if q.member.contains('/') || q.member.contains("..") {
+        return Err(AppError::bad_request("invalid member"));
+    }
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let mem = forge_workspace::memory::load(&ws, &forge_workspace::memory::member_key(&q.member));
+    let mut obs = mem.observations;
+    obs.reverse(); // newest first for display
+    Ok(Json(json!({ "member": q.member, "observations": obs })))
 }
 
 /// GET /api/team/session-log?project=&member= — tail of a member's resident

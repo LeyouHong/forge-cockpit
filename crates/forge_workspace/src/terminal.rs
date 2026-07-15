@@ -60,7 +60,16 @@ fn project_tag(project: &Path) -> String {
 }
 
 fn tmux() -> Command {
-    Command::new("tmux")
+    let mut c = Command::new("tmux");
+    // Optional private socket. Unset in production (identical to the default
+    // server); tests set it to a throwaway socket so they never touch — or get
+    // reaped alongside — the user's real `forge-team-*` sessions.
+    if let Ok(sock) = std::env::var("FORGE_TMUX_SOCKET") {
+        if !sock.trim().is_empty() {
+            c.args(["-L", sock.trim()]);
+        }
+    }
+    c
 }
 
 /// Is tmux installed at all? Checked once at startup so a missing binary is a
@@ -126,6 +135,28 @@ pub fn kill_project_sessions(project: &Path) -> Vec<String> {
 
 fn kill_session(name: &str) {
     let _ = tmux().args(["kill-session", "-t", name]).output();
+}
+
+/// Seconds since the session last produced pane output (tmux `session_activity`),
+/// or `None` when there is no such session. A live agent's TUI keeps redrawing —
+/// the "✻ …" spinner is real PTY output — so a small value means it is actively
+/// working, while a value that stops climbing means it is sitting idle at its
+/// prompt. This is the real-time signal behind the UI's working/idle indicator,
+/// finer than "is a request assigned".
+pub fn seconds_since_activity(name: &str) -> Option<u64> {
+    let out = tmux()
+        .args(["display-message", "-p", "-t", name, "#{session_activity}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let ts: u64 = out.stdout.to_str_lossy().trim().parse().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(ts);
+    Some(now.saturating_sub(ts))
 }
 
 /// All `forge-team-*` sessions as `(name, last-activity-epoch-secs)`; the
@@ -225,6 +256,17 @@ pub fn send_key(name: &str, key: &str) {
     let _ = tmux().args(["send-keys", "-t", name, key]).output();
 }
 
+/// Interrupt the agent's current turn without killing the session: sends the
+/// CLI's "stop generating" key (Escape, which Claude Code uses to halt the
+/// running turn). The resident session and its conversation survive — the agent
+/// just stops what it's doing and returns to the prompt. Sent twice because a
+/// single Escape can be swallowed while the TUI is mid-render.
+pub fn interrupt(name: &str) {
+    send_key(name, "Escape");
+    std::thread::sleep(Duration::from_millis(120));
+    send_key(name, "Escape");
+}
+
 /// Wait until the pane's CLI is ready for input, answering the well-known
 /// one-time startup dialogs on the way. Blind sleeps are how prompts get
 /// pasted into a dialog — where Enter picks the DEFAULT answer ("No, exit"
@@ -317,11 +359,32 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    /// tmux integration tests share one default server, and `reap_idle_sessions`
-    /// sweeps every `forge-team-*` session — so they must not run concurrently or
-    /// one test reaps another's session. `unwrap_or_else` ignores poisoning from
-    /// an unrelated panic so a single failure doesn't cascade.
+    /// tmux integration tests share one process, and `reap_idle_sessions` sweeps
+    /// every `forge-team-*` session — so they must not run concurrently, and must
+    /// not run against the user's real default server (they'd reap live sessions).
+    /// The lock serializes them; [`TmuxSandbox`] points them at a throwaway
+    /// socket. `unwrap_or_else` ignores poisoning so one failure doesn't cascade.
     static TMUX_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Redirects `tmux()` to a private, per-test socket for the guard's lifetime,
+    /// then kills that server on drop — so tests never see or reap real sessions.
+    /// Must be held together with `TMUX_TEST_LOCK` (the socket env is process-wide).
+    struct TmuxSandbox(String);
+    impl TmuxSandbox {
+        fn new() -> Self {
+            let sock = format!("forge-test-{}", std::process::id());
+            // Safe: tmux tests are serialized by TMUX_TEST_LOCK, and only tmux()
+            // reads this var — nothing else in the process does.
+            unsafe { std::env::set_var("FORGE_TMUX_SOCKET", &sock) };
+            TmuxSandbox(sock)
+        }
+    }
+    impl Drop for TmuxSandbox {
+        fn drop(&mut self) {
+            let _ = Command::new("tmux").args(["-L", &self.0, "kill-server"]).output();
+            unsafe { std::env::remove_var("FORGE_TMUX_SOCKET") };
+        }
+    }
 
     #[test]
     fn test_session_name() {
@@ -341,6 +404,7 @@ mod tests {
             return; // CI without tmux — the real path is covered by the e2e run
         }
         let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _sandbox = TmuxSandbox::new();
         let mine = "forge-team-reaptest-a1b2c3-pm";
         let theirs = "not-forge-reaptest"; // unrelated user session must survive
         for n in [mine, theirs] {
@@ -365,6 +429,7 @@ mod tests {
             return; // CI without tmux — the real path is covered by the e2e run
         }
         let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _sandbox = TmuxSandbox::new();
         let a = Path::new("/tmp/proj-a");
         let b = Path::new("/tmp/proj-b");
         let a_pm = session_name(a, "pm");
@@ -380,6 +445,25 @@ mod tests {
         assert!(!has_session(&a_pm), "project A session should be gone");
         assert!(has_session(&b_pm), "project B session must survive");
         let _ = kill_session(&b_pm);
+    }
+
+    #[test]
+    fn test_seconds_since_activity() {
+        if !tmux_available() {
+            return; // CI without tmux — the real path is covered by the e2e run
+        }
+        let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _sandbox = TmuxSandbox::new();
+        // No such session → None.
+        assert_eq!(seconds_since_activity("forge-team-nope-x-pm"), None);
+        // A fresh session was just active → a small, defined number of seconds.
+        let name = "forge-team-actv-a1b2c3-pm";
+        let _ = kill_session(name);
+        let out = tmux().args(["new-session", "-d", "-s", name, "sh", "-c", "sleep 30"]).output().unwrap();
+        assert!(out.status.success());
+        let secs = seconds_since_activity(name).expect("live session has an activity time");
+        assert!(secs < 60, "a just-created session should look recently active, got {secs}s");
+        let _ = kill_session(name);
     }
 
     #[test]
@@ -407,6 +491,7 @@ mod tests {
             return; // CI without tmux — the real path is covered by the e2e run
         }
         let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _sandbox = TmuxSandbox::new();
         let name = "forge-team-awaittest";
         let _ = tmux().args(["kill-session", "-t", name]).output();
         // A pane whose content walks the three states as keys arrive.
