@@ -5,12 +5,6 @@ fork of Forge (Apache-2.0); versions are independent of upstream.
 
 ## 0.4.0
 
-### Added
-- **Intel Mac (x86_64) binaries.** `npm install -g forge-cockpit` now ships a
-  prebuilt binary for Intel Macs. Previously the install reported success and
-  then failed at first run with a misleading "install scripts were disabled"
-  message — there simply was no binary for the platform.
-
 ### Security
 - **Content-Security-Policy on the cockpit.** The web UI now serves a strict CSP
   with a per-response nonce and no `unsafe-inline` for scripts. Text the cockpit
@@ -40,6 +34,12 @@ fork of Forge (Apache-2.0); versions are independent of upstream.
 ### Removed
 - **Crafts** (AI-generated per-project mini-apps rendered in a sandboxed iframe).
   The feature saw no real use and has been removed end to end.
+
+### Notes
+- **Intel Mac (x86_64):** still no prebuilt binary — GitHub's last Intel CI
+  runner (macos-13) is being retired and can no longer build the release.
+  `npm install` fails fast with a clear message; build from source in the
+  meantime. Apple Silicon (arm64) is unaffected.
 
 ### Internal
 - The cockpit's 3926-line single-file frontend was split into ten scripts by
