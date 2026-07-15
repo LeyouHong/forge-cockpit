@@ -853,6 +853,7 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
     std::thread::spawn(move || {
         let mut timed_out = false;
         let mut fatal = false;
+        let mut interrupted = false;
         if !cfg.dry_run {
             let topo = topology(&cfg, &member.id);
             // Gap coverage: the team has no member for this request's stage, so
@@ -882,15 +883,17 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
                 req.id,
                 role = member.id
             );
-            (timed_out, fatal) = match run_terminal_request(&cfg, &req, &member, &prompt) {
-                Some(t) => (t, false),
-                None => (false, true),
+            (timed_out, fatal, interrupted) = match run_terminal_request(&cfg, &req, &member, &prompt) {
+                TurnOutcome::Advanced => (false, false, false),
+                TurnOutcome::TimedOut => (true, false, false),
+                TurnOutcome::Interrupted => (false, false, true),
+                TurnOutcome::Unreachable => (false, true, false),
             };
         } else {
             // Simulate a session that does nothing (so stuck detection can be tested).
             std::thread::sleep(Duration::from_millis(200));
         }
-        finish_agent(&state, &req.id, &member, timed_out, cfg.max_attempts, fatal);
+        finish_agent(&state, &req.id, &member, timed_out, cfg.max_attempts, fatal, interrupted);
     });
 }
 
@@ -899,7 +902,7 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
 /// When `fatal` is true the terminal is unreachable and won't self-heal — the
 /// attempt counter is bumped directly to `max_attempts` so the human is alerted
 /// immediately instead of waiting through retry cycles.
-fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, timed_out: bool, max_attempts: u32, fatal: bool) {
+fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, timed_out: bool, max_attempts: u32, fatal: bool, interrupted: bool) {
     let mut guard = state.lock().unwrap();
     if fatal {
         if let Some(t) = guard.trackers.get_mut(req_id) {
@@ -909,35 +912,58 @@ fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, ti
         if let Some(t) = guard.trackers.get_mut(req_id) {
             t.timeouts += 1;
         }
+    } else if interrupted {
+        // A human interrupted this turn — refund the attempt it consumed so a
+        // deliberate stop doesn't push the request toward the stuck threshold.
+        if let Some(t) = guard.trackers.get_mut(req_id) {
+            t.attempts = t.attempts.saturating_sub(1);
+        }
     }
     guard.running.remove(req_id);
     guard.busy_members.remove(&member.id);
 }
 
+/// How one terminal turn ended, so the caller can account for it correctly.
+enum TurnOutcome {
+    /// The request left the member's stage — real progress.
+    Advanced,
+    /// No progress before the agent timeout — free the slot and retry.
+    TimedOut,
+    /// A human interrupted the current turn — stop it, but don't penalize the
+    /// request (the attempt is refunded so it retries fresh, not toward stuck).
+    Interrupted,
+    /// The terminal is unreachable and won't self-heal — alert a human.
+    Unreachable,
+}
+
 /// Drive one request through a terminal-resident member: make sure its tmux
 /// pane is alive, paste the prompt, then watch the board until the request
-/// leaves the member's stage (the agent submits through the workspace MCP) or
-/// the timeout passes. Returns `Some(true)` on timeout, `Some(false)` when
-/// the agent completed the work, or `None` when the terminal is unreachable
-/// (won't self-heal — the caller should fast-track to stuck). The pane itself
-/// is never killed — it is the member's resident session, and a human may be
-/// attached.
-fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, prompt: &str) -> Option<bool> {
+/// leaves the member's stage (the agent submits through the workspace MCP), the
+/// timeout passes, or a human interrupts. The pane itself is never killed — it
+/// is the member's resident session, and a human may be attached.
+fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, prompt: &str) -> TurnOutcome {
     let name = terminal::session_name(&cfg.project, &member.id);
     if let Err(e) = ensure_member_terminal(cfg, member, &name) {
         eprintln!("  ! {} terminal `{name}`: {e}", req.id);
         // Terminal unreachable — this won't self-heal; the caller will
         // fast-track the request to stuck so the human is alerted immediately.
-        return None;
+        return TurnOutcome::Unreachable;
     }
     if let Err(e) = terminal::send_text(&name, &cfg.workspace, prompt) {
         eprintln!("  ! {} terminal `{name}` prompt injection failed: {e}", req.id);
-        return Some(true);
+        return TurnOutcome::TimedOut;
     }
     let start_stage = stage_for(req.status);
     let deadline = Instant::now() + cfg.agent_timeout;
-    let timed_out = loop {
+    let outcome = loop {
         std::thread::sleep(Duration::from_secs(2));
+        // A human pressed ⎋ Interrupt on this member: halt the current turn (the
+        // resident session survives) and yield the slot so it can retry fresh.
+        if team::take_interrupt(&cfg.workspace, &member.id) {
+            println!("  ⎋ {} [{:?}] member `{}` interrupted — stopping the current turn.", req.id, req.status, member.id);
+            terminal::interrupt(&name);
+            break TurnOutcome::Interrupted;
+        }
         // Advanced = the request left this member's stage (done/rejected count).
         // A same-stage transition (open → in_progress via claim) is the member
         // still working, not a handoff — keep waiting.
@@ -947,7 +973,7 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
             Err(_) => false,
         };
         if advanced {
-            break false;
+            break TurnOutcome::Advanced;
         }
         if Instant::now() >= deadline {
             println!(
@@ -957,7 +983,7 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
                 member.id,
                 cfg.agent_timeout.as_secs()
             );
-            break true;
+            break TurnOutcome::TimedOut;
         }
     };
     // The TUI's output can't be streamed like subprocess stdout — snapshot the
@@ -967,7 +993,7 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
         let mut log = log;
         let _ = writeln!(log, "{}", terminal::capture_pane(&name));
     }
-    Some(timed_out)
+    outcome
 }
 
 /// Create (or revive) the member's resident tmux session. The conversation id

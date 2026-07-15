@@ -149,6 +149,45 @@ pub fn set_paused(workspace: &Path, member: &str, paused: bool) -> Result<()> {
     Ok(())
 }
 
+/// One-shot interrupt requests, at `<workspace>/.team-interrupts.json` as
+/// `{"<member-id>": true}`. Unlike pause (a persistent scheduling gate), an
+/// interrupt is *consumed*: the orchestrator halts the member's current turn
+/// once and clears the flag, so the request retries fresh rather than staying
+/// held. Set from the UI, taken by the orchestrator.
+fn interrupts_path(workspace: &Path) -> std::path::PathBuf {
+    workspace.join(".team-interrupts.json")
+}
+
+/// Request that `member`'s current turn be interrupted at the next poll.
+pub fn request_interrupt(workspace: &Path, member: &str) -> Result<()> {
+    let mut map: BTreeMap<String, bool> = std::fs::read_to_string(interrupts_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    map.insert(member.to_string(), true);
+    std::fs::create_dir_all(workspace)?;
+    std::fs::write(interrupts_path(workspace), serde_json::to_string_pretty(&map)?)?;
+    Ok(())
+}
+
+/// Consume `member`'s interrupt flag: returns true (and clears it) iff one was
+/// pending. Best-effort — an unreadable/unwritable file is treated as "none".
+pub fn take_interrupt(workspace: &Path, member: &str) -> bool {
+    let mut map: BTreeMap<String, bool> = match std::fs::read_to_string(interrupts_path(workspace))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(m) => m,
+        None => return false,
+    };
+    if map.remove(member).unwrap_or(false) {
+        let _ = std::fs::write(interrupts_path(workspace), serde_json::to_string_pretty(&map).unwrap_or_default());
+        true
+    } else {
+        false
+    }
+}
+
 /// Reject configs the orchestrator can't run: duplicate/empty ids, unknown
 /// `depends_on` targets, dependency cycles, or no implement-stage member.
 pub fn validate_team(cfg: &TeamConfig) -> Result<()> {
@@ -245,6 +284,20 @@ mod tests {
         set_paused(tmp.path(), "eng", false).unwrap();
         let p = load_paused(tmp.path());
         assert!(!p.contains("eng") && p.contains("qa"));
+    }
+
+    #[test]
+    fn test_interrupt_is_one_shot() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Nothing pending → no interrupt.
+        assert!(!take_interrupt(tmp.path(), "eng"));
+        request_interrupt(tmp.path(), "eng").unwrap();
+        request_interrupt(tmp.path(), "qa").unwrap();
+        // First take consumes eng's flag; a second take sees nothing (one-shot).
+        assert!(take_interrupt(tmp.path(), "eng"));
+        assert!(!take_interrupt(tmp.path(), "eng"));
+        // qa's flag is independent and still pending.
+        assert!(take_interrupt(tmp.path(), "qa"));
     }
 
     #[test]

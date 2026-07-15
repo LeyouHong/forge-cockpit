@@ -170,6 +170,7 @@ where
             get(pipeline::team_watches_get::<A>).put(pipeline::team_watches_set::<A>),
         )
         .route("/api/team/pause", post(pipeline::team_pause_set::<A>))
+        .route("/api/team/interrupt", post(pipeline::team_interrupt::<A>))
         .route("/api/team/files", get(pipeline::team_files::<A>))
         .route("/api/team/file", get(pipeline::team_file::<A>))
         .route("/api/team/diff", get(pipeline::team_diff::<A>))

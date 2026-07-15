@@ -234,6 +234,18 @@ function tmCard(m, i, reqs, msgs) {
       TEAM._sig = null; loadTeam();
     };
     th.appendChild(pp);
+    if (ms.status === 'working') {
+      const ii = document.createElement('span'); ii.textContent = '⎋';
+      ii.title = 'interrupt — stop this agent\'s current turn now (it retries fresh; the session stays alive)';
+      ii.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+      ii.onclick = async (e) => {
+        e.stopPropagation();
+        ii.textContent = '…';
+        await api('/api/team/interrupt', plBody({ b: { project: TEAM.project, member: m.id } }));
+        setTimeout(() => { ii.textContent = '⎋'; }, 1200);
+      };
+      th.appendChild(ii);
+    }
     if (ms.has_log) {
       const lg = document.createElement('span'); lg.textContent = '📜'; lg.title = 'view resident session log'; lg.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
       lg.onclick = (e) => { e.stopPropagation(); tmShowSession(m); };

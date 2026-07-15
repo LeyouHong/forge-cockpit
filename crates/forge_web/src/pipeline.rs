@@ -862,6 +862,26 @@ pub(crate) async fn team_pause_set<A: API>(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct InterruptReq {
+    project: String,
+    member: String,
+}
+
+/// POST /api/team/interrupt — stop a member's CURRENT turn (unlike pause, which
+/// only holds new work). The orchestrator sends the agent's stop key at its next
+/// poll and lets the request retry fresh; the resident session is not killed.
+pub(crate) async fn team_interrupt<A: API>(
+    State(_): State<AppState<A>>,
+    Json(body): Json<InterruptReq>,
+) -> Result<Json<Value>, AppError> {
+    let project = project_path(&body.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    forge_workspace::team::request_interrupt(&ws, &body.member)
+        .map_err(|e| AppError::bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "ok": true, "member": body.member })))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct SessionLogQuery {
     project: String,
     member: String,
