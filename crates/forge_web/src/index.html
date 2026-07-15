@@ -836,10 +836,15 @@
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm" id="tm-tab-ws" title="The team graph: members, connections, and live board state">🗺 Workspace</button>
           <button class="btn btn-sm" id="tm-tab-code" title="Browse the project files. A dot marks git-modified files; click one for a File | Diff view">📁 Code</button>
+          <button class="btn btn-sm" id="tm-tab-term" title="Live terminals — one tab per agent's resident session; watch them work or take over by typing">🖥 Terminals <span id="tm-term-badge" class="sl"></span></button>
           <button class="btn btn-sm" id="tm-watches" title="Watches: monitor files, git, or a command — on change, auto-create a board request (the team handles it) or alert the human inbox">👁 Watches</button>
           <span id="tm-mode-note" class="sl" style="margin-left:8px"></span>
         </div>
         <div id="tm-canvas" class="tm-canvas"><svg id="tm-edges" class="tm-edges"></svg></div>
+        <div id="tm-term" style="display:none;flex-direction:column;border:1px solid var(--border);border-radius:10px;height:520px;overflow:hidden">
+          <div id="tm-term-tabs" style="display:flex;gap:4px;align-items:center;padding:6px;background:var(--bg-2,rgba(0,0,0,.04));border-bottom:1px solid var(--border);overflow-x:auto;min-height:36px"></div>
+          <div id="tm-term-panes" style="position:relative;flex:1;min-height:0;background:#0d1117"><div id="tm-term-empty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:12.5px;padding:16px;text-align:center">no live agent terminals yet — press ▶ Run or ⚡ Start Daemon, and each agent's session appears here as a tab.</div></div>
+        </div>
         <div id="tm-code" style="display:none;border:1px solid var(--border);border-radius:10px;height:420px;display:none">
           <div style="display:flex;height:100%">
             <div id="tm-code-list" style="width:240px;overflow:auto;border-right:1px solid var(--border);padding:8px;font-size:12px"></div>

@@ -364,8 +364,8 @@ fn write_status_file(cfg: &Cfg, working: &HashMap<String, String>, paused: &Hash
         };
         // Expose the live tmux session (when it exists) so the UI can offer
         // the in-cockpit terminal / `tmux attach`.
-        let tmux = terminal::has_session(&terminal::session_name(&m.id))
-            .then(|| terminal::session_name(&m.id));
+        let session = terminal::session_name(&cfg.project, &m.id);
+        let tmux = terminal::has_session(&session).then_some(session);
         out.insert(
             m.id.clone(),
             serde_json::json!({
@@ -388,6 +388,22 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let project = flag(&mut args, "--project").map(PathBuf::from).unwrap_or_else(|| ".".into()).canonicalize()?;
+
+    // Explicit teardown: kill this project's resident terminals and exit,
+    // without running the pipeline (the CLI counterpart to the web Stop button
+    // and to aiwatching/forge's `--reset-terminal`).
+    if has(&mut args, "--reset-terminals") {
+        let killed = terminal::kill_project_sessions(&project);
+        if killed.is_empty() {
+            println!("no resident terminals for {} — nothing to tear down.", project.display());
+        } else {
+            for name in &killed {
+                println!("  ⏹ tore down resident terminal `{name}`");
+            }
+        }
+        return Ok(());
+    }
+
     let workspace = flag(&mut args, "--workspace").map(PathBuf::from).unwrap_or_else(|| project.join(".forge-workspace"));
     std::fs::create_dir_all(&workspace)?;
     let workspace = workspace.canonicalize()?;
@@ -451,8 +467,21 @@ fn run() -> anyhow::Result<()> {
     }));
     let cfg = Arc::new(cfg);
     let mut idle_since: Option<Instant> = None;
+    // Resident-session hygiene: sweep for `forge-team-*` terminals left idle for
+    // hours (finished teams, other projects, older runs) so the tmux server
+    // doesn't accumulate dead sessions. Runs on the first poll and every 5 min
+    // after; a busy session keeps recent activity and is never reaped.
+    let reap_every = Duration::from_secs(5 * 60);
+    let mut last_reap: Option<Instant> = None;
 
     loop {
+        if !cfg.dry_run && last_reap.map_or(true, |t| t.elapsed() >= reap_every) {
+            last_reap = Some(Instant::now());
+            for name in terminal::reap_idle_sessions(terminal::SESSION_IDLE) {
+                println!("  ♻ reaped idle terminal `{name}` (unused > {}h)", terminal::SESSION_IDLE.as_secs() / 3600);
+            }
+        }
+
         // Bus upkeep, before any scheduling:
         //   1. liveness — a member is up iff its pane is; coming back flushes
         //      the outbox, so mail sent while it was down lands now.
@@ -460,7 +489,7 @@ fn run() -> anyhow::Result<()> {
         //      resurface in the recipient's inbox; exhausted ones fail and
         //      alert a human (a dropped rework request is silent otherwise).
         for m in &cfg.team.members {
-            let live = if terminal::has_session(&terminal::session_name(&m.id)) {
+            let live = if terminal::has_session(&terminal::session_name(&cfg.project, &m.id)) {
                 message::Liveness::Alive
             } else {
                 message::Liveness::Down
@@ -774,7 +803,7 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
 /// prompt asks the agent to message `orchestrator` with PLANNING-DONE, and we
 /// wait for that (bounded by the agent timeout).
 fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
-    let name = terminal::session_name(&m.id);
+    let name = terminal::session_name(&cfg.project, &m.id);
     let prompt = format!(
         "{prompt}\n\nIMPORTANT: when your planning work is completely finished, call send_message \
          with to=`orchestrator` and a body starting with `PLANNING-DONE` — the pipeline waits for \
@@ -894,7 +923,7 @@ fn finish_agent(state: &Arc<Mutex<State>>, req_id: &str, member: &TeamMember, ti
 /// is never killed — it is the member's resident session, and a human may be
 /// attached.
 fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, prompt: &str) -> Option<bool> {
-    let name = terminal::session_name(&member.id);
+    let name = terminal::session_name(&cfg.project, &member.id);
     if let Err(e) = ensure_member_terminal(cfg, member, &name) {
         eprintln!("  ! {} terminal `{name}`: {e}", req.id);
         // Terminal unreachable — this won't self-heal; the caller will
