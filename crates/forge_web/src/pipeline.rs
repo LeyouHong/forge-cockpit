@@ -1024,22 +1024,43 @@ pub(crate) async fn team_templates_delete<A: API>(
     Json(json!({ "ok": true }))
 }
 
-/// POST /api/team/stop — stop the orchestrator running for a project.
+#[derive(Deserialize)]
+pub(crate) struct TeamStop {
+    project: String,
+    /// Also tear down the project's resident terminals (full knock-off), not
+    /// just stop the orchestrator. Defaults false so API callers that only want
+    /// to pause the daemon keep the warm sessions.
+    #[serde(default)]
+    teardown: bool,
+}
+
+/// POST /api/team/stop — stop the orchestrator running for a project, and
+/// (when `teardown`) tear down its resident terminals.
 pub(crate) async fn team_stop<A: API>(
     State(_): State<AppState<A>>,
-    Json(q): Json<ProjectQuery>,
+    Json(q): Json<TeamStop>,
 ) -> Result<Json<Value>, AppError> {
     let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
     let pidfile = project.join(".forge-workspace").join(".team-run.pid");
-    let Ok(pid) = std::fs::read_to_string(&pidfile) else {
-        return Ok(Json(json!({ "stopped": false, "reason": "not running" })));
-    };
-    let pid = pid.trim().to_string();
-    if pid_alive(&pid) {
-        let _ = Command::new("kill").arg(&pid).status();
+    let running = std::fs::read_to_string(&pidfile).ok().map(|p| p.trim().to_string());
+    if let Some(pid) = &running {
+        if pid_alive(pid) {
+            let _ = Command::new("kill").arg(pid).status();
+        }
+        let _ = std::fs::remove_file(&pidfile);
     }
-    let _ = std::fs::remove_file(&pidfile);
-    Ok(Json(json!({ "stopped": true })))
+    // Explicit teardown ("done with this team"): also kill the project's
+    // resident terminals, the counterpart to Start Daemon. Without it, Stop
+    // only pauses the orchestrator and leaves the warm sessions attachable.
+    let torn_down = if q.teardown {
+        forge_workspace::terminal::kill_project_sessions(&project)
+    } else {
+        Vec::new()
+    };
+    if running.is_none() && torn_down.is_empty() {
+        return Ok(Json(json!({ "stopped": false, "reason": "not running" })));
+    }
+    Ok(Json(json!({ "stopped": true, "torn_down": torn_down })))
 }
 
 #[derive(Deserialize)]

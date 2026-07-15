@@ -24,10 +24,39 @@ use bstr::ByteSlice;
 /// the one-time acceptance dialog this flag triggers.
 pub const DEFAULT_TERMINAL_CMD: &str = "claude --dangerously-skip-permissions";
 
-/// tmux session name for a member: `forge-team-<id>` (id is already validated
-/// to letters/digits/-/_ by `validate_team`, which tmux accepts verbatim).
-pub fn session_name(member_id: &str) -> String {
-    format!("forge-team-{member_id}")
+/// tmux session name for a member: `forge-team-<project-tag>-<id>`. The project
+/// tag scopes the session to one project so two projects that share a member id
+/// (e.g. both have a `pm`) never collide on `forge-team-<id>` — reusing another
+/// project's resident session silently runs the agent against the wrong board.
+/// The id is already validated to letters/digits/-/_ by `validate_team`, which
+/// tmux accepts verbatim.
+pub fn session_name(project: &Path, member_id: &str) -> String {
+    format!("forge-team-{}-{member_id}", project_tag(project))
+}
+
+/// A short, stable, tmux-safe tag identifying a project directory. Combines the
+/// readable basename with a hash of the full path so two different directories
+/// that happen to share a basename still get distinct tags. Stable across runs
+/// (`DefaultHasher` uses fixed keys), so a project always maps to the same
+/// session name and its resident terminals are found again on the next run.
+fn project_tag(project: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    project.hash(&mut h);
+    let hash = h.finish() & 0xff_ffff;
+    let base: String = project
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .take(24)
+        .collect();
+    if base.is_empty() {
+        format!("{hash:06x}")
+    } else {
+        format!("{base}-{hash:06x}")
+    }
 }
 
 fn tmux() -> Command {
@@ -46,6 +75,80 @@ pub fn has_session(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// How long a resident member session may sit unused before [`reap_idle_sessions`]
+/// reclaims it — the hygiene half of the resident model (aiwatching/forge reaps
+/// idle terminals the same way). A session in active use streams pane output,
+/// which keeps tmux `session_activity` fresh, so only genuinely dormant sessions
+/// (finished, or never picked up) age out. Nothing is lost: the next request
+/// recreates the session and `--resume` restores the agent's conversation.
+pub const SESSION_IDLE: Duration = Duration::from_secs(4 * 60 * 60);
+
+/// Kill every `forge-team-*` tmux session whose last activity is older than
+/// `idle`, returning the names reaped. Idle is measured from tmux
+/// `session_activity` (last pane output), so a working agent is never touched.
+/// Scoped to the `forge-team-` prefix (unrelated user sessions are safe) but NOT
+/// to one project — this is also how stale sessions from other projects or older
+/// runs get cleaned up. Best-effort: a missing server or a failed kill just
+/// yields fewer names; the next sweep retries.
+pub fn reap_idle_sessions(idle: Duration) -> Vec<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut reaped = Vec::new();
+    for (name, activity) in list_forge_sessions() {
+        // A pane with no readable activity timestamp counts as "just now" (not idle).
+        if now.saturating_sub(activity.unwrap_or(now)) >= idle.as_secs() {
+            let _ = kill_session(&name);
+            reaped.push(name);
+        }
+    }
+    reaped
+}
+
+/// Tear down every resident session for one project (`forge-team-<tag>-*`),
+/// regardless of idle time — the explicit "I'm done with this team" action, the
+/// counterpart to spawning it. Returns the names killed. Scoped by the project
+/// tag so tearing down one project leaves other projects' teams running.
+pub fn kill_project_sessions(project: &Path) -> Vec<String> {
+    let prefix = format!("forge-team-{}-", project_tag(project));
+    let mut killed = Vec::new();
+    for (name, _) in list_forge_sessions() {
+        if name.starts_with(&prefix) {
+            let _ = kill_session(&name);
+            killed.push(name);
+        }
+    }
+    killed
+}
+
+fn kill_session(name: &str) {
+    let _ = tmux().args(["kill-session", "-t", name]).output();
+}
+
+/// All `forge-team-*` sessions as `(name, last-activity-epoch-secs)`; the
+/// activity is `None` when tmux reports no readable timestamp. Best-effort: a
+/// missing server or tmux error yields an empty list.
+fn list_forge_sessions() -> Vec<(String, Option<u64>)> {
+    let out = match tmux()
+        .args(["list-sessions", "-F", "#{session_name} #{session_activity}"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(), // no server / no sessions / tmux error
+    };
+    out.stdout
+        .to_str_lossy()
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            let (name, activity) = (it.next()?, it.next());
+            name.starts_with("forge-team-")
+                .then(|| (name.to_string(), activity.and_then(|a| a.parse().ok())))
+        })
+        .collect()
 }
 
 /// Claude Code stores each session as `~/.claude/projects/<munged-cwd>/<id>.jsonl`.
@@ -214,9 +317,69 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    /// tmux integration tests share one default server, and `reap_idle_sessions`
+    /// sweeps every `forge-team-*` session — so they must not run concurrently or
+    /// one test reaps another's session. `unwrap_or_else` ignores poisoning from
+    /// an unrelated panic so a single failure doesn't cascade.
+    static TMUX_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_session_name() {
-        assert_eq!(session_name("engineer"), "forge-team-engineer");
+        // Project-scoped: `forge-team-<project-tag>-<id>`, still under the
+        // `forge-team-` prefix the web terminal bridge validates.
+        let name = session_name(Path::new("/tmp/webgames"), "engineer");
+        assert!(name.starts_with("forge-team-webgames-"), "{name}");
+        assert!(name.ends_with("-engineer"), "{name}");
+        // Stable across calls, and distinct per project (even same basename).
+        assert_eq!(name, session_name(Path::new("/tmp/webgames"), "engineer"));
+        assert_ne!(name, session_name(Path::new("/other/webgames"), "engineer"));
+    }
+
+    #[test]
+    fn test_reap_idle_sessions_scopes_and_ages() {
+        if !tmux_available() {
+            return; // CI without tmux — the real path is covered by the e2e run
+        }
+        let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mine = "forge-team-reaptest-a1b2c3-pm";
+        let theirs = "not-forge-reaptest"; // unrelated user session must survive
+        for n in [mine, theirs] {
+            let _ = tmux().args(["kill-session", "-t", n]).output();
+            let out = tmux().args(["new-session", "-d", "-s", n, "sh", "-c", "sleep 30"]).output().unwrap();
+            assert!(out.status.success());
+        }
+        // idle=1h: freshly-created sessions are NOT idle → nothing reaped.
+        assert!(reap_idle_sessions(Duration::from_secs(3600)).is_empty());
+        assert!(has_session(mine) && has_session(theirs));
+        // idle=0: everything qualifies, but only the forge-team-* one is in scope.
+        let reaped = reap_idle_sessions(Duration::from_secs(0));
+        assert_eq!(reaped, vec![mine.to_string()]);
+        assert!(!has_session(mine), "idle forge-team session should be reaped");
+        assert!(has_session(theirs), "unrelated session must be left alone");
+        let _ = tmux().args(["kill-session", "-t", theirs]).output();
+    }
+
+    #[test]
+    fn test_kill_project_sessions_is_project_scoped() {
+        if !tmux_available() {
+            return; // CI without tmux — the real path is covered by the e2e run
+        }
+        let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let a = Path::new("/tmp/proj-a");
+        let b = Path::new("/tmp/proj-b");
+        let a_pm = session_name(a, "pm");
+        let b_pm = session_name(b, "pm");
+        for n in [&a_pm, &b_pm] {
+            let _ = kill_session(n);
+            let out = tmux().args(["new-session", "-d", "-s", n, "sh", "-c", "sleep 30"]).output().unwrap();
+            assert!(out.status.success());
+        }
+        // Tearing down project A leaves project B's session alive.
+        let killed = kill_project_sessions(a);
+        assert_eq!(killed, vec![a_pm.clone()]);
+        assert!(!has_session(&a_pm), "project A session should be gone");
+        assert!(has_session(&b_pm), "project B session must survive");
+        let _ = kill_session(&b_pm);
     }
 
     #[test]
@@ -243,6 +406,7 @@ mod tests {
         if !tmux_available() {
             return; // CI without tmux — the real path is covered by the e2e run
         }
+        let _serial = TMUX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let name = "forge-team-awaittest";
         let _ = tmux().args(["kill-session", "-t", name]).output();
         // A pane whose content walks the three states as keys arrive.

@@ -121,8 +121,12 @@ async function tmRun(daemon) {
 }
 async function tmStop() {
   if (!TEAM.project) return;
-  await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project }) });
-  $('tm-status').textContent = 'stopped'; $('tm-status').style.color = 'var(--muted)'; loadTeam();
+  // Full knock-off: stop the orchestrator AND tear down the resident terminals.
+  const r = await api('/api/team/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: TEAM.project, teardown: true }) });
+  const d = await r.json().catch(() => ({}));
+  const n = (d && d.torn_down && d.torn_down.length) || 0;
+  $('tm-status').textContent = n ? ('stopped — tore down ' + n + ' terminal' + (n > 1 ? 's' : '')) : 'stopped';
+  $('tm-status').style.color = 'var(--muted)'; loadTeam();
 }
 function startTeamPoll() { tmStopPoll(); TEAM._sig = null; tmLoadConfig().then(loadTeam); TEAM.poll = setInterval(() => { if (!$('team-overlay').classList.contains('open')) { tmStopPoll(); return; } loadTeam(); }, 3000); }
 async function loadTeam() {
