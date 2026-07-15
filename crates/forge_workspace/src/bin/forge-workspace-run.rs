@@ -440,6 +440,9 @@ fn run() -> anyhow::Result<()> {
         anyhow::bail!("team members run as resident terminals, but tmux is not installed / not on PATH");
     }
     ensure_workspace_mcp(&cfg.project, &mcp_bin, &cfg.workspace)?;
+    if let Err(e) = ensure_stop_hook(&cfg.project) {
+        eprintln!("  ! could not install Stop hook (agents fall back to timeout polling): {e:#}");
+    }
     println!(
         "▶ orchestrator: project={} concurrent={} max-attempts={} agent-timeout={}s alert-to={} daemon={} dry-run={}{}",
         cfg.project.display(), cfg.concurrent, cfg.max_attempts, cfg.agent_timeout.as_secs(), cfg.alert_to,
@@ -823,6 +826,9 @@ fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
         eprintln!("  ! planner `{}` terminal: {e}", m.id);
         return;
     }
+    // Baseline the Stop-hook turn marker BEFORE injecting: a marker newer than
+    // this means the agent finished its turn after we prompted it.
+    let turn0 = terminal::turn_marker(&cfg.workspace, &m.id);
     if let Err(e) = terminal::send_text(&name, &cfg.workspace, &prompt) {
         eprintln!("  ! planner `{}` prompt injection failed: {e}", m.id);
         return;
@@ -836,6 +842,14 @@ fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
             .find(|msg| msg.from.starts_with(&m.id) && msg.body.contains("PLANNING-DONE"));
         if let Some(msg) = done_msg {
             let _ = message::ack(&cfg.workspace, "orchestrator", &msg.id);
+            break;
+        }
+        // Event-driven fail-fast: the agent's turn ended (Stop hook fired) but no
+        // PLANNING-DONE — it's done responding and won't produce more, so move on
+        // now instead of waiting out the timeout. (No hook installed → marker
+        // never advances → we fall back to the deadline below, as before.)
+        if terminal::turn_marker(&cfg.workspace, &m.id) > turn0 {
+            println!("  ⤷ planner `{}` finished its turn without PLANNING-DONE — moving on.", m.id);
             break;
         }
         if Instant::now() >= deadline {
@@ -962,6 +976,8 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
         // fast-track the request to stuck so the human is alerted immediately.
         return TurnOutcome::Unreachable;
     }
+    // Baseline the Stop-hook turn marker before injecting (see run_terminal_planner).
+    let turn0 = terminal::turn_marker(&cfg.workspace, &member.id);
     if let Err(e) = terminal::send_text(&name, &cfg.workspace, prompt) {
         eprintln!("  ! {} terminal `{name}` prompt injection failed: {e}", req.id);
         return TurnOutcome::TimedOut;
@@ -987,6 +1003,16 @@ fn run_terminal_request(cfg: &Cfg, req: &RequestDocument, member: &TeamMember, p
         };
         if advanced {
             break TurnOutcome::Advanced;
+        }
+        // Event-driven fail-fast: the agent's turn ended (Stop hook fired) but the
+        // request didn't advance — this attempt is done; free the slot and retry
+        // now rather than waiting out the timeout. (No hook → falls back to deadline.)
+        if terminal::turn_marker(&cfg.workspace, &member.id) > turn0 {
+            println!(
+                "  ⤷ {} [{:?}] member `{}` finished its turn without advancing — freeing the slot; will retry.",
+                req.id, req.status, member.id
+            );
+            break TurnOutcome::TimedOut;
         }
         if Instant::now() >= deadline {
             println!(
@@ -1016,7 +1042,7 @@ fn ensure_member_terminal(cfg: &Cfg, member: &TeamMember, name: &str) -> anyhow:
     let session_id = get_or_create_session(&cfg.workspace, &member.id);
     let resume = terminal::claude_session_exists(&session_id);
     let cmd = terminal::launch_command(&member.terminal_cmd, &session_id, resume);
-    let created = terminal::ensure_session(name, &cfg.project, &cfg.workspace, &cmd)?;
+    let created = terminal::ensure_session(name, &member.id, &cfg.project, &cfg.workspace, &cmd)?;
     if created {
         println!(
             "  ⌨ member `{}` resident terminal started ({}) — attach with: tmux attach -t {name}",
@@ -1056,9 +1082,76 @@ fn ensure_workspace_mcp(project: &Path, mcp_bin: &Path, workspace: &Path) -> any
     Ok(())
 }
 
+/// The Stop-hook command dropped into `.claude/settings.json`. When a member's
+/// Claude Code finishes a turn it runs this, touching that member's turn marker
+/// so the orchestrator wakes the instant the agent stops — instead of polling to
+/// a fixed timeout. Env vars are set per-pane by `ensure_session`; the guard
+/// makes it a no-op for a human running Claude Code here outside forge.
+const STOP_HOOK_CMD: &str = "[ -n \"$FORGE_MEMBER\" ] && [ -n \"$FORGE_WORKSPACE_DIR\" ] && \
+     { mkdir -p \"$FORGE_WORKSPACE_DIR/.team-terminal\"; date +%s > \"$FORGE_WORKSPACE_DIR/.team-terminal/$FORGE_MEMBER.turn\"; } || true";
+
+/// Install the turn-marker Stop hook into `<project>/.claude/settings.json`,
+/// merging so a user's existing settings/hooks are preserved and re-runs are
+/// idempotent (the hook is keyed by its exact command string).
+fn ensure_stop_hook(project: &Path) -> anyhow::Result<()> {
+    let dir = project.join(".claude");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("settings.json");
+    let mut cfg: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(&path)?).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if cfg.get("hooks").is_none() {
+        cfg["hooks"] = json!({});
+    }
+    let stop = cfg["hooks"]["Stop"].as_array().cloned().unwrap_or_default();
+    // Already installed? (idempotent — match our exact command string.)
+    let present = stop.iter().any(|group| {
+        group["hooks"].as_array().map(|hs| {
+            hs.iter().any(|h| h["command"].as_str() == Some(STOP_HOOK_CMD))
+        }).unwrap_or(false)
+    });
+    if !present {
+        let mut stop = stop;
+        stop.push(json!({ "hooks": [{ "type": "command", "command": STOP_HOOK_CMD }] }));
+        cfg["hooks"]["Stop"] = json!(stop);
+        std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ensure_stop_hook_merges_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path();
+        // Pre-seed a user settings.json with unrelated keys + their own Stop hook.
+        std::fs::create_dir_all(proj.join(".claude")).unwrap();
+        std::fs::write(
+            proj.join(".claude/settings.json"),
+            r#"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}"#,
+        ).unwrap();
+
+        ensure_stop_hook(proj).unwrap();
+        ensure_stop_hook(proj).unwrap(); // second call must not duplicate
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(proj.join(".claude/settings.json")).unwrap()).unwrap();
+        // User's unrelated key + their hook are preserved.
+        assert_eq!(v["model"], json!("opus"));
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        let cmds: Vec<&str> = stop.iter()
+            .flat_map(|g| g["hooks"].as_array().unwrap())
+            .filter_map(|h| h["command"].as_str())
+            .collect();
+        assert!(cmds.contains(&"echo mine"), "user hook preserved: {cmds:?}");
+        // Ours is present exactly once despite two calls.
+        assert_eq!(cmds.iter().filter(|c| **c == STOP_HOOK_CMD).count(), 1, "{cmds:?}");
+    }
 
     #[test]
     fn test_member_for_pause_semantics() {
