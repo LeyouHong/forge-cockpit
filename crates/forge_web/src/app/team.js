@@ -55,7 +55,7 @@ function tmMakeDraggable(el, id) {
 }
 function openTeam() { $('team-overlay').classList.add('open'); tmLoadProjects(); tmShowTab(TEAM.tab || 'ws'); }
 $('team-open').onclick = openTeam;
-$('team-close').onclick = () => { tmStopPoll(); $('team-overlay').classList.remove('open'); };
+$('team-close').onclick = () => { tmStopPoll(); tmDisposeTermDock(); $('team-overlay').classList.remove('open'); };
 $('tm-refresh').onclick = () => loadTeam();
 function tmStopPoll() { if (TEAM.poll) { clearInterval(TEAM.poll); TEAM.poll = null; } }
 async function tmLoadProjects() {
@@ -140,6 +140,7 @@ async function loadTeam() {
   renderActivity(act);
   if (d) renderTeam(d);
   tmSyncAllTermBtn();
+  tmRenderTermDock();
 }
 function renderActivity(act) {
   const box = $('tm-activity');
@@ -339,12 +340,16 @@ function tmShowTab(t) {
   TEAM.tab = t;
   $('tm-canvas').style.display = t === 'ws' ? '' : 'none';
   $('tm-code').style.display = t === 'code' ? '' : 'none';
+  $('tm-term').style.display = t === 'term' ? 'flex' : 'none';
   $('tm-tab-ws').className = 'btn btn-sm' + (t === 'ws' ? ' btn-primary' : '');
   $('tm-tab-code').className = 'btn btn-sm' + (t === 'code' ? ' btn-primary' : '');
+  $('tm-tab-term').className = 'btn btn-sm' + (t === 'term' ? ' btn-primary' : '');
   if (t === 'code') tmCodeBrowse(TEAM.codePath || '');
+  if (t === 'term') tmRenderTermDock();
 }
 $('tm-tab-ws').onclick = () => tmShowTab('ws');
 $('tm-tab-code').onclick = () => tmShowTab('code');
+$('tm-tab-term').onclick = () => tmShowTab('term');
 async function tmCodeBrowse(path) {
   TEAM.codePath = path;
   const d = await api('/api/team/files?project=' + encodeURIComponent(TEAM.project) + '&path=' + encodeURIComponent(path)).then((r) => r.json()).catch(() => ({ dirs: [], files: [] }));
@@ -673,29 +678,16 @@ function loadXterm() {
   });
   return xtermReady;
 }
-async function tmOpenTerminal(sessionName, title) {
-  try { await loadXterm(); } catch { alert('failed to load terminal assets'); return; }
-  const ov = document.createElement('div');
-  ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
-  const box = document.createElement('div');
-  box.style.cssText = 'width:min(1000px,94vw);height:min(640px,86vh);background:#0d1117;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.5)';
-  const hd = document.createElement('div');
-  hd.style.cssText = 'display:flex;gap:10px;align-items:center;padding:8px 12px;background:#161b22;color:#e6edf3;font-size:12px';
-  hd.innerHTML = '<span>⌨ ' + escapeHtml(title) + ' — live member terminal</span><span style="opacity:.55">keystrokes go straight to the agent\'s session; closing detaches (the member keeps running)</span>';
-  const cp = document.createElement('button'); cp.className = 'btn btn-sm'; cp.textContent = '📋 attach cmd'; cp.style.marginLeft = 'auto';
-  cp.title = 'copy: tmux attach -t ' + sessionName;
-  cp.onclick = () => { navigator.clipboard && navigator.clipboard.writeText('tmux attach -t ' + sessionName); cp.textContent = '✓'; setTimeout(() => { cp.textContent = '📋 attach cmd'; }, 1200); };
-  const cl = document.createElement('button'); cl.className = 'btn btn-sm'; cl.textContent = '✕';
-  hd.appendChild(cp); hd.appendChild(cl);
-  const body = document.createElement('div'); body.style.cssText = 'flex:1;min-height:0;padding:4px';
-  box.appendChild(hd); box.appendChild(body); ov.appendChild(box); document.body.appendChild(ov);
+// Wire an xterm + `/ws/terminal` bridge into `body` for one tmux session.
+// Returns a handle so callers (the modal + the dock) manage lifecycle. The
+// token rides in the subprotocol list, not the URL: a WebSocket URL shows up in
+// devtools/proxy logs, and this one grants a shell. The server checks it and
+// selects 'forge-terminal', never echoing it back.
+function tmAttachTerm(body, sessionName) {
   const term = new window.Terminal({ fontSize: 13, cursorBlink: true, theme: { background: '#0d1117' } });
   const fit = new window.FitAddon.FitAddon();
-  term.loadAddon(fit); term.open(body); fit.fit(); term.focus();
+  term.loadAddon(fit); term.open(body); try { fit.fit(); } catch {}
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // The token rides in the subprotocol list, not the URL: a WebSocket URL
-  // shows up in devtools and proxy logs, and this one grants a shell. The
-  // server checks it and selects 'forge-terminal', never echoing it back.
   const ws = new WebSocket(
     proto + '://' + location.host + '/ws/terminal?session=' + encodeURIComponent(sessionName),
     ['forge-terminal', TOKEN]
@@ -715,9 +707,97 @@ async function tmOpenTerminal(sessionName, title) {
   term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'i', d })); });
   const ro = new ResizeObserver(() => { try { fit.fit(); sendResize(); } catch {} });
   ro.observe(body);
-  const close = () => { ro.disconnect(); try { ws.close(); } catch {} term.dispose(); ov.remove(); };
+  return {
+    fit: () => { try { fit.fit(); sendResize(); } catch {} },
+    focus: () => { try { term.focus(); } catch {} },
+    dispose: () => { ro.disconnect(); try { ws.close(); } catch {} try { term.dispose(); } catch {} },
+  };
+}
+async function tmOpenTerminal(sessionName, title) {
+  try { await loadXterm(); } catch { alert('failed to load terminal assets'); return; }
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+  const box = document.createElement('div');
+  box.style.cssText = 'width:min(1000px,94vw);height:min(640px,86vh);background:#0d1117;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.5)';
+  const hd = document.createElement('div');
+  hd.style.cssText = 'display:flex;gap:10px;align-items:center;padding:8px 12px;background:#161b22;color:#e6edf3;font-size:12px';
+  hd.innerHTML = '<span>⌨ ' + escapeHtml(title) + ' — live member terminal</span><span style="opacity:.55">keystrokes go straight to the agent\'s session; closing detaches (the member keeps running)</span>';
+  const cp = document.createElement('button'); cp.className = 'btn btn-sm'; cp.textContent = '📋 attach cmd'; cp.style.marginLeft = 'auto';
+  cp.title = 'copy: tmux attach -t ' + sessionName;
+  cp.onclick = () => { navigator.clipboard && navigator.clipboard.writeText('tmux attach -t ' + sessionName); cp.textContent = '✓'; setTimeout(() => { cp.textContent = '📋 attach cmd'; }, 1200); };
+  const cl = document.createElement('button'); cl.className = 'btn btn-sm'; cl.textContent = '✕';
+  hd.appendChild(cp); hd.appendChild(cl);
+  const body = document.createElement('div'); body.style.cssText = 'flex:1;min-height:0;padding:4px';
+  box.appendChild(hd); box.appendChild(body); ov.appendChild(box); document.body.appendChild(ov);
+  const h = tmAttachTerm(body, sessionName); h.focus();
+  const close = () => { h.dispose(); ov.remove(); };
   cl.onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
+}
+
+// ── Live terminal dock: one sub-tab per agent's resident session ─────────────
+// Reuses the same `/ws/terminal` bridge as the modal, but keeps each agent's
+// terminal on a persistent tab so you can watch the whole team at once. A tab's
+// xterm/socket is created lazily on first view and kept alive until the session
+// disappears (member torn down) or the team overlay closes.
+function tmLiveSessions() {
+  const st = TEAM.status || {};
+  const members = (TEAM.cfg && TEAM.cfg.members) || [];
+  const out = [];
+  for (const m of members) {
+    const ms = st[m.id];
+    if (ms && ms.terminal) out.push({ id: m.id, name: m.name || m.id, icon: m.icon || '', session: ms.terminal, working: ms.status === 'working' });
+  }
+  return out;
+}
+function tmRenderTermDock() {
+  const live = tmLiveSessions();
+  const badge = $('tm-term-badge'); if (badge) badge.textContent = live.length ? '(' + live.length + ')' : '';
+  const empty = $('tm-term-empty'); if (empty) empty.style.display = live.length ? 'none' : '';
+  const tabs = $('tm-term-tabs'), panes = $('tm-term-panes'); if (!tabs || !panes) return;
+  const dock = TEAM.termDock || (TEAM.termDock = { panes: {}, active: null });
+  const liveSet = new Set(live.map((l) => l.session));
+  // Drop tabs/panes for sessions that are gone (member torn down / reaped).
+  for (const s of Object.keys(dock.panes)) {
+    if (!liveSet.has(s)) {
+      const p = dock.panes[s]; if (p.handle) p.handle.dispose(); p.tab.remove(); p.pane.remove();
+      delete dock.panes[s]; if (dock.active === s) dock.active = null;
+    }
+  }
+  for (const l of live) {
+    const existing = dock.panes[l.session];
+    if (existing) { const dot = existing.tab.querySelector('.tm-term-dot'); if (dot) dot.style.background = l.working ? '#2e9e44' : 'var(--muted)'; continue; }
+    const tab = document.createElement('button'); tab.className = 'btn btn-sm';
+    tab.innerHTML = '<span class="tm-term-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:' + (l.working ? '#2e9e44' : 'var(--muted)') + '"></span>' + escapeHtml((l.icon ? l.icon + ' ' : '') + l.name);
+    tab.title = 'tmux attach -t ' + l.session;
+    tab.onclick = () => tmTermSelect(l.session);
+    tabs.appendChild(tab);
+    const pane = document.createElement('div'); pane.style.cssText = 'position:absolute;inset:0;display:none;padding:4px';
+    panes.appendChild(pane);
+    dock.panes[l.session] = { tab, pane, handle: null };
+  }
+  if (TEAM.tab === 'term' && (!dock.active || !dock.panes[dock.active]) && live[0]) {
+    tmTermSelect(live[0].session);
+  }
+}
+async function tmTermSelect(session) {
+  const dock = TEAM.termDock; if (!dock || !dock.panes[session]) return;
+  dock.active = session;
+  try { await loadXterm(); } catch { return; }
+  for (const s of Object.keys(dock.panes)) {
+    const p = dock.panes[s]; const on = s === session;
+    p.pane.style.display = on ? '' : 'none';
+    p.tab.className = 'btn btn-sm' + (on ? ' btn-primary' : '');
+    if (on) {
+      if (!p.handle) p.handle = tmAttachTerm(p.pane, s);
+      requestAnimationFrame(() => { p.handle.fit(); p.handle.focus(); });
+    }
+  }
+}
+function tmDisposeTermDock() {
+  const dock = TEAM.termDock; if (!dock) return;
+  for (const s of Object.keys(dock.panes)) { const p = dock.panes[s]; if (p.handle) p.handle.dispose(); p.tab.remove(); p.pane.remove(); }
+  TEAM.termDock = { panes: {}, active: null };
 }
 async function tmShowRequest(id) {
   const d = await (await api('/api/team/request?project=' + encodeURIComponent(TEAM.project) + '&id=' + encodeURIComponent(id))).json().catch(() => null);
