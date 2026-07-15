@@ -17,10 +17,10 @@ npm install -g forge-cockpit
 npx forge-cockpit --help
 ```
 
-On install, the prebuilt binary for your platform (macOS arm64/x64, Linux
-x64/arm64, Windows x64) is downloaded from the matching GitHub Release — nothing
-is compiled on your machine. (Install with scripts enabled, i.e. not
-`--ignore-scripts`.)
+On install, the prebuilt binary for your platform (macOS arm64, Linux x64/arm64,
+Windows x64) is downloaded from the matching GitHub Release — nothing is compiled
+on your machine. (Install with scripts enabled, i.e. not `--ignore-scripts`.)
+Intel Macs (x64) have no prebuilt binary — build from source.
 
 ## Bring your own key
 

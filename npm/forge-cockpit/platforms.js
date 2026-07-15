@@ -12,7 +12,10 @@ const BUILD_FROM_SOURCE = `https://github.com/${REPO}#build-from-source`;
 // `${process.platform} ${process.arch}` -> release asset platform suffix
 const PLATFORMS = {
   'darwin arm64': 'darwin-arm64',
-  'darwin x64': 'darwin-x64',
+  // No 'darwin x64': GitHub's Intel-Mac runner (macos-13) is being retired, so
+  // release CI can't build it. Intel Macs fall back to build-from-source rather
+  // than 404 on a binary that was never published. Keep in sync with the build
+  // matrix in .github/workflows/release.yml (check-consistency.mjs enforces it).
   'linux x64': 'linux-x64',
   'linux arm64': 'linux-arm64',
   'win32 x64': 'win32-x64',
