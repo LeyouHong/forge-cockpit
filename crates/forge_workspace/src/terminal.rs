@@ -137,6 +137,20 @@ fn kill_session(name: &str) {
     let _ = tmux().args(["kill-session", "-t", name]).output();
 }
 
+/// Where a member's Claude Code Stop hook drops its turn marker. The orchestrator
+/// watches this file's mtime to know the instant an agent's turn ends — the
+/// event-driven replacement for polling-with-a-timeout. `<workspace>/.team-terminal/<member>.turn`.
+pub fn turn_marker_path(workspace: &Path, member_id: &str) -> PathBuf {
+    workspace.join(".team-terminal").join(format!("{member_id}.turn"))
+}
+
+/// The member's last turn-end time (mtime of its turn marker), or `None` if the
+/// Stop hook hasn't fired yet (no file). Compared against a baseline captured
+/// before injecting a prompt, a newer value means "the agent finished its turn".
+pub fn turn_marker(workspace: &Path, member_id: &str) -> Option<std::time::SystemTime> {
+    std::fs::metadata(turn_marker_path(workspace, member_id)).and_then(|m| m.modified()).ok()
+}
+
 /// Seconds since the session last produced pane output (tmux `session_activity`),
 /// or `None` when there is no such session. A live agent's TUI keeps redrawing —
 /// the "✻ …" spinner is real PTY output — so a small value means it is actively
@@ -222,16 +236,24 @@ pub fn launch_command(base_cmd: &str, session_id: &str, resume: bool) -> String 
 /// Returns true when a new session was created (caller should allow the TUI a
 /// startup beat before injecting). The launch goes through a script file to
 /// sidestep tmux argument quoting/truncation.
-pub fn ensure_session(name: &str, project: &Path, workspace: &Path, cmd: &str) -> Result<bool> {
+pub fn ensure_session(name: &str, member_id: &str, project: &Path, workspace: &Path, cmd: &str) -> Result<bool> {
     if has_session(name) {
         return Ok(false);
     }
     let dir = workspace.join(".team-terminal");
     std::fs::create_dir_all(&dir)?;
     let script = dir.join(format!("{name}.sh"));
+    // Export the member id and workspace into the pane's environment so the
+    // Claude Code Stop hook (see the orchestrator's ensure_stop_hook) can drop a
+    // per-member turn marker without needing to parse hook stdin.
     std::fs::write(
         &script,
-        format!("#!/bin/sh\ncd {}\nexec {cmd}\n", shell_quote(&project.to_string_lossy())),
+        format!(
+            "#!/bin/sh\ncd {proj}\nexport FORGE_MEMBER={member}\nexport FORGE_WORKSPACE_DIR={ws}\nexec {cmd}\n",
+            proj = shell_quote(&project.to_string_lossy()),
+            member = shell_quote(member_id),
+            ws = shell_quote(&workspace.to_string_lossy()),
+        ),
     )?;
     #[cfg(unix)]
     {
