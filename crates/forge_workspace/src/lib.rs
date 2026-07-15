@@ -12,6 +12,7 @@
 //! Higher layers (a workspace MCP exposing these ops to agents, role SOPs, a
 //! runner that drives agent sessions) build on top of this.
 
+pub mod memory;
 pub mod message;
 pub mod pipeline;
 pub mod request;

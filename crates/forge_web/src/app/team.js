@@ -251,6 +251,9 @@ function tmCard(m, i, reqs, msgs) {
       lg.onclick = (e) => { e.stopPropagation(); tmShowSession(m); };
       th.appendChild(lg);
     }
+    const mem = document.createElement('span'); mem.textContent = '🧠'; mem.title = 'view this member\'s memory (decisions, fixes, discoveries it recorded)'; mem.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
+    mem.onclick = (e) => { e.stopPropagation(); tmShowMemory(m); };
+    th.appendChild(mem);
     if (ms.terminal) {
       const tm = document.createElement('span'); tm.textContent = '⌨'; tm.title = 'open this member\'s live terminal (watch or take over)';
       tm.style.cssText = 'cursor:pointer;font-size:11px;margin-left:2px';
@@ -587,6 +590,34 @@ function tmShowInbox(m, msgs) {
     r.appendChild(l); r.appendChild(c); b.appendChild(r);
   }
   if (!sorted.length) b.innerHTML = '<span class="sl">(empty)</span>';
+  $('tm-reqmodal').classList.add('open');
+}
+const TM_OBS_ICON = { decision: '🎯', bugfix: '🐛', feature: '✨', refactor: '♻️', discovery: '🔍', change: '✏️' };
+async function tmShowMemory(m) {
+  $('tm-req-title').textContent = '🧠 ' + (m.name || m.id) + ' — memory';
+  const b = $('tm-req-body'); b.innerHTML = '<span class="sl">…</span>';
+  const d = await api('/api/team/memory?project=' + encodeURIComponent(TEAM.project) + '&member=' + encodeURIComponent(m.id)).then((r) => r.json()).catch(() => ({ observations: [] }));
+  const obs = (d && d.observations) || [];
+  b.innerHTML = '';
+  const head = document.createElement('div'); head.className = 'sl'; head.style.marginBottom = '8px';
+  head.textContent = obs.length
+    ? obs.length + ' observation' + (obs.length > 1 ? 's' : '') + ' this member recorded (newest first) — injected into its prompt each turn'
+    : 'no observations yet — the member records them with record_observation as it makes decisions / fixes / discoveries';
+  b.appendChild(head);
+  for (const o of obs) {
+    const card = document.createElement('div'); card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px';
+    const when = o.ts ? new Date(o.ts * 1000).toLocaleString() : '';
+    const title = document.createElement('div'); title.style.cssText = 'font-size:12.5px;font-weight:600';
+    title.textContent = (TM_OBS_ICON[o.kind] || '•') + ' ' + (o.title || '');
+    card.appendChild(title);
+    const meta = document.createElement('div'); meta.className = 'sl'; meta.style.cssText = 'font-size:10.5px;margin:2px 0 4px';
+    meta.textContent = [o.kind, when, o.request ? '↦ ' + o.request : ''].filter(Boolean).join(' · ');
+    card.appendChild(meta);
+    for (const f of o.facts || []) { const fl = document.createElement('div'); fl.style.cssText = 'font-size:11.5px;padding-left:10px'; fl.textContent = '· ' + f; card.appendChild(fl); }
+    if ((o.files || []).length) { const fl = document.createElement('div'); fl.className = 'sl'; fl.style.cssText = 'font-size:10.5px;margin-top:2px'; fl.textContent = 'files: ' + o.files.join(', '); card.appendChild(fl); }
+    if (o.detail) { const dt = document.createElement('div'); dt.style.cssText = 'font-size:11.5px;margin-top:3px;white-space:pre-wrap;color:var(--muted)'; dt.textContent = o.detail; card.appendChild(dt); }
+    b.appendChild(card);
+  }
   $('tm-reqmodal').classList.add('open');
 }
 async function tmShowSession(m) {

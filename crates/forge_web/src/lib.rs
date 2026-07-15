@@ -178,6 +178,7 @@ where
         .route("/api/team/activity", get(pipeline::team_activity::<A>))
         .route("/api/team/status", get(pipeline::team_status::<A>))
         .route("/api/team/session-log", get(pipeline::team_session_log::<A>))
+        .route("/api/team/memory", get(pipeline::team_memory::<A>))
         .route("/api/team/reset-session", post(pipeline::team_reset_session::<A>))
         .route("/api/team/approvals", get(pipeline::team_approvals_get::<A>))
         .route("/api/team/approve", post(pipeline::team_approve::<A>))

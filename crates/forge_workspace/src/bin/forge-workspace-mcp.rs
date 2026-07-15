@@ -15,6 +15,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use forge_workspace::message::{self, Category};
+use forge_workspace::memory;
 use forge_workspace::request::{
     self, Finding, NewRequest, QaResult, ReviewResult, Section, Severity,
 };
@@ -217,6 +218,19 @@ fn handle_call(msg: &Value) -> Result<Value, String> {
             Ok(m) => text_result(format!("answered {} ({})", s("request_id"), m.id), false),
             Err(e) => text_result(format!("error: {e:#}"), true),
         },
+        "record_observation" => match memory::record(
+            &r,
+            &memory::member_key(&s("agent")),
+            &s("type"),
+            &s("title"),
+            arr("facts"),
+            arr("files"),
+            &s("detail"),
+            &s("request"),
+        ) {
+            Ok(o) => text_result(format!("recorded {} ({})", o.id, o.kind), false),
+            Err(e) => text_result(format!("error: {e:#}"), true),
+        },
         other => return Err(format!("unknown tool: {other}")),
     };
     Ok(out)
@@ -303,6 +317,16 @@ fn tool_defs() -> Value {
             "from": str_prop("Your agent name"),
             "request_id": str_prop("The request's message id, from get_inbox"),
             "body": str_prop("Your answer")
-          }), json!(["from","request_id","body"])) }
+          }), json!(["from","request_id","body"])) },
+        { "name": "record_observation", "description": "Save a durable note to your persistent memory — a decision you made, a bug you fixed, something you discovered — so your future turns (and the human) can see it. Record things worth remembering across runs, not routine steps; a recap of recent notes is injected into your prompt each turn.",
+          "inputSchema": obj(json!({
+            "agent": str_prop("Your agent name (e.g. engineer-1)"),
+            "type": json!({ "type": "string", "enum": ["decision","bugfix","feature","refactor","discovery","change"], "description": "Kind of observation" }),
+            "title": str_prop("One-line summary"),
+            "facts": str_arr("Key facts worth keeping (optional)"),
+            "files": str_arr("Files involved (optional)"),
+            "detail": str_prop("Fuller detail (optional; trimmed from older entries)"),
+            "request": str_prop("Related request id, if any (optional)")
+          }), json!(["agent","type","title"])) }
     ])
 }

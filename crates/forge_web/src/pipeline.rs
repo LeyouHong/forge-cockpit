@@ -887,6 +887,23 @@ pub(crate) struct SessionLogQuery {
     member: String,
 }
 
+/// GET /api/team/memory?project=&member= — a member's structured memory
+/// (observations it recorded via record_observation), newest first.
+pub(crate) async fn team_memory<A: API>(
+    State(_): State<AppState<A>>,
+    Query(q): Query<SessionLogQuery>,
+) -> Result<Json<Value>, AppError> {
+    if q.member.contains('/') || q.member.contains("..") {
+        return Err(AppError::bad_request("invalid member"));
+    }
+    let project = project_path(&q.project).ok_or_else(|| AppError::not_found("no such project"))?;
+    let ws = project.join(".forge-workspace");
+    let mem = forge_workspace::memory::load(&ws, &forge_workspace::memory::member_key(&q.member));
+    let mut obs = mem.observations;
+    obs.reverse(); // newest first for display
+    Ok(Json(json!({ "member": q.member, "observations": obs })))
+}
+
 /// GET /api/team/session-log?project=&member= — tail of a member's resident
 /// session log (its streamed agent output across tasks).
 pub(crate) async fn team_session_log<A: API>(

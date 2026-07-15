@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use forge_workspace::memory;
 use forge_workspace::message::{self, Category};
 use forge_workspace::request::{self, RequestDocument, RequestStatus};
 use forge_workspace::team::{self, Stage, TeamConfig, TeamMember};
@@ -742,6 +743,14 @@ fn topology(cfg: &Cfg, role: &str) -> String {
         }
     }
     t.push_str(&format!("\nYou are the **{role}** (agent name `{role}-1`).\n"));
+    // Prepend this member's own persistent memory recap (progressive disclosure:
+    // recent observations in full, older title-only), so an agent starting a new
+    // turn — or a fresh session — sees what it learned before.
+    let recap = memory::format_for_prompt(&memory::load(workspace, role));
+    if !recap.is_empty() {
+        t.push('\n');
+        t.push_str(&recap);
+    }
     t
 }
 
@@ -789,7 +798,8 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
     let sop = member_sop(m);
     let prompt = format!(
         "{topo}\n{sop}\n\n---\nYou are agent `{id}-1`. The workspace tools are available as MCP \
-         tools (create_request, list_requests, get_request, send_message).\n\n{tail}\n\nStart now.",
+         tools (create_request, list_requests, get_request, send_message, record_observation). \
+         Use record_observation to save key planning decisions for later turns.\n\n{tail}\n\nStart now.",
         id = m.id
     );
     write_planning_status(cfg, Some(&m.id));
@@ -874,7 +884,10 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
                 "{topo}\n{sop}\n\n---\nYou are agent `{role}-1`. The workspace tools are available \
                  as MCP tools (create_request, claim_request, get_request, list_requests, \
                  submit_engineer_work, submit_review, submit_qa, send_message, get_inbox, \
-                 ack_message, ask_agent, reply_to_agent). Check get_inbox before you start: a \
+                 ack_message, ask_agent, reply_to_agent, record_observation). Save anything \
+                 worth remembering across turns (a decision, a fix, a discovery) with \
+                 record_observation — your recent notes are shown under \"Your memory\" above. \
+                 Check get_inbox before you start: a \
                  ticket there is retried until you ack_message it, and a request must be answered \
                  with reply_to_agent. When you are blocked on a teammate's decision, ask_agent \
                  waits for their answer instead of guessing. Follow \
