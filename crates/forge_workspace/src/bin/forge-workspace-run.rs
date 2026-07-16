@@ -818,9 +818,11 @@ fn run_planner(cfg: &Cfg, m: &TeamMember, tail: &str) {
 fn run_terminal_planner(cfg: &Cfg, m: &TeamMember, prompt: &str) {
     let name = terminal::session_name(&cfg.project, &m.id);
     let prompt = format!(
-        "{prompt}\n\nIMPORTANT: when your planning work is completely finished, call send_message \
-         with to=`orchestrator` and a body starting with `PLANNING-DONE` — the pipeline waits for \
-         that signal before the next planner runs."
+        "{prompt}\n\nYou are operating AUTONOMOUSLY — no human is watching, so do not ask whether \
+         to continue or wait for confirmation. When your planning work is finished, call \
+         send_message with to=`orchestrator` and a body starting with `PLANNING-DONE` — the \
+         pipeline waits for that signal before the next planner runs — then STOP; do not keep \
+         narrating or offer next steps after sending it."
     );
     if let Err(e) = ensure_member_terminal(cfg, m, &name) {
         eprintln!("  ! planner `{}` terminal: {e}", m.id);
@@ -904,10 +906,18 @@ fn spawn_agent(cfg: Arc<Cfg>, state: Arc<Mutex<State>>, req: RequestDocument, me
                  Check get_inbox before you start: a \
                  ticket there is retried until you ack_message it, and a request must be answered \
                  with reply_to_agent. When you are blocked on a teammate's decision, ask_agent \
-                 waits for their answer instead of guessing. Follow \
-                 your SOP to find the request that needs your role and complete exactly your step. \
-                 The request likely waiting for you is `{}`. Start now.",
-                req.id,
+                 waits for their answer instead of guessing.\n\n\
+                 You are operating AUTONOMOUSLY — no human is watching this run, so a question or \
+                 an offer like \"Want me to continue with …?\" stalls the pipeline until it times \
+                 out and is parked as STUCK. Your whole job this turn is ONE step: do your stage's \
+                 work for request `{id}` and submit it through the matching tool \
+                 (submit_engineer_work / submit_review / submit_qa). Do NOT claim, review, work on, \
+                 ask about, or offer to continue with any OTHER request — the orchestrator hands \
+                 those to you separately, one at a time. Once `{id}` is submitted you are done: \
+                 stop. Before you end your turn, check your last message: if it is a question, a \
+                 plan, or an offer to continue, that is a stall — instead call the submit tool for \
+                 `{id}` now. Start now.",
+                id = req.id,
                 role = member.id
             );
             (timed_out, fatal, interrupted) = match run_terminal_request(&cfg, &req, &member, &prompt) {
